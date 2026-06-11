@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+
+  # NSE Nifty 50 Trading Agent
+  trading-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nse-trading-agent
+    environment:
+      - KITE_API_KEY=${KITE_API_KEY}
+      - KITE_API_SECRET=${KITE_API_SECRET}
+      - KITE_USER_ID=${KITE_USER_ID}
+      - KITE_PASSWORD=${KITE_PASSWORD}
+      - KITE_TOTP_SECRET=${KITE_TOTP_SECRET}
+      - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+      - REPORT_RECIPIENT=${REPORT_RECIPIENT}
+      - TZ=Asia/Kolkata
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    restart: unless-stopped

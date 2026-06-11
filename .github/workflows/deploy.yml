@@ -1,0 +1,27 @@
+name: Deploy Trading Agent to EC2
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.EC2_SSH_KEY }}
+          known_hosts: unnecessary # Will bypass host verification in following commands
+          if_key_exists: replace
+
+      - name: Deploy Files to EC2
+        run: |
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='logs' --exclude='data' ./ ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/nse-agent/
+
+      - name: Start Container Stack on EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "mkdir -p ~/nse-agent/logs ~/nse-agent/data && cd ~/nse-agent && docker-compose down && docker-compose up -d --build"

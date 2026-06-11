@@ -1,0 +1,15 @@
+2026-06-11 19:56:39 | INFO     | agent                | Initialising TradingAgent …
+2026-06-11 19:56:39 | DEBUG    | market_session       | MarketSession initialised with timezone Asia/Kolkata
+2026-06-11 19:56:39 | DEBUG    | price_feed           | PriceFeed initialised.
+2026-06-11 19:56:39 | DEBUG    | trend_engine         | TrendEngine initialised.
+2026-06-11 19:56:39 | DEBUG    | decision_engine      | DecisionEngine initialised.
+2026-06-11 19:56:39 | INFO     | portfolio_tracker    | Trade log CSV created: trading_agent/trades.csv
+2026-06-11 19:56:39 | INFO     | portfolio_tracker    | PortfolioTracker initialised — daily spend cap: ₹999999.00 reinvest: True
+2026-06-11 19:56:39 | WARNING  | report_sender        | ReportSender: GMAIL_ADDRESS env var not set — email sending will fail until it is configured.
+2026-06-11 19:56:39 | WARNING  | report_sender        | ReportSender: GMAIL_APP_PASSWORD env var not set — email sending will fail until it is configured.
+2026-06-11 19:56:39 | DEBUG    | report_sender        | ReportSender initialised: sender=<not set> recipient=<not set>
+2026-06-11 19:56:39 | INFO     | agent                | TradingAgent initialised. Universe: 20 tickers.
+2026-06-11 19:56:39 | INFO     | agent                | ======================================================================
+2026-06-11 19:56:39 | INFO     | agent                | NSE Nifty 50 Trading Agent — starting up
+2026-06-11 19:56:39 | INFO     | agent                | ======================================================================
+2026-06-11 19:56:39 | INFO     | agent                | Market is closed. Sleeping 31701 s (528.3 min) until next open …
