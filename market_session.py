@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 
 class MarketSession:
     """
-    Provides LSE (London Stock Exchange) session information.
+    Provides trading session information based on the active config profile.
 
-    All public methods operate in the Europe/London timezone so that
-    British Summer Time (BST) / GMT transitions are handled automatically.
+    All public methods operate in the configured timezone so that
+    daylight savings transitions are handled automatically.
 
     Usage
     -----
@@ -49,24 +49,23 @@ class MarketSession:
 
     def __init__(self) -> None:
         self._tz = pytz.timezone(config.market.timezone)
-        # Load the NSE calendar once; it covers both weekends and bank holidays.
-        self._calendar = mcal.get_calendar("NSE")
-        logger.debug("MarketSession initialised with timezone %s", config.market.timezone)
+        self._calendar = mcal.get_calendar(config.market.calendar)
+        logger.debug("MarketSession initialised with timezone %s and calendar %s", 
+                     config.market.timezone, config.market.calendar)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _now_london(self) -> datetime:
-        """Return the current moment as a timezone-aware London datetime."""
+    def _now_local(self) -> datetime:
+        """Return the current moment as a timezone-aware datetime."""
         return datetime.now(tz=self._tz)
 
     def _is_trading_day(self, d: date) -> bool:
         """
-        Return True if *d* is a valid LSE trading day (excludes weekends and
-        UK bank holidays).
+        Return True if *d* is a valid trading day (excludes weekends and holidays).
 
-        Uses pandas_market_calendars to query the official LSE schedule.
+        Uses pandas_market_calendars to query the official schedule.
         """
         # Query a single-day window; an empty result means no trading session.
         schedule = self._calendar.schedule(
@@ -77,10 +76,10 @@ class MarketSession:
 
     def _next_trading_day_open(self) -> datetime:
         """
-        Return the timezone-aware London datetime of the next market open.
-        Scans forward up to 14 calendar days to skip weekends and bank holidays.
+        Return the timezone-aware datetime of the next market open.
+        Scans forward up to 14 calendar days to skip weekends and holidays.
         """
-        now = self._now_london()
+        now = self._now_local()
         candidate = now.date()
 
         # If today is a trading day but market hasn't opened yet, return today's open.
@@ -101,7 +100,7 @@ class MarketSession:
 
         raise RuntimeError(
             "Could not find a trading day within the next 14 calendar days. "
-            "Check the pandas_market_calendars LSE calendar data."
+            f"Check the pandas_market_calendars {config.market.calendar} calendar data."
         )
 
     # ------------------------------------------------------------------
@@ -110,12 +109,10 @@ class MarketSession:
 
     def is_market_open(self) -> bool:
         """
-        Return True if the LSE is currently in its normal trading session
-        (08:00 – 16:30 London time, on a valid trading day).
-
-        Accounts for weekends and UK bank holidays via the LSE calendar.
+        Return True if the market is currently in its normal trading session.
+        Accounts for weekends and holidays via the calendar.
         """
-        now = self._now_london()
+        now = self._now_local()
         current_time = now.time()
 
         # Reject weekends and bank holidays first (cheap calendar lookup).
@@ -127,12 +124,10 @@ class MarketSession:
 
     def is_pre_market(self) -> bool:
         """
-        Return True during the pre-market window (07:00 – 08:00 London time)
-        on a valid trading day.
-
+        Return True during the pre-market window on a valid trading day.
         Useful for pre-market data ingestion without placing live orders.
         """
-        now = self._now_london()
+        now = self._now_local()
         current_time = now.time()
 
         if not self._is_trading_day(now.date()):
@@ -142,16 +137,16 @@ class MarketSession:
 
     def seconds_to_open(self) -> float:
         """
-        Return the number of seconds until the next LSE market open.
+        Return the number of seconds until the next market open.
 
         Returns 0 if the market is currently open.
-        If in pre-market, returns seconds until today's 08:00.
-        Otherwise returns seconds until the next trading day's 08:00.
+        If in pre-market, returns seconds until today's open.
+        Otherwise returns seconds until the next trading day's open.
         """
         if self.is_market_open():
             return 0.0
 
-        now = self._now_london()
+        now = self._now_local()
         next_open = self._next_trading_day_open()
         delta = (next_open - now).total_seconds()
         return max(0.0, delta)
@@ -165,7 +160,7 @@ class MarketSession:
         if not self.is_market_open():
             return 0.0
 
-        now = self._now_london()
+        now = self._now_local()
         close_dt = self._tz.localize(
             datetime.combine(now.date(), self._CLOSE_TIME)
         )
@@ -185,14 +180,14 @@ class MarketSession:
     def get_session_date(self) -> str:
         """
         Return today's date as an ISO-8601 string (``YYYY-MM-DD``), based on
-        the London timezone.
+        the local timezone.
         """
-        return self._now_london().strftime("%Y-%m-%d")
+        return self._now_local().strftime("%Y-%m-%d")
 
     def __repr__(self) -> str:
-        now = self._now_london()
+        now = self._now_local()
         open_str = "OPEN" if self.is_market_open() else "CLOSED"
         return (
             f"<MarketSession [{open_str}] "
-            f"London={now.strftime('%Y-%m-%d %H:%M:%S %Z')}>"
+            f"Local={now.strftime('%Y-%m-%d %H:%M:%S %Z')}>"
         )

@@ -20,8 +20,19 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import os
+import datetime
 import pandas as pd
 import yfinance as yf
+
+from config import config
+
+ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
+
+if ACTIVE_MARKET == "US":
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +70,104 @@ class PriceFeed:
         return symbol
 
     def _fetch(
+        self,
+        symbol: str,
+        period: Optional[str] = None,
+        interval: str = "5m",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Core wrapper for data fetch. Routes to Alpaca or yfinance based on market.
+        """
+        if ACTIVE_MARKET == "US":
+            return self._fetch_alpaca(symbol, period, interval, start, end)
+        else:
+            return self._fetch_yfinance(symbol, period, interval, start, end)
+
+    def _fetch_alpaca(
+        self,
+        symbol: str,
+        period: Optional[str] = None,
+        interval: str = "5m",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        try:
+            if not getattr(self, "alpaca_client", None):
+                if not config.alpaca.api_key or not config.alpaca.api_secret:
+                    logger.error("Alpaca API keys not configured. Cannot fetch data.")
+                    return None
+                self.alpaca_client = StockHistoricalDataClient(config.alpaca.api_key, config.alpaca.api_secret)
+
+            # Map interval to timeframe
+            if interval == "1m":
+                tf = TimeFrame.Minute
+            elif interval == "5m":
+                tf = TimeFrame(5, TimeFrameUnit.Minute)
+            elif interval == "15m":
+                tf = TimeFrame(15, TimeFrameUnit.Minute)
+            elif interval in ("1h", "60m"):
+                tf = TimeFrame.Hour
+            elif interval == "1d":
+                tf = TimeFrame.Day
+            else:
+                tf = TimeFrame.Minute
+
+            # Compute start and end
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if start is not None and end is not None:
+                start_dt = pd.to_datetime(start).to_pydatetime()
+                end_dt = pd.to_datetime(end).to_pydatetime()
+            else:
+                days = 1
+                if period:
+                    if period.endswith('d'):
+                        days = int(period[:-1])
+                    elif period.endswith('mo'):
+                        days = int(period[:-2]) * 30
+                    elif period.endswith('y'):
+                        days = int(period[:-1]) * 365
+                start_dt = now - datetime.timedelta(days=days)
+                end_dt = now
+
+            req = StockBarsRequest(
+                symbol_or_symbols=[symbol],
+                timeframe=tf,
+                start=start_dt,
+                end=end_dt,
+                feed="iex" if config.alpaca.paper_mode else "sip"
+            )
+            bars = self.alpaca_client.get_stock_bars(req)
+            if not bars.data or symbol not in bars.data:
+                logger.warning("No data returned from Alpaca for %s", symbol)
+                return None
+            
+            df = bars.df
+            if df.empty:
+                return None
+
+            # Alpaca returns MultiIndex (symbol, timestamp). Reset it to DatetimeIndex.
+            df = df.reset_index(level=0, drop=True)
+            
+            # Rename columns to match agent's expected Title Case OHLCV
+            df.rename(columns={
+                'open': 'Open',
+                'high': 'High',
+                'low': 'Low',
+                'close': 'Close',
+                'volume': 'Volume'
+            }, inplace=True)
+            
+            df = df[["Open", "High", "Low", "Close", "Volume"]]
+            logger.debug("Fetched %d bars for %s from Alpaca (interval=%s)", len(df), symbol, interval)
+            return df
+            
+        except Exception as exc:
+            logger.error("Alpaca download failed for %s: %s", symbol, exc, exc_info=True)
+            return None
+
+    def _fetch_yfinance(
         self,
         symbol: str,
         period: Optional[str] = None,

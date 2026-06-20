@@ -2,18 +2,42 @@ version: '3.8'
 
 services:
 
-  # NSE Nifty 50 Trading Agent
-  trading-agent:
+  # Indian Market Agent (Zerodha) - Commented out for now
+  # agent-in:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: nse-trading-agent
+  #   environment:
+  #     - TRADING_MARKET=IN
+  #     - KITE_API_KEY=${KITE_API_KEY}
+  #     - KITE_API_SECRET=${KITE_API_SECRET}
+  #     - KITE_USER_ID=${KITE_USER_ID}
+  #     - KITE_PASSWORD=${KITE_PASSWORD}
+  #     - KITE_TOTP_SECRET=${KITE_TOTP_SECRET}
+  #     - TRADING_MODE=${TRADING_MODE:-paper}
+  #     - EOD_API_KEY=${EOD_API_KEY}
+  #     - GEMINI_API_KEY=${GEMINI_API_KEY}
+  #     - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-false}
+  #     - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+  #     - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+  #     - REPORT_RECIPIENT=${REPORT_RECIPIENT}
+  #     - TZ=Asia/Kolkata
+  #   volumes:
+  #     - ./logs:/app/logs
+  #     - ./data:/app/data
+  #   restart: unless-stopped
+
+  # US Market Agent (Alpaca)
+  agent-us:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: nse-trading-agent
+    container_name: us-trading-agent
     environment:
-      - KITE_API_KEY=${KITE_API_KEY}
-      - KITE_API_SECRET=${KITE_API_SECRET}
-      - KITE_USER_ID=${KITE_USER_ID}
-      - KITE_PASSWORD=${KITE_PASSWORD}
-      - KITE_TOTP_SECRET=${KITE_TOTP_SECRET}
+      - TRADING_MARKET=US
+      - APCA_API_KEY_ID=${APCA_API_KEY_ID}
+      - APCA_API_SECRET_KEY=${APCA_API_SECRET_KEY}
       - TRADING_MODE=${TRADING_MODE:-paper}
       - EOD_API_KEY=${EOD_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -21,7 +45,7 @@ services:
       - GMAIL_ADDRESS=${GMAIL_ADDRESS}
       - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
-      - TZ=Asia/Kolkata
+      - TZ=America/New_York
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
@@ -38,8 +62,8 @@ services:
     environment:
       - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
-      - TRADES_CSV_PATH=/data/trades.csv
-      - AGENT_LOG_PATH=/logs/agent.log
+      - TRADES_CSV_PATH=/data/trades_US.csv
+      - AGENT_LOG_PATH=/logs/agent_US.log
     volumes:
       - ./logs:/logs
       - ./data:/data

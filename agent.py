@@ -28,9 +28,23 @@ closes all open positions before exiting.
 """
 
 import json
+import os
+import sys
+import time
+import signal
+import logging
+import logging.handlers
+from typing import Optional
+
 from config import config
+
+ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
+if ACTIVE_MARKET == "US":
+    from alpaca_connector import AlpacaConnector as BrokerConnector
+else:
+    from zerodha_connector import ZerodhaConnector as BrokerConnector
+
 from decision_engine import DecisionEngine, Decision
-from zerodha_connector import ZerodhaConnector as IBKRConnector
 from market_session import MarketSession
 from order_executor import OrderExecutor
 from portfolio_tracker import PortfolioTracker
@@ -131,8 +145,8 @@ class TradingAgent:
         self.report_gen = EODReportGenerator()
         self.report_sender = ReportSender()
 
-        # IBKR connector and order executor (connected in run())
-        self.ibkr: Optional[IBKRConnector] = None
+        # Broker connector and order executor (connected in run())
+        self.broker: Optional[BrokerConnector] = None
         self.executor: Optional[OrderExecutor] = None
 
         # Agent state flags
@@ -182,35 +196,33 @@ class TradingAgent:
         self._running = False
 
     # ------------------------------------------------------------------
-    # IBKR connection helpers
+    # Broker connection helpers
     # ------------------------------------------------------------------
 
-    def _connect_ibkr(self) -> bool:
+    def _connect_broker(self) -> bool:
         """
-        Establish IBKR connection and initialise the OrderExecutor.
+        Establish Broker connection and initialise the OrderExecutor.
 
         Returns True on success, False on failure.
         """
         try:
-            self.ibkr = IBKRConnector()
-            self.ibkr.connect()
-            self.executor = OrderExecutor(self.ibkr)
-            logger.info("Zerodha connection established.")
+            self.broker = BrokerConnector()
+            self.broker.connect()
+            self.executor = OrderExecutor(self.broker)
+            logger.info("%s connection established.", "Alpaca" if ACTIVE_MARKET == "US" else "Zerodha")
             return True
         except ConnectionError as exc:
-            logger.error("Failed to connect to Zerodha: %s", exc)
+            logger.error("Failed to connect to broker: %s", exc)
             return False
         except Exception as exc:
-            logger.error(
-                "Unexpected error connecting to Zerodha: %s", exc, exc_info=True
-            )
+            logger.error("Unexpected error connecting to broker: %s", exc, exc_info=True)
             return False
 
-    def _disconnect_ibkr(self) -> None:
-        """Gracefully disconnect from IBKR."""
-        if self.ibkr and self.ibkr.is_connected():
-            self.ibkr.disconnect()
-            logger.info("Disconnected from Zerodha.")
+    def _disconnect_broker(self) -> None:
+        """Gracefully disconnect from broker."""
+        if self.broker and self.broker.is_connected():
+            self.broker.disconnect()
+            logger.info("Disconnected from broker.")
 
     # ------------------------------------------------------------------
     # Per-symbol processing
@@ -237,8 +249,8 @@ class TradingAgent:
                 return
 
             current_price = None
-            if self.ibkr is not None:
-                current_price = self.ibkr.get_current_price(symbol)
+            if self.broker is not None:
+                current_price = self.broker.get_current_price(symbol)
             if current_price is None or current_price <= 0:
                 current_price = self.price_feed.get_current_price(symbol)
 
@@ -409,7 +421,7 @@ class TradingAgent:
         Generate and email the end-of-day trading report.
 
         Called after ``close_all_positions()`` completes, before
-        ``_disconnect_ibkr()`` so that portfolio state is still available.
+        ``_disconnect_broker()`` so that portfolio state is still available.
         """
         try:
             session_date = self.session.get_session_date()
@@ -539,7 +551,7 @@ class TradingAgent:
         5. On normal session end or shutdown signal, disconnect and log summary.
         """
         logger.info("=" * 70)
-        logger.info("NSE Nifty 50 Trading Agent — starting up")
+        logger.info("%s Trading Agent (%s) — starting up", config.market.exchange, ACTIVE_MARKET)
         logger.info("=" * 70)
 
         # Start the ticker fetcher immediately so the dashboard gets data
@@ -575,10 +587,10 @@ class TradingAgent:
             logger.info("Shutdown requested before market open — exiting.")
             return
 
-        # --- Step 2: Connect to IBKR ---
-        if not self._connect_ibkr():
+        # --- Step 2: Connect to Broker ---
+        if not self._connect_broker():
             logger.critical(
-                "Cannot establish Zerodha connection — aborting agent run."
+                "Cannot establish broker connection — aborting agent run."
             )
             return
 
@@ -595,9 +607,9 @@ class TradingAgent:
                     logger.info("Market session has ended — exiting scan loop.")
                     break
 
-                # a. Sync portfolio from IBKR
+                # a. Sync portfolio from broker
                 try:
-                    self.portfolio.update(self.ibkr)
+                    self.portfolio.update(self.broker)
                 except Exception as exc:
                     logger.error(
                         "Portfolio update failed: %s", exc, exc_info=True
@@ -715,7 +727,7 @@ class TradingAgent:
 
             self.send_eod_report()
             self.ticker_fetcher.stop()
-            self._disconnect_ibkr()
+            self._disconnect_broker()
             logger.info("=" * 70)
             logger.info("TradingAgent shutdown complete.")
             logger.info("=" * 70)
