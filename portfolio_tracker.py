@@ -16,6 +16,7 @@ Outputs
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -141,6 +142,27 @@ class PortfolioTracker:
         except OSError as exc:
             logger.error("Failed to write trade to CSV: %s", exc, exc_info=True)
 
+    def _dump_local_positions(self) -> None:
+        """Dump the local open_positions to a JSON file for the dashboard."""
+        try:
+            data_dir = os.path.dirname(config.agent.trades_csv)
+            out_path = os.path.join(data_dir, "local_positions.json")
+            with open(out_path, "w") as f:
+                json.dump(self.open_positions, f, indent=2)
+        except OSError as exc:
+            logger.error("Failed to dump local positions: %s", exc, exc_info=True)
+
+    def _dump_local_summary(self) -> None:
+        """Dump the local summary to a JSON file for the dashboard."""
+        try:
+            data_dir = os.path.dirname(config.agent.trades_csv)
+            out_path = os.path.join(data_dir, "local_summary.json")
+            summary_data = self.get_summary()
+            with open(out_path, "w") as f:
+                json.dump(summary_data, f, indent=2)
+        except OSError as exc:
+            logger.error("Failed to dump local summary: %s", exc, exc_info=True)
+
     # ------------------------------------------------------------------
     # State management
     # ------------------------------------------------------------------
@@ -164,7 +186,8 @@ class PortfolioTracker:
             self.portfolio_value = summary.get("NetLiquidation", self.portfolio_value)
             self.cash = summary.get("AvailableFunds", self.cash)
             self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
-            self.open_positions = positions
+            if positions is not None:
+                self.open_positions = positions
 
             # Capture session-start NAV on the first update each trading day.
             today = str(date.today())
@@ -183,6 +206,9 @@ class PortfolioTracker:
                 len(self.open_positions),
                 self.daily_pnl,
             )
+            
+            self._dump_local_positions()
+            self._dump_local_summary()
 
         except Exception as exc:
             logger.error(
@@ -284,6 +310,19 @@ class PortfolioTracker:
                 (self.daily_spent / self._wallet.daily_spend_cap * 100)
                 if self._wallet.daily_spend_cap > 0 else 0,
             )
+            
+            # Update local portfolio state for offline dashboard support
+            if symbol not in self.open_positions:
+                self.open_positions[symbol] = {"quantity": 0, "avg_cost": 0.0, "market_value": 0.0}
+            pos = self.open_positions[symbol]
+            old_qty = int(pos.get("quantity", 0))
+            old_cost = float(pos.get("avg_cost", 0.0))
+            new_qty = old_qty + quantity
+            if new_qty > 0:
+                pos["avg_cost"] = ((old_qty * old_cost) + (quantity * price)) / new_qty
+            pos["quantity"] = new_qty
+            pos["market_value"] = new_qty * price
+            self.cash -= notional
 
         if action.upper() == "SELL":
             self.closed_trades.append(trade)
@@ -296,6 +335,23 @@ class PortfolioTracker:
                         "total reinvestable today: ₹%.2f",
                         pnl, symbol, self.daily_realised_profit,
                     )
+            
+            # Update local portfolio state for offline dashboard support
+            if symbol in self.open_positions:
+                pos = self.open_positions[symbol]
+                old_qty = int(pos.get("quantity", 0))
+                new_qty = max(0, old_qty - quantity)
+                pos["quantity"] = new_qty
+                pos["market_value"] = new_qty * price
+                if new_qty == 0:
+                    self.open_positions.pop(symbol)
+            self.cash += notional
+            if pnl is not None:
+                self.daily_pnl += pnl
+
+        # Keep portfolio value in sync
+        pos_val = sum(float(pos.get("market_value", 0.0)) for pos in self.open_positions.values())
+        self.portfolio_value = self.cash + pos_val
 
         self._append_to_csv(trade)
 
@@ -306,6 +362,9 @@ class PortfolioTracker:
             f"₹{pnl:.2f}" if pnl is not None else "N/A",
             exit_reason or "N/A",
         )
+        
+        self._dump_local_positions()
+        self._dump_local_summary()
 
     # ------------------------------------------------------------------
     # Reporting

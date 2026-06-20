@@ -236,6 +236,22 @@ class AgentConfig:
 
 
 @dataclass
+class AIConfig:
+    """AI Validation settings."""
+
+    enabled: bool = field(
+        default_factory=lambda: str(os.getenv("AI_VALIDATION_ENABLED", "false")).lower() == "true"
+    )
+    """Whether to run AI validation on trade decisions."""
+
+    model: str = "gemini-2.5-flash"
+    """Gemini model to use (e.g. gemini-2.5-flash, gemini-2.5-pro)."""
+
+    validate_sells: bool = False
+    """If True, also validate SELL decisions. If False, only validate BUYs."""
+
+
+@dataclass
 class Config:
     """Master configuration object."""
 
@@ -248,9 +264,11 @@ class Config:
     sentiment: SentimentConfig = field(default_factory=SentimentConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    ai: AIConfig = field(default_factory=AIConfig)
 
     # ---------- External API keys (read from environment) ----------
     eod_api_key: str = field(default_factory=lambda: os.getenv("EOD_API_KEY", ""))
+    gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
 
     def __post_init__(self) -> None:
         """Validate critical settings at construction time."""
@@ -271,4 +289,5 @@ class Config:
 # Module-level singleton — import directly from config for convenience.
 # ---------------------------------------------------------------------------
 config: Config = Config()
+
 

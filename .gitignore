@@ -5,3 +5,7 @@ __pycache__/
 logs/
 data/kite_access_token.txt
 data/trades.csv
+data/*.pkl
+data/*.json
+data/*.csv
+

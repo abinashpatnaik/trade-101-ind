@@ -29,10 +29,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
+import os
+
 # ---------------------------------------------------------------------------
 # Module-level configuration
 # ---------------------------------------------------------------------------
-_GATEWAY_URL: str = "https://localhost:5000"
+_GATEWAY_URL: str = os.getenv("IBKR_GATEWAY_URL", "https://localhost:5000")
 
 
 class IBKRConnector:
@@ -51,7 +53,7 @@ class IBKRConnector:
     ...     print(summary)
     """
 
-    BASE_URL: str = "https://localhost:5000/v1/api"
+    BASE_URL: str = f"{_GATEWAY_URL}/v1/api"
 
     def __init__(self) -> None:
         self._session = requests.Session()

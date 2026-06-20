@@ -27,16 +27,7 @@ Signals SIGINT (Ctrl-C) and SIGTERM both trigger a graceful shutdown that
 closes all open positions before exiting.
 """
 
-from __future__ import annotations
-
-import logging
-import logging.handlers
-import os
-import signal
-import sys
-import time
-from typing import Optional
-
+import json
 from config import config
 from decision_engine import DecisionEngine, Decision
 from zerodha_connector import ZerodhaConnector as IBKRConnector
@@ -49,6 +40,11 @@ from report_sender import ReportSender
 from learning_engine import LearningEngine
 from sentiment_engine import SentimentEngine
 from trend_engine import TrendEngine
+
+# ML Validator & Scanner additions
+from ai_validator import AIValidator
+from continuous_learning import ContinuousLearning
+from ticker_fetcher import TickerFetcher
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -142,6 +138,23 @@ class TradingAgent:
         # Agent state flags
         self._running = False
         self._shutdown_requested = False
+
+        # ML Validator, Continuous Learning, and Ticker Fetcher Subsystems
+        self.ai_validator = AIValidator()
+        self.continuous_learning = ContinuousLearning()
+        self.ticker_fetcher = TickerFetcher()
+        self._current_signals = {}
+        
+        # XGBoost model bootstrap training check
+        if config.ai.enabled and self.ai_validator.model is None:
+            logger.info("XGBoost model not found. Bootstrapping initial training...")
+            try:
+                from ml_trainer import train_model
+                train_model()
+                self.ai_validator.enabled = True
+                self.ai_validator._load_model()
+            except Exception as e:
+                logger.error("XGBoost model bootstrap training failed: %s", e)
 
         # Register OS-level shutdown handlers.
         signal.signal(signal.SIGINT, self.on_shutdown)
@@ -254,6 +267,18 @@ class TradingAgent:
             except Exception:
                 pass  # Headlines are informational only; ignore errors.
 
+            # Save signal for dashboard
+            self._current_signals[symbol] = {
+                "symbol": symbol,
+                "price": current_price,
+                "changePct": 0.0,
+                "rsi": trend_signal.rsi,
+                "trendScore": trend_signal.overall_trend,
+                "macdSignal": trend_signal.macd_signal,
+                "emaSignal": trend_signal.ema_signal,
+                "signal": "HOLD"
+            }
+
             # --- 4. Decision ---
             portfolio_state = {
                 "portfolio_value": self.portfolio.portfolio_value,
@@ -269,14 +294,37 @@ class TradingAgent:
                 portfolio=portfolio_state,
             )
 
+            # --- 4.5 AI Validation ---
+            decision = self.ai_validator.validate_decision(
+                symbol=symbol,
+                trend_signal=trend_signal,
+                sentiment_score=sentiment_score,
+                decision=decision,
+            )
+
+            # --- 4.6 Continuous Learning Log ---
+            self.continuous_learning.log_daily_features(
+                symbol=symbol,
+                trend_signal=trend_signal,
+                sentiment_score=sentiment_score
+            )
+
             logger.info(
-                "Decision — %s: action=%s confidence=%.3f score=%.3f | %s",
+                "Final Decision — %s: action=%s confidence=%.3f score=%.3f | %s",
                 symbol,
                 decision.action,
                 decision.confidence,
                 decision.combined_score,
                 decision.reason[:120],
             )
+            
+            # Update signal for dashboard with final action
+            if symbol in self._current_signals:
+                self._current_signals[symbol]["signal"] = decision.action
+                self._current_signals[symbol]["confidence"] = int(decision.confidence * 100)
+                if decision.ai_decision:
+                    self._current_signals[symbol]["aiDecision"] = decision.ai_decision
+                    self._current_signals[symbol]["aiReason"] = decision.ai_reason
 
             # --- 5. Execute ---
             if decision.action != "HOLD" and self.executor is not None:
@@ -494,6 +542,9 @@ class TradingAgent:
         logger.info("NSE Nifty 50 Trading Agent — starting up")
         logger.info("=" * 70)
 
+        # Start the ticker fetcher immediately so the dashboard gets data
+        self.ticker_fetcher.start()
+
         # --- Step 1: Wait for market open ---
         if not self.session.is_market_open():
             secs = self.session.seconds_to_open()
@@ -506,6 +557,16 @@ class TradingAgent:
                 # Sleep in chunks so SIGINT is handled promptly.
                 slept = 0.0
                 while slept < secs and not self._shutdown_requested:
+                    # Check if we should run the pre-market scanner
+                    if self.session.is_pre_market() and not getattr(self, "_scanner_run_today", False):
+                        logger.info("Pre-market window detected. Running sector scanner...")
+                        try:
+                            import sector_scanner
+                            sector_scanner.run_scanner()
+                            self._scanner_run_today = True
+                        except Exception as e:
+                            logger.error("Sector scanner failed: %s", e)
+
                     chunk = min(30.0, secs - slept)
                     time.sleep(chunk)
                     slept += chunk
@@ -557,6 +618,13 @@ class TradingAgent:
                         self.session.minutes_remaining(),
                     )
                     self.close_all_positions(reason="EOD")
+                    
+                    # Trigger EOD model learning
+                    try:
+                        self.continuous_learning.retrain_model_if_needed()
+                    except Exception as exc:
+                        logger.error("Continuous learning retrain failed: %s", exc)
+                        
                     # Wait for session to actually close then exit.
                     remaining_secs = self.session.minutes_remaining() * 60
                     logger.info(
@@ -565,18 +633,40 @@ class TradingAgent:
                     time.sleep(max(0, remaining_secs + 5))
                     break
 
-                # d. Per-symbol scan
+                # d. Per-symbol scan (using daily targets from sector scanner if available)
+                try:
+                    data_dir = os.path.dirname(config.agent.trades_csv)
+                    targets_file = os.path.join(data_dir, "daily_targets.json")
+                    daily_targets = config.universe.tickers
+                    if os.path.exists(targets_file):
+                        with open(targets_file, "r") as f:
+                            parsed_targets = json.load(f)
+                            if parsed_targets and isinstance(parsed_targets, list):
+                                daily_targets = parsed_targets
+                except Exception as exc:
+                    logger.warning("Failed to load daily_targets.json, falling back to config: %s", exc)
+                    daily_targets = config.universe.tickers
+
                 logger.info(
                     "--- Scan loop | %s | %d tickers | %.1f min remaining ---",
                     self.session.get_session_date(),
-                    len(config.universe.tickers),
+                    len(daily_targets),
                     self.session.minutes_remaining(),
                 )
 
-                for symbol in config.universe.tickers:
+                for symbol in daily_targets:
                     if self._shutdown_requested:
                         break
                     self._process_symbol(symbol)
+
+                # Dump signals for dashboard
+                try:
+                    data_dir = os.path.dirname(config.agent.trades_csv)
+                    out_path = os.path.join(data_dir, "local_signals.json")
+                    with open(out_path, "w") as f:
+                        json.dump(list(self._current_signals.values()), f, indent=2)
+                except Exception as exc:
+                    logger.error("Failed to dump local signals: %s", exc, exc_info=True)
 
                 # e. Portfolio summary log
                 summary = self.portfolio.get_summary()
@@ -624,6 +714,7 @@ class TradingAgent:
             )
 
             self.send_eod_report()
+            self.ticker_fetcher.stop()
             self._disconnect_ibkr()
             logger.info("=" * 70)
             logger.info("TradingAgent shutdown complete.")

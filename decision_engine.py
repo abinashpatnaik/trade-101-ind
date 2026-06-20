@@ -69,6 +69,8 @@ class Decision:
     stop_loss_price: float       # 0.0 for HOLD/SELL-to-close
     take_profit_price: float     # 0.0 for HOLD/SELL-to-close
     combined_score: float        # [-1.0, 1.0]
+    ai_decision: Optional[str] = None
+    ai_reason: Optional[str] = None
 
 
 class DecisionEngine:
@@ -191,12 +193,13 @@ class DecisionEngine:
         symbol: str,
         trend_signal: "TrendSignal",
         portfolio: Dict,
+        current_price: float,
     ) -> bool:
         """
         Detect a momentum reversal that warrants early profit-taking.
 
         Returns True (i.e. EXIT signal) if ALL of the following are true:
-          1. The symbol IS currently held (in portfolio open_positions).
+          1. The symbol IS currently held (in portfolio open_positions) and at a profit.
           2. RSI > 65 (approaching overbought — profit-taking zone).
           3. MACD signal is 'bearish' (momentum fading).
           4. EMA signal is 'bearish' OR VWAP signal is 'below' (price weakening).
@@ -209,6 +212,8 @@ class DecisionEngine:
             ``TrendSignal`` dataclass from TrendEngine.analyse().
         portfolio:
             Dict with at minimum ``{'open_positions': dict}``.
+        current_price:
+            Latest traded price.
 
         Returns
         -------
@@ -219,6 +224,11 @@ class DecisionEngine:
         # Condition 1: Symbol must be held.
         if symbol not in open_positions:
             return False
+
+        position = open_positions[symbol]
+        avg_cost = float(position.get("avg_cost", current_price))
+        if current_price < avg_cost:
+            return False  # Do not take early profit if we are currently at a loss
 
         rsi: float = float(trend_signal.rsi)
         macd: str = str(trend_signal.macd_signal).lower()
@@ -299,7 +309,7 @@ class DecisionEngine:
         # ---------------------------------------------------------------
         # Momentum reversal override (checked before BUY/SELL/HOLD logic)
         # ---------------------------------------------------------------
-        if self.detect_reversal(symbol, trend_signal, portfolio):
+        if self.detect_reversal(symbol, trend_signal, portfolio, current_price):
             if already_held:
                 position = open_positions[symbol]
                 quantity = int(position.get("quantity", 0))
@@ -483,6 +493,22 @@ class DecisionEngine:
 
             position = open_positions[symbol]
             quantity = int(position.get("quantity", 0))
+            avg_cost = float(position.get("avg_cost", current_price))
+
+            # Hold losing positions unless severely downward (-0.50 threshold)
+            if current_price < avg_cost and combined_score > -0.50:
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"SELL signal (score={combined_score:.3f}) but {symbol} "
+                        "is currently at a loss. Holding for recovery unless severe downturn."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score,
+                )
 
             if quantity <= 0:
                 return Decision(

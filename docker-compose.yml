@@ -14,6 +14,10 @@ services:
       - KITE_USER_ID=${KITE_USER_ID}
       - KITE_PASSWORD=${KITE_PASSWORD}
       - KITE_TOTP_SECRET=${KITE_TOTP_SECRET}
+      - TRADING_MODE=${TRADING_MODE:-paper}
+      - EOD_API_KEY=${EOD_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-false}
       - GMAIL_ADDRESS=${GMAIL_ADDRESS}
       - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
@@ -21,4 +25,22 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
+    restart: unless-stopped
+
+  # Web Dashboard
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: nse-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
+      - TRADES_CSV_PATH=/data/trades.csv
+      - AGENT_LOG_PATH=/logs/agent.log
+    volumes:
+      - ./logs:/logs
+      - ./data:/data
     restart: unless-stopped

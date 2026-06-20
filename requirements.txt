@@ -9,3 +9,6 @@ urllib3>=2.0.0
 feedparser>=6.0.0
 kiteconnect
 pyotp
+xgboost
+scikit-learn
+joblib
