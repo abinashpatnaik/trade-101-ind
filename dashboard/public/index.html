@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NSE Nifty 50 Trading Dashboard</title>
+    <title>Trading Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -430,14 +430,14 @@
         <header>
             <h1>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-                NSE Nifty 50 Trading Dashboard
+                <span id="dashboard-title">Trading Dashboard</span>
                 <span id="loading" class="loader" style="display: none;"></span>
             </h1>
             <div class="header-controls">
                 <div id="health-badges" style="display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end;">
                     <div id="health-dashboard" class="status-badge offline">Dashboard: ...</div>
                     <div id="health-agent" class="status-badge offline">Agent: ...</div>
-                    <div id="health-ibeam" class="status-badge offline">IB Gateway: ...</div>
+                    <div id="health-ibeam" class="status-badge offline">Broker: ...</div>
                 </div>
                 <button class="theme-toggle" id="theme-toggle" aria-label="Toggle Theme">
                     ☀️
@@ -455,12 +455,12 @@
         <div class="grid">
             <div class="card tile-green">
                 <h2>Net Asset Value</h2>
-                <div class="metric" id="nav">₹0.00</div>
-                <div class="metric-sub" id="daily-pnl">₹0.00 (0.00%) Today</div>
+                <div class="metric" id="nav">0.00</div>
+                <div class="metric-sub" id="daily-pnl">0.00 (0.00%) Today</div>
             </div>
             <div class="card">
                 <div class="card-title">Available Cash</div>
-                <div class="metric" id="cash">₹0.00</div>
+                <div class="metric" id="cash">0.00</div>
                 <div class="metric-sub" style="color: var(--text-muted)">Available for trading</div>
             </div>
             <div class="card tile-purple">
@@ -494,7 +494,7 @@
                     <h2 style="margin: 0;">Daily Trading Audit</h2>
                     <div style="text-align: right;">
                         <span style="font-size: 0.9rem; color: var(--text-muted);">Realised P&L Today</span>
-                        <div class="metric" id="audit-total-pnl" style="font-size: 1.5rem;">₹0.00</div>
+                        <div class="metric" id="audit-total-pnl" style="font-size: 1.5rem;">0.00</div>
                     </div>
                 </div>
                 
@@ -528,15 +528,15 @@
             <div class="grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 2rem; gap: 1rem;">
                 <div>
                     <div style="color: var(--text-muted); font-size: 0.85rem;">Total Bought</div>
-                    <div id="modal-bought" class="metric" style="font-size: 1.25rem; font-weight: 600;">₹0.00</div>
+                    <div id="modal-bought" class="metric" style="font-size: 1.25rem; font-weight: 600;">0.00</div>
                 </div>
                 <div>
                     <div class="card-title" style="font-size: 0.8rem;">Total Sold</div>
-                    <div id="modal-sold" class="metric" style="font-size: 1.25rem; font-weight: 600;">₹0.00</div>
+                    <div id="modal-sold" class="metric" style="font-size: 1.25rem; font-weight: 600;">0.00</div>
                 </div>
                 <div>
                     <div class="card-title" style="font-size: 0.8rem;">Net P&L</div>
-                    <div id="modal-pnl" class="metric" style="font-size: 1.25rem; font-weight: 600;">₹0.00</div>
+                    <div id="modal-pnl" class="metric" style="font-size: 1.25rem; font-weight: 600;">0.00</div>
                 </div>
             </div>
 
@@ -572,8 +572,30 @@
         });
 
         // Dashboard Data Fetching
-        const formatMoney = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
+        let MARKET_CONFIG = { market: "IN" };
+        let formatMoney = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
         const formatPct = (val) => (val > 0 ? '+' : '') + parseFloat(val).toFixed(2) + '%';
+
+        async function initMarketConfig() {
+            try {
+                const res = await fetch('/api/market-config');
+                if (res.ok) {
+                    MARKET_CONFIG = await res.json();
+                }
+            } catch (err) {
+                console.error('Failed to load market config', err);
+            }
+
+            if (MARKET_CONFIG.market === "US") {
+                document.title = "US Equities Trading Dashboard";
+                document.getElementById('dashboard-title').innerText = "US Equities Trading Dashboard";
+                formatMoney = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(val);
+            } else {
+                document.title = "NSE Nifty 50 Trading Dashboard";
+                document.getElementById('dashboard-title').innerText = "NSE Nifty 50 Trading Dashboard";
+                formatMoney = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
+            }
+        }
 
         async function fetchDashboardData() {
             document.getElementById('loading').style.display = 'inline-block';
@@ -636,7 +658,7 @@
                 
                 setBadge('health-dashboard', health.dashboard, 'Dashboard');
                 setBadge('health-agent', health.trading_agent, 'Agent');
-                setBadge('health-ibeam', health.ibeam, 'IB Gateway');
+                setBadge('health-ibeam', health.ibeam, MARKET_CONFIG.market === "US" ? "Alpaca" : "Zerodha");
 
                 // Update Positions
                 const posContainer = document.getElementById('positions-table-container');
@@ -779,12 +801,16 @@
         }
 
         // Initial fetch and poll every 5 seconds
-        fetchDashboardData();
-        fetchTradesAudit();
-        setInterval(() => {
+        async function start() {
+            await initMarketConfig();
             fetchDashboardData();
             fetchTradesAudit();
-        }, 5000);
+            setInterval(() => {
+                fetchDashboardData();
+                fetchTradesAudit();
+            }, 5000);
+        }
+        start();
 
         // Modal Logic
         let trendChartInstance = null;

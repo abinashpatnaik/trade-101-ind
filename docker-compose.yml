@@ -64,6 +64,7 @@ services:
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
       - TRADES_CSV_PATH=/data/trades_US.csv
       - AGENT_LOG_PATH=/logs/agent_US.log
+      - MARKET_TYPE=US
     volumes:
       - ./logs:/logs
       - ./data:/data

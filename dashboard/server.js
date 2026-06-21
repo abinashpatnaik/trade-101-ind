@@ -17,6 +17,9 @@ const https = require("https");
 const { parse } = require("csv-parse/sync");
 const { execSync } = require("child_process");
 const http = require("http");
+const csv = require("csv-parser");
+const moment = require("moment-timezone");
+require("dotenv").config();
 
 const app = express();
 
@@ -27,6 +30,7 @@ const app = express();
 const TRADES_CSV = process.env.TRADES_CSV_PATH || "/data/trades.csv";
 const AGENT_LOG = process.env.AGENT_LOG_PATH || "/logs/agent.log";
 const IBKR_GATEWAY = process.env.IBKR_GATEWAY_URL || "https://localhost:5000";
+const MARKET_TYPE = (process.env.MARKET_TYPE || "IN").toUpperCase();
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 // ---------------------------------------------------------------------------
@@ -122,39 +126,38 @@ function today() {
   return new Date().toLocaleDateString("en-CA");
 }
 
-/** Returns true if the NSE is currently open (09:15–15:30 IST, Mon–Fri). */
-function isNSEOpen() {
+/** Returns true if the configured market is currently open. */
+function isMarketOpen() {
   const now = new Date();
-  const kolkata = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-  );
-  const day = kolkata.getDay();
-  if (day === 0 || day === 6) return false;
-  const totalMins = kolkata.getHours() * 60 + kolkata.getMinutes();
-  return totalMins >= 555 && totalMins <= 930; // 09:15–15:30
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function getActiveAccountId() {
-  try {
-    const accounts = await ibkrGet("/portfolio/accounts");
-    const paperEnabled = String(process.env.PAPER_TRADING_ENABLED || "true").toLowerCase() !== "false";
-    let accountId = null;
-    if (Array.isArray(accounts)) {
-      const targetAcc = accounts.find(acc => {
-        const id = acc.id || acc.accountId || "";
-        return paperEnabled ? id.startsWith("D") : !id.startsWith("D");
-      });
-      accountId = targetAcc?.id || targetAcc?.accountId || accounts[0]?.id || accounts[0]?.accountId || null;
-    }
-    return accountId;
-  } catch {
-    return null;
+  
+  if (MARKET_TYPE === "US") {
+    // US Market: 09:30–16:00 America/New_York, Mon-Fri
+    const ny = new Date(
+      now.toLocaleString("en-US", { timeZone: "America/New_York" })
+    );
+    const day = ny.getDay();
+    if (day === 0 || day === 6) return false;
+    const totalMins = ny.getHours() * 60 + ny.getMinutes();
+    return totalMins >= 570 && totalMins < 960; // 09:30–16:00
+  } else {
+    // IN Market: 09:15–15:30 Asia/Kolkata, Mon-Fri
+    const kolkata = new Date(
+      now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+    );
+    const day = kolkata.getDay();
+    if (day === 0 || day === 6) return false;
+    const totalMins = kolkata.getHours() * 60 + kolkata.getMinutes();
+    return totalMins >= 555 && totalMins <= 930; // 09:15–15:30
   }
 }
+
+// ---------------------------------------------------------------------------
+// Market Configuration Route
+// ---------------------------------------------------------------------------
+
+app.get("/api/market-config", (req, res) => {
+  res.json({ market: MARKET_TYPE });
+});
 
 // ---------------------------------------------------------------------------
 // Middleware
@@ -311,7 +314,7 @@ app.get("/api/portfolio", async (_req, res) => {
       winRate: Math.round(winRate * 10) / 10,
       tradesToday: trades.length,
       agentStatus: agentStatus,
-      marketOpen: isNSEOpen(),
+      marketOpen: isMarketOpen(),
       lastUpdated: new Date().toISOString(),
     });
   } catch {
@@ -572,24 +575,22 @@ app.get("/api/ai-reasoning", (_req, res) => {
   }
 });
 
-function isMarketOpen() {
-  const now = new Date();
-  const options = { timeZone: 'Europe/London', hour: 'numeric', minute: 'numeric', weekday: 'long', hour12: false };
-  const formatter = new Intl.DateTimeFormat('en-GB', options);
-  const parts = formatter.formatToParts(now);
-  let hour = 0, minute = 0, weekday = '';
-  for (const part of parts) {
-    if (part.type === 'hour') hour = parseInt(part.value, 10);
-    if (part.type === 'minute') minute = parseInt(part.value, 10);
-    if (part.type === 'weekday') weekday = part.value;
+async function getActiveAccountId() {
+  try {
+    const accounts = await ibkrGet("/portfolio/accounts");
+    const paperEnabled = String(process.env.PAPER_TRADING_ENABLED || "true").toLowerCase() !== "false";
+    let accountId = null;
+    if (Array.isArray(accounts)) {
+      const targetAcc = accounts.find(acc => {
+        const id = acc.id || acc.accountId || "";
+        return paperEnabled ? id.startsWith("D") : !id.startsWith("D");
+      });
+      accountId = targetAcc?.id || targetAcc?.accountId || accounts[0]?.id || accounts[0]?.accountId || null;
+    }
+    return accountId;
+  } catch {
+    return null;
   }
-  
-  if (weekday === 'Saturday' || weekday === 'Sunday') return false;
-  
-  const time = hour + minute / 60;
-  if (time < 8 || time >= 16.5) return false; // 08:00 to 16:30
-  
-  return true;
 }
 
 /**
@@ -705,8 +706,10 @@ app.use((err, _req, res, _next) => {
 // Start
 // ---------------------------------------------------------------------------
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`NSE Trading Dashboard listening on port ${PORT}`);
-  console.log(`Trades CSV:   ${TRADES_CSV}`);
-  console.log(`Agent Log:    ${AGENT_LOG}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`${MARKET_TYPE} Trading Dashboard listening on port ${PORT}`);
+    console.log(`Trades CSV:   ${TRADES_CSV}`);
+    console.log(`Agent Log:    ${AGENT_LOG}`);
+  });
+}
