@@ -58,7 +58,7 @@ services:
       dockerfile: Dockerfile
     container_name: nse-dashboard
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
