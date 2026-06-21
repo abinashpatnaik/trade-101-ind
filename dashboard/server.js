@@ -17,9 +17,6 @@ const https = require("https");
 const { parse } = require("csv-parse/sync");
 const { execSync } = require("child_process");
 const http = require("http");
-const csv = require("csv-parser");
-const moment = require("moment-timezone");
-require("dotenv").config();
 
 const app = express();
 
