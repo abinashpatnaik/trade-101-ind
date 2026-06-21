@@ -41,6 +41,9 @@ let ibkrCookie = "";
 
 /** Fetch JSON from the IBKR CP Gateway. Returns null on any error. */
 function ibkrGet(apiPath) {
+  if (MARKET_TYPE === "US") {
+    return Promise.resolve(null);
+  }
   return new Promise((resolve) => {
     const url = `${IBKR_GATEWAY}/v1/api${apiPath}`;
     const options = { 
