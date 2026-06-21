@@ -65,6 +65,8 @@ class PriceFeed:
     def _yahoo_symbol(symbol: str) -> str:
         """Convert a symbol to its Yahoo Finance equivalent."""
         symbol = symbol.strip().upper()
+        if ACTIVE_MARKET == "US":
+            return symbol.replace(".", "-") # e.g. BRK.B -> BRK-B for Yahoo
         if not (symbol.endswith(".NS") or symbol.endswith(".BO")):
             return symbol + ".NS"
         return symbol

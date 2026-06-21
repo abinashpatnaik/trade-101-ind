@@ -27,6 +27,8 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
+ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
+
 # ---------------------------------------------------------------------------
 # Keyword scoring dictionaries
 # ---------------------------------------------------------------------------
@@ -75,7 +77,9 @@ _RSS_FEEDS_GENERIC = [
 def _yahoo_rss_url(symbol: str) -> str:
     """Return the Yahoo Finance RSS URL for an NSE ticker."""
     yf_sym = symbol.upper()
-    if not (yf_sym.endswith(".NS") or yf_sym.endswith(".BO")):
+    if ACTIVE_MARKET == "US":
+        yf_sym = yf_sym.replace(".", "-")
+    elif not (yf_sym.endswith(".NS") or yf_sym.endswith(".BO")):
         yf_sym = yf_sym + ".NS"
     return f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={yf_sym}"
 
@@ -88,8 +92,10 @@ def _google_news_rss_url(query: str) -> str:
 
 
 def _yfinance_symbol(symbol: str) -> str:
-    """Convert a ticker to yfinance NSE format (append '.NS')."""
+    """Convert a ticker to yfinance format (append '.NS' if not US)."""
     sym = symbol.upper()
+    if ACTIVE_MARKET == "US":
+        return sym.replace(".", "-")
     if not (sym.endswith(".NS") or sym.endswith(".BO")):
         sym = sym + ".NS"
     return sym

@@ -19,6 +19,8 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
+ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
+
 class ContinuousLearning:
     def __init__(self):
         self._in_docker = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
@@ -85,7 +87,9 @@ class ContinuousLearning:
             try:
                 # Fetch recent prices to see if 5 days have passed for unlabeled rows
                 yf_sym = sym.strip().upper()
-                if not yf_sym.endswith(".NS"):
+                if ACTIVE_MARKET == "US":
+                    yf_sym = yf_sym.replace(".", "-")
+                elif not yf_sym.endswith(".NS"):
                     yf_sym = yf_sym.replace(".", "-") + ".NS"
                     
                 ticker = yf.Ticker(yf_sym)

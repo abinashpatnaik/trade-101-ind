@@ -19,6 +19,8 @@ from config import config
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
+
 # Load symbols from config
 SYMBOLS = config.universe.tickers
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", "ml_validator_model.pkl")
@@ -81,7 +83,9 @@ def train_model():
         try:
             # Resolve Yahoo symbol
             yf_sym = sym.strip().upper()
-            if not yf_sym.endswith(".NS"):
+            if ACTIVE_MARKET == "US":
+                yf_sym = yf_sym.replace(".", "-")
+            elif not yf_sym.endswith(".NS"):
                 yf_sym = yf_sym.replace(".", "-") + ".NS"
                 
             ticker = yf.Ticker(yf_sym)

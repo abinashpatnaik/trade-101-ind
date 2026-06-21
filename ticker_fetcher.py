@@ -9,6 +9,8 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
+ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
+
 class TickerFetcher:
     """
     Background daemon thread that periodically fetches daily price data
@@ -23,8 +25,9 @@ class TickerFetcher:
         self.symbols = []
         for s in config.universe.tickers:
             base = s.strip().upper()
-            if not base.endswith(".NS"):
-                base = base.replace(".", "-")
+            if ACTIVE_MARKET == "US":
+                self.symbols.append(base.replace(".", "-"))
+            elif not base.endswith(".NS"):
                 self.symbols.append(base + ".NS")
             else:
                 self.symbols.append(base)
@@ -59,7 +62,10 @@ class TickerFetcher:
                     ticker_data = []
                     for ysym in self.symbols:
                         # Convert back to bare symbol for the dashboard
-                        sym_bare = ysym.replace(".NS", "").replace("-", ".")
+                        if ACTIVE_MARKET == "US":
+                            sym_bare = ysym.replace("-", ".")
+                        else:
+                            sym_bare = ysym.replace(".NS", "").replace("-", ".")
                         
                         try:
                             # if multiple symbols, closes is a DataFrame with symbols as columns

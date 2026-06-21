@@ -23,6 +23,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from sentiment_engine import _score_headline, _yahoo_rss_url
 from ai_validator import AIValidator
+from config import config
+
+ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
 from trend_engine import TrendEngine, TrendSignal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -39,7 +42,10 @@ TARGETS_FILE = os.path.join(DATA_DIR, "daily_targets.json")
 
 def fetch_rss_sentiment(symbol: str) -> float:
     """Fetch Yahoo Finance RSS feed and calculate average sentiment for a symbol."""
-    yf_sym = f"{symbol}.NS"
+    if ACTIVE_MARKET == "US":
+        yf_sym = symbol.replace(".", "-")
+    else:
+        yf_sym = f"{symbol.replace('.', '-')}.NS"
     url = _yahoo_rss_url(yf_sym)
     try:
         import feedparser
@@ -69,7 +75,10 @@ def run_scanner():
     
     # 1. Bulk Download 1 Month of Data
     logger.info("Downloading 1-month OHLCV data for momentum calculation...")
-    yf_tickers = [f"{t}.NS" for t in tickers]
+    if ACTIVE_MARKET == "US":
+        yf_tickers = [t.replace(".", "-") for t in tickers]
+    else:
+        yf_tickers = [f"{t.replace('.', '-')}.NS" for t in tickers]
     df_all = yf.download(
         " ".join(yf_tickers), 
         period="1mo", 
@@ -96,7 +105,10 @@ def run_scanner():
     sector_metrics = {}
     
     for t in tickers:
-        yf_t = f"{t}.NS"
+        if ACTIVE_MARKET == "US":
+            yf_t = t.replace(".", "-")
+        else:
+            yf_t = f"{t.replace('.', '-')}.NS"
         momentum = 0.0
         if isinstance(df_all.columns, pd.MultiIndex) and yf_t in df_all.columns.levels[0]:
             try:
@@ -152,7 +164,10 @@ def run_scanner():
     if ai_validator.model is None:
         logger.warning("ML model not found or disabled. Defaulting to all candidates as targets.")
         with open(TARGETS_FILE, "w") as f:
-            json.dump([f"{t}.NS" for t in candidate_stocks], f, indent=4)
+            if ACTIVE_MARKET == "US":
+                json.dump([t.replace(".", "-") for t in candidate_stocks], f, indent=4)
+            else:
+                json.dump([f"{t.replace('.', '-')}.NS" for t in candidate_stocks], f, indent=4)
         return
         
     trend_engine = TrendEngine()
@@ -160,7 +175,10 @@ def run_scanner():
     approved_targets = []
     
     for symbol in candidate_stocks:
-        yf_t = f"{symbol}.NS"
+        if ACTIVE_MARKET == "US":
+            yf_t = symbol.replace(".", "-")
+        else:
+            yf_t = f"{symbol.replace('.', '-')}.NS"
         df_symbol = None
         if isinstance(df_all.columns, pd.MultiIndex):
             if yf_t in df_all.columns.levels[0]:
