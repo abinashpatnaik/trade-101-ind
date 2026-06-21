@@ -624,7 +624,9 @@ app.get("/api/apps-health", async (_req, res) => {
     });
   };
 
-  let agentStatus = await getDockerStatus("ftse-trading-agent");
+  const agentContainerName = MARKET_TYPE === "US" ? "us-trading-agent" : "nse-trading-agent";
+  let agentStatus = await getDockerStatus(agentContainerName);
+  
   if (agentStatus === "running" && !isMarketOpen()) {
     agentStatus = "sleeping";
   }
@@ -632,7 +634,7 @@ app.get("/api/apps-health", async (_req, res) => {
   res.json({
     dashboard: "running", // If this responds, it's running
     trading_agent: agentStatus,
-    ibeam: await getDockerStatus("ibeam")
+    ibeam: MARKET_TYPE === "US" ? "running" : await getDockerStatus("ibeam")
   });
 });
 
