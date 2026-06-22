@@ -98,21 +98,32 @@ class OrderExecutor:
         tp_order_id: Optional[int] = None
 
         # --- Stop-loss (Trailing Stop) ---
-        try:
-            sl_order_id = self._ibkr.place_trailing_stop_order(
-                symbol=symbol,
-                action="SELL",
-                quantity=quantity,
-                trail_percent=config.risk.trailing_stop_pct,
-            )
-            logger.info(
-                "Trailing Stop-loss placed for %s @ %.2f%% trail (order_id=%s)",
-                symbol, config.risk.trailing_stop_pct * 100, sl_order_id,
-            )
-        except Exception as exc:
-            logger.error(
-                "Failed to place trailing stop-loss for %s: %s", symbol, exc, exc_info=True
-            )
+        import time
+        for attempt in range(5):
+            try:
+                sl_order_id = self._ibkr.place_trailing_stop_order(
+                    symbol=symbol,
+                    action="SELL",
+                    quantity=quantity,
+                    trail_percent=config.risk.trailing_stop_pct,
+                )
+                logger.info(
+                    "Trailing Stop-loss placed for %s @ %.2f%% trail (order_id=%s)",
+                    symbol, config.risk.trailing_stop_pct * 100, sl_order_id,
+                )
+                break
+            except Exception as exc:
+                if attempt < 4:
+                    logger.warning(
+                        "Trailing stop placement rejected (likely waiting for BUY to fill) for %s. Retrying in 2s...", 
+                        symbol
+                    )
+                    time.sleep(2)
+                else:
+                    logger.error(
+                        "Failed to place trailing stop-loss for %s after 5 attempts: %s", 
+                        symbol, exc, exc_info=True
+                    )
 
         # Note: We skip the static Take-Profit (LMT) order since the trailing
         # stop will automatically lock in profits as the stock price rises.
