@@ -72,7 +72,7 @@ class RiskConfig:
     take_profit_pct: float = 0.04
     max_open_positions: int = 5
     allow_short_selling: bool = False
-    trailing_stop_pct: float = 0.015
+    trailing_stop_pct: float = field(default_factory=lambda: float(os.getenv("TRAILING_STOP_PCT", "0.015")))
 
 
 @dataclass

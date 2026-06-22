@@ -186,6 +186,26 @@ class PortfolioTracker:
             self.cash = summary.get("AvailableFunds", self.cash)
             self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
             if positions is not None:
+                # Detect natively closed positions (e.g., via Alpaca Trailing Stop)
+                for symbol, old_pos in self.open_positions.items():
+                    if symbol not in positions:
+                        current_price = ibkr_connector.get_current_price(symbol)
+                        if current_price is None:
+                            current_price = float(old_pos.get("avg_cost", 0.0))
+                        
+                        qty = int(old_pos.get("quantity", 0))
+                        avg_cost = float(old_pos.get("avg_cost", 0.0))
+                        pnl = (current_price - avg_cost) * qty
+                        
+                        logger.info("Broker natively closed position for %s (e.g. Trailing Stop). Recording SELL.", symbol)
+                        self.record_trade(
+                            symbol=symbol,
+                            action="SELL",
+                            quantity=qty,
+                            price=current_price,
+                            pnl=pnl,
+                            exit_reason="NATIVE_TRAILING_STOP"
+                        )
                 self.open_positions = positions
 
             # Capture session-start NAV on the first update each trading day.

@@ -16,7 +16,7 @@ import os
 from typing import Dict, List, Optional
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopOrderRequest
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopOrderRequest, TrailingStopOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
@@ -208,6 +208,25 @@ class AlpacaConnector:
 
     def place_stop_loss(self, symbol: str, action: str, quantity: int, stop_price: float) -> Optional[str]:
         return self.place_stop_order(symbol, action, quantity, stop_price)
+
+    def place_trailing_stop_order(self, symbol: str, action: str, quantity: int, trail_percent: float) -> Optional[str]:
+        if not self.trading_client:
+            return None
+        try:
+            side = OrderSide.BUY if action.upper() == "BUY" else OrderSide.SELL
+            req = TrailingStopOrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=side,
+                time_in_force=TimeInForce.DAY,
+                trail_percent=round(trail_percent * 100, 2)  # Alpaca expects percentage as e.g. 1.5
+            )
+            order = self.trading_client.submit_order(order_data=req)
+            logger.info("Alpaca TRAILING STOP order placed: %s %d %s, ID: %s, Trail: %.2f%%", action, quantity, symbol, order.id, trail_percent * 100)
+            return str(order.id)
+        except Exception as exc:
+            logger.error("Failed to place trailing stop order for %s: %s", symbol, exc)
+            return None
 
     def place_limit_order(self, symbol: str, action: str, quantity: int, limit_price: float) -> Optional[str]:
         if not self.trading_client:

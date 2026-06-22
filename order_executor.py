@@ -97,39 +97,25 @@ class OrderExecutor:
         sl_order_id: Optional[int] = None
         tp_order_id: Optional[int] = None
 
-        # --- Stop-loss (STP) ---
+        # --- Stop-loss (Trailing Stop) ---
         try:
-            sl_order_id = self._ibkr.place_stop_loss(
+            sl_order_id = self._ibkr.place_trailing_stop_order(
                 symbol=symbol,
                 action="SELL",
                 quantity=quantity,
-                stop_price=stop_loss_price,
+                trail_percent=config.risk.trailing_stop_pct,
             )
             logger.info(
-                "Stop-loss STP placed for %s @ %.4f (order_id=%s)",
-                symbol, stop_loss_price, sl_order_id,
+                "Trailing Stop-loss placed for %s @ %.2f%% trail (order_id=%s)",
+                symbol, config.risk.trailing_stop_pct * 100, sl_order_id,
             )
         except Exception as exc:
             logger.error(
-                "Failed to place stop-loss for %s: %s", symbol, exc, exc_info=True
+                "Failed to place trailing stop-loss for %s: %s", symbol, exc, exc_info=True
             )
 
-        # --- Take-profit (LMT) ---
-        try:
-            tp_order_id = self._ibkr.place_limit_order(
-                symbol=symbol,
-                action="SELL",
-                quantity=quantity,
-                limit_price=take_profit_price,
-            )
-            logger.info(
-                "Take-profit LMT placed for %s @ %.4f (order_id=%s)",
-                symbol, take_profit_price, tp_order_id,
-            )
-        except Exception as exc:
-            logger.error(
-                "Failed to place take-profit for %s: %s", symbol, exc, exc_info=True
-            )
+        # Note: We skip the static Take-Profit (LMT) order since the trailing
+        # stop will automatically lock in profits as the stock price rises.
 
         return OpenOrder(
             symbol=symbol,
@@ -295,93 +281,6 @@ class OrderExecutor:
         )
         return False
 
-    def update_trailing_stops(
-        self,
-        symbol: str,
-        current_price: float,
-    ) -> bool:
-        """
-        Update the trailing high-water mark for *symbol* and trigger a market
-        SELL if the current price drops more than ``_trailing_stop_pct`` from
-        the high.
-
-        Parameters
-        ----------
-        symbol:
-            Bare LSE ticker.
-        current_price:
-            Latest market price.
-
-        Returns
-        -------
-        bool
-            True if the trailing stop fired (position was closed), False
-            otherwise.
-        """
-        order = self._open_orders.get(symbol)
-        if order is None:
-            return False
-
-        if current_price <= 0:
-            return False
-
-        # Advance the high-water mark.
-        if symbol not in self._trailing_high:
-            self._trailing_high[symbol] = current_price
-        if current_price > self._trailing_high[symbol]:
-            self._trailing_high[symbol] = current_price
-            logger.debug(
-                "Trailing high updated for %s: %.4f", symbol, current_price
-            )
-
-        trailing_stop_trigger = self._trailing_high[symbol] * (
-            1.0 - self._trailing_stop_pct
-        )
-
-        if current_price <= trailing_stop_trigger:
-            logger.warning(
-                "TRAILING STOP triggered for %s: price=%.4f <= trigger=%.4f "
-                "(high=%.4f, pct=%.1f%%)",
-                symbol,
-                current_price,
-                trailing_stop_trigger,
-                self._trailing_high[symbol],
-                self._trailing_stop_pct * 100,
-            )
-            # Cancel the existing stop-loss bracket order if present.
-            if order.stop_loss_order_id is not None:
-                try:
-                    self._ibkr.cancel_order(order.stop_loss_order_id)
-                    logger.info(
-                        "Cancelled stop-loss order %s for %s (trailing stop taking over)",
-                        order.stop_loss_order_id, symbol,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Could not cancel stop-loss order %s for %s: %s",
-                        order.stop_loss_order_id, symbol, exc,
-                    )
-
-            # Place a market SELL to close the position immediately.
-            try:
-                self._ibkr.place_market_order(
-                    symbol=symbol,
-                    action="SELL",
-                    quantity=order.quantity,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to place trailing-stop SELL for %s: %s",
-                    symbol, exc, exc_info=True,
-                )
-
-            # Clean up tracking state regardless of order placement outcome.
-            self._open_orders.pop(symbol, None)
-            self._trailing_high.pop(symbol, None)
-            return True
-
-        return False
-
     def check_exit_conditions(
         self,
         symbol: str,
@@ -389,72 +288,10 @@ class OrderExecutor:
         position: Dict,
     ) -> Optional[str]:
         """
-        Software-level exit check as a fallback for cases where IBKR bracket
-        orders are not triggered (e.g. in paper trading, fast gaps, or if the
-        exchange STP/LMT orders were rejected).
-
-        Checks (in order):
-          1. Trailing stop  — tightest guard; fires first.
-          2. Fixed stop-loss — 2% below entry.
-          3. Take-profit    — 4% above entry.
-
-        The caller is responsible for acting on the returned signal by placing
-        a SELL market order (except for TRAILING_STOP, which places its own
-        market order internally).
-
-        Parameters
-        ----------
-        symbol:
-            Bare LSE ticker.
-        current_price:
-            Latest market price.
-        position:
-            Dict with at minimum ``{'quantity': int, 'avg_cost': float}``.
-
-        Returns
-        -------
-        str or None
-            ``'TRAILING_STOP'`` — trailing stop fired (order already placed).
-            ``'STOP_LOSS'``     — fixed stop-loss level hit.
-            ``'TAKE_PROFIT'``   — take-profit level hit.
-            ``None``            — no exit condition triggered.
+        Since we now use native broker trailing stops, this method no longer
+        manages software trailing stops. It will only return None.
+        Native broker execution handles the exit automatically.
         """
-        order = self._open_orders.get(symbol)
-        if order is None:
-            # No tracked bracket entry for this symbol — cannot evaluate.
-            return None
-
-        if current_price <= 0:
-            return None
-
-        # --- 1. Trailing stop (checked first — tighter than fixed SL) ---
-        if self.update_trailing_stops(symbol, current_price):
-            return "TRAILING_STOP"
-
-        # After a trailing stop fires _open_orders[symbol] is removed, so we
-        # must re-fetch to guard the remainder of this method.
-        order = self._open_orders.get(symbol)
-        if order is None:
-            return None
-
-        # --- 2. Fixed stop-loss ---
-        if order.stop_loss_price > 0 and current_price <= order.stop_loss_price:
-            logger.warning(
-                "STOP_LOSS hit for %s: price=%.4f <= sl=%.4f",
-                symbol, current_price, order.stop_loss_price,
-            )
-            self._open_orders.pop(symbol, None)
-            return "STOP_LOSS"
-
-        # --- 3. Take-profit ---
-        if order.take_profit_price > 0 and current_price >= order.take_profit_price:
-            logger.info(
-                "TAKE_PROFIT hit for %s: price=%.4f >= tp=%.4f",
-                symbol, current_price, order.take_profit_price,
-            )
-            self._open_orders.pop(symbol, None)
-            return "TAKE_PROFIT"
-
         return None
 
     def close_position(self, symbol: str, quantity: int) -> bool:
