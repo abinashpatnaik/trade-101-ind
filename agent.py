@@ -654,7 +654,11 @@ class TradingAgent:
                         with open(targets_file, "r") as f:
                             parsed_targets = json.load(f)
                             if parsed_targets and isinstance(parsed_targets, list):
-                                daily_targets = parsed_targets
+                                # Combine core universe and pre-market targets, removing duplicates
+                                combined = set(daily_targets + parsed_targets)
+                                daily_targets = list(combined)
+                                # Sort to maintain some stable ordering
+                                daily_targets.sort()
                 except Exception as exc:
                     logger.warning("Failed to load daily_targets.json, falling back to config: %s", exc)
                     daily_targets = config.universe.tickers
