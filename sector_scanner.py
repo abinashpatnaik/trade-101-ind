@@ -162,12 +162,20 @@ def run_scanner():
     
     ai_validator = AIValidator()
     if ai_validator.model is None:
-        logger.warning("ML model not found or disabled. Defaulting to all candidates as targets.")
-        with open(TARGETS_FILE, "w") as f:
+        logger.warning("ML model not found or disabled. Falling back to non-ML selection.")
+        # Fallback: Just take the top 15 candidate stocks by combined momentum and sentiment
+        candidate_stocks.sort(key=lambda x: stock_metrics[x]["momentum"] + stock_metrics[x]["sentiment"], reverse=True)
+        
+        final_symbols = []
+        for t in candidate_stocks[:15]:
             if ACTIVE_MARKET == "US":
-                json.dump([t.replace(".", "-") for t in candidate_stocks], f, indent=4)
+                final_symbols.append(t.replace(".", "-"))
             else:
-                json.dump([f"{t.replace('.', '-')}.NS" for t in candidate_stocks], f, indent=4)
+                final_symbols.append(f"{t.replace('.', '-')}.NS")
+                
+        logger.info(f"Fallback selected {len(final_symbols)} final targets.")
+        with open(TARGETS_FILE, "w") as f:
+            json.dump(final_symbols, f, indent=4)
         return
         
     trend_engine = TrendEngine()
@@ -210,7 +218,7 @@ def run_scanner():
             }])
             prob_success = ai_validator.model.predict_proba(features)[0][1]
             
-            if prob_success >= 0.55:  # Slightly lower threshold for pre-market broad scanning
+            if prob_success >= 0.40:  # Much lower threshold for pre-market broad scanning (just building a watchlist)
                 approved_targets.append({
                     "symbol": yf_t,
                     "sector": stock_metrics[symbol]["sector"],
@@ -223,6 +231,22 @@ def run_scanner():
             
     approved_targets.sort(key=lambda x: x["ml_confidence"], reverse=True)
     final_targets = approved_targets[:15]
+    
+    if not final_targets:
+        logger.warning("ML strict validation yielded 0 targets. Falling back to top 15 by momentum/sentiment.")
+        candidate_stocks.sort(key=lambda x: stock_metrics[x]["momentum"] + stock_metrics[x]["sentiment"], reverse=True)
+        
+        final_targets = []
+        for s in candidate_stocks[:15]:
+            if ACTIVE_MARKET == "US":
+                yf_t = s.replace(".", "-")
+            else:
+                yf_t = f"{s.replace('.', '-')}.NS"
+            final_targets.append({
+                "symbol": yf_t,
+                "sector": stock_metrics[s]["sector"],
+                "ml_confidence": 0.0
+            })
     
     logger.info(f"Selected {len(final_targets)} final targets for today's trading session.")
     for t in final_targets:
