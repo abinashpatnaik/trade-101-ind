@@ -495,20 +495,7 @@ class DecisionEngine:
             quantity = int(position.get("quantity", 0))
             avg_cost = float(position.get("avg_cost", current_price))
 
-            # Hold losing positions unless severely downward (-0.50 threshold)
-            if current_price < avg_cost and combined_score > -0.50:
-                return Decision(
-                    action="HOLD",
-                    confidence=confidence,
-                    reason=(
-                        f"SELL signal (score={combined_score:.3f}) but {symbol} "
-                        "is currently at a loss. Holding for recovery unless severe downturn."
-                    ),
-                    quantity=0,
-                    stop_loss_price=0.0,
-                    take_profit_price=0.0,
-                    combined_score=combined_score,
-                )
+            # (Removed stubborn hold rule to allow Early Loss Cutting if momentum flips)
 
             if quantity <= 0:
                 return Decision(
