@@ -393,12 +393,12 @@ class DecisionEngine:
                 )
 
             # --- Wallet / daily spend cap check ---
-            remaining_budget = portfolio_state.get("remaining_budget", float("inf"))
-            budget_exhausted = portfolio_state.get("budget_exhausted", False)
+            remaining_budget = portfolio.get("remaining_budget", float("inf"))
+            budget_exhausted = portfolio.get("budget_exhausted", False)
             if budget_exhausted:
-                daily_spent = portfolio_state.get("daily_spent", 0)
-                daily_cap = portfolio_state.get("daily_spend_cap", 0)
-                reinvested = portfolio_state.get("daily_realised_profit", 0)
+                daily_spent = portfolio.get("daily_spent", 0)
+                daily_cap = portfolio.get("daily_spend_cap", 0)
+                reinvested = portfolio.get("daily_realised_profit", 0)
                 logger.info(
                     "Wallet cap reached for %s — spent £%.2f / cap £%.2f "
                     "(reinvested £%.2f). Holding — will reinvest when profits come in.",
