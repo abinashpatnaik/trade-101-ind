@@ -485,7 +485,8 @@ app.get("/api/ticker", async (_req, res) => {
 app.get("/api/stock/:symbol", async (req, res) => {
   const symbol = req.params.symbol;
   try {
-    const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.NS?range=6mo&interval=1d`, {
+    const suffix = MARKET_TYPE === 'IN' ? '.NS' : MARKET_TYPE === 'UK' ? '.L' : '';
+    const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}${suffix}?range=6mo&interval=1d`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       }
