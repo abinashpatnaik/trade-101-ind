@@ -158,11 +158,11 @@ class OrderExecutor:
                 try:
                     self._ibkr.cancel_order(oid)
                     logger.info(
-                        "Cancelled %s order %d for %s", label, oid, symbol
+                        "Cancelled %s order %s for %s", label, oid, symbol
                     )
                 except Exception as exc:
                     logger.warning(
-                        "Could not cancel %s order %d for %s: %s",
+                        "Could not cancel %s order %s for %s: %s",
                         label, oid, symbol, exc,
                     )
 
@@ -239,7 +239,7 @@ class OrderExecutor:
             self._trailing_high[symbol] = current_price
 
             logger.info(
-                "BUY executed for %s: qty=%d entry_id=%d sl=%.4f tp=%.4f",
+                "BUY executed for %s: qty=%d entry_id=%s sl=%.4f tp=%.4f",
                 symbol,
                 decision.quantity,
                 entry_order_id,
@@ -284,7 +284,7 @@ class OrderExecutor:
             self._open_orders.pop(symbol, None)
 
             logger.info(
-                "SELL executed for %s: qty=%d order_id=%d",
+                "SELL executed for %s: qty=%d order_id=%s",
                 symbol, decision.quantity, sell_order_id,
             )
             return True
@@ -353,12 +353,12 @@ class OrderExecutor:
                 try:
                     self._ibkr.cancel_order(order.stop_loss_order_id)
                     logger.info(
-                        "Cancelled stop-loss order %d for %s (trailing stop taking over)",
+                        "Cancelled stop-loss order %s for %s (trailing stop taking over)",
                         order.stop_loss_order_id, symbol,
                     )
                 except Exception as exc:
                     logger.warning(
-                        "Could not cancel stop-loss order %d for %s: %s",
+                        "Could not cancel stop-loss order %s for %s: %s",
                         order.stop_loss_order_id, symbol, exc,
                     )
 
@@ -482,7 +482,7 @@ class OrderExecutor:
             )
             self._open_orders.pop(symbol, None)
             logger.info(
-                "Position closed for %s: qty=%d order_id=%d",
+                "Position closed for %s: qty=%d order_id=%s",
                 symbol, quantity, order_id,
             )
             return True
