@@ -688,10 +688,10 @@ class TradingAgent:
                 summary = self.portfolio.get_summary()
                 logger.info(
                     "Portfolio: nav=%s%.2f cash=%s%.2f positions=%d daily_pnl=%s%.2f (%.3f%%)",
-                    summary["portfolio_value"],
-                    summary["cash"],
+                    CUR_SYM, summary["portfolio_value"],
+                    CUR_SYM, summary["cash"],
                     summary["open_positions_count"],
-                    summary["daily_pnl"],
+                    CUR_SYM, summary["daily_pnl"],
                     summary["daily_loss_pct"],
                 )
 
@@ -724,9 +724,9 @@ class TradingAgent:
                 "total_pnl=%s%.2f best=%s%.2f worst=%s%.2f",
                 perf["num_trades"],
                 perf["win_rate"],
-                perf["total_pnl"],
-                perf["best_trade"],
-                perf["worst_trade"],
+                CUR_SYM, perf["total_pnl"],
+                CUR_SYM, perf["best_trade"],
+                CUR_SYM, perf["worst_trade"],
             )
 
             self.send_eod_report()

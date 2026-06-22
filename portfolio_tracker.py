@@ -88,9 +88,8 @@ class PortfolioTracker:
         self._init_csv()
 
         logger.info(
-            "PortfolioTracker initialised — daily spend cap: ₹%.2f reinvest: %s",
-            self._wallet.daily_spend_cap,
-            self._wallet.reinvest_profits,
+            "PortfolioTracker initialised — daily spend cap: %s%.2f reinvest: %s",
+            CUR_SYM, self._wallet.daily_spend_cap, self._wallet.reinvest_profits,
         )
 
     # ------------------------------------------------------------------
@@ -199,12 +198,9 @@ class PortfolioTracker:
                 )
 
             logger.debug(
-                "Portfolio updated: nav=₹%.2f cash=₹%.2f "
-                "open_positions=%d daily_pnl=₹%.2f",
-                self.portfolio_value,
-                self.cash,
-                len(self.open_positions),
-                self.daily_pnl,
+                "Portfolio updated: nav=%s%.2f cash=%s%.2f "
+                "open_positions=%d daily_pnl=%s%.2f",
+                CUR_SYM, self.portfolio_value, CUR_SYM, self.cash, len(self.open_positions), CUR_SYM, self.daily_pnl,
             )
             
             self._dump_local_positions()
@@ -240,11 +236,11 @@ class PortfolioTracker:
         if loss_pct >= self._risk.max_daily_loss_pct:
             logger.warning(
                 "DAILY LOSS LIMIT REACHED: loss_pct=%.2f%% >= max=%.2f%% "
-                "(start=₹%.2f, current=₹%.2f).",
+                "(start=%s%.2f, current=%s%.2f).",
                 loss_pct * 100,
                 self._risk.max_daily_loss_pct * 100,
-                self._session_start_nav,
-                self.portfolio_value,
+                CUR_SYM, self._session_start_nav,
+                CUR_SYM, self.portfolio_value,
             )
             return True
 
@@ -304,9 +300,8 @@ class PortfolioTracker:
             # Track daily spend against the cap
             self.daily_spent += notional
             logger.info(
-                "Wallet | daily_spent=₹%.2f / cap=₹%.2f (%.1f%% used)",
-                self.daily_spent,
-                self._wallet.daily_spend_cap,
+                "Wallet | daily_spent=%s%.2f / cap=%s%.2f (%.1f%% used)",
+                CUR_SYM, self.daily_spent, CUR_SYM, self._wallet.daily_spend_cap,
                 (self.daily_spent / self._wallet.daily_spend_cap * 100)
                 if self._wallet.daily_spend_cap > 0 else 0,
             )
@@ -331,9 +326,9 @@ class PortfolioTracker:
                 self.daily_realised_profit += pnl
                 if self._wallet.reinvest_profits:
                     logger.info(
-                        "Wallet | profit ₹%.2f from %s added to reinvestment pool — "
-                        "total reinvestable today: ₹%.2f",
-                        pnl, symbol, self.daily_realised_profit,
+                        "Wallet | profit %s%.2f from %s added to reinvestment pool — "
+                        "total reinvestable today: %s%.2f",
+                        CUR_SYM, pnl, symbol, CUR_SYM, self.daily_realised_profit,
                     )
             
             # Update local portfolio state for offline dashboard support
@@ -356,9 +351,9 @@ class PortfolioTracker:
         self._append_to_csv(trade)
 
         logger.info(
-            "Trade recorded: %s %s %d @ ₹%.4f notional=₹%.2f pnl=%s reason=%s",
-            action, symbol, quantity, price,
-            trade.notional,
+            "Trade recorded: %s %s %d @ %s%.4f notional=%s%.2f pnl=%s reason=%s",
+            action, symbol, quantity, CUR_SYM, price,
+            CUR_SYM, trade.notional,
             f"{CUR_SYM}{pnl:.2f}" if pnl is not None else "N/A",
             exit_reason or "N/A",
         )

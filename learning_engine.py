@@ -147,8 +147,8 @@ class LearningEngine:
 
         outcome = "WIN" if was_profitable else "LOSS"
         logger.info(
-            "Learning update: %s %s ₹%.2f — updated %d keyword weights",
-            symbol, outcome, pnl, n_updated,
+            "Learning update: %s %s %s%.2f — updated %d keyword weights",
+            symbol, outcome, CUR_SYM, pnl, n_updated,
         )
 
     def get_keyword_score(self, text: str) -> float:
