@@ -12,6 +12,8 @@ import logging
 import os
 from typing import Dict, List, Optional
 
+from config import CUR_SYM
+
 logger = logging.getLogger(__name__)
 
 
