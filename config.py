@@ -228,6 +228,8 @@ def get_us_config() -> Config:
 
 if ACTIVE_MARKET == "US":
     config: Config = get_us_config()
+    CUR_SYM = "$"
 else:
     config: Config = get_india_config()
+    CUR_SYM = "₹"
 

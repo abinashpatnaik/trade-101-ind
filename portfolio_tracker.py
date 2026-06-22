@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, List, Optional
 
-from config import config
+from config import config, CUR_SYM
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +195,7 @@ class PortfolioTracker:
                 self._session_start_nav = self.portfolio_value
                 self._session_date = today
                 logger.info(
-                    "Session start NAV recorded: ₹%.2f", self._session_start_nav
+                    "Session start NAV recorded: %s%.2f", CUR_SYM, self._session_start_nav
                 )
 
             logger.debug(
@@ -359,7 +359,7 @@ class PortfolioTracker:
             "Trade recorded: %s %s %d @ ₹%.4f notional=₹%.2f pnl=%s reason=%s",
             action, symbol, quantity, price,
             trade.notional,
-            f"₹{pnl:.2f}" if pnl is not None else "N/A",
+            f"{CUR_SYM}{pnl:.2f}" if pnl is not None else "N/A",
             exit_reason or "N/A",
         )
         
@@ -468,8 +468,8 @@ class PortfolioTracker:
     def __repr__(self) -> str:
         return (
             f"<PortfolioTracker "
-            f"nav=₹{self.portfolio_value:.2f} "
-            f"cash=₹{self.cash:.2f} "
+            f"nav={CUR_SYM}{self.portfolio_value:.2f} "
+            f"cash={CUR_SYM}{self.cash:.2f} "
             f"positions={len(self.open_positions)} "
-            f"daily_pnl=₹{self.daily_pnl:.2f}>"
+            f"daily_pnl={CUR_SYM}{self.daily_pnl:.2f}>"
         )

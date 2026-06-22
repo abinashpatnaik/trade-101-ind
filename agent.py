@@ -36,7 +36,7 @@ import logging
 import logging.handlers
 from typing import Optional
 
-from config import config
+from config import config, CUR_SYM
 
 ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
 if ACTIVE_MARKET == "US":
@@ -687,7 +687,7 @@ class TradingAgent:
                 # e. Portfolio summary log
                 summary = self.portfolio.get_summary()
                 logger.info(
-                    "Portfolio: nav=₹%.2f cash=₹%.2f positions=%d daily_pnl=₹%.2f (%.3f%%)",
+                    "Portfolio: nav=%s%.2f cash=%s%.2f positions=%d daily_pnl=%s%.2f (%.3f%%)",
                     summary["portfolio_value"],
                     summary["cash"],
                     summary["open_positions_count"],
@@ -721,7 +721,7 @@ class TradingAgent:
             perf = self.portfolio.get_performance()
             logger.info(
                 "Session performance: trades=%d win_rate=%.1f%% "
-                "total_pnl=₹%.2f best=₹%.2f worst=₹%.2f",
+                "total_pnl=%s%.2f best=%s%.2f worst=%s%.2f",
                 perf["num_trades"],
                 perf["win_rate"],
                 perf["total_pnl"],

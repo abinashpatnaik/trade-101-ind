@@ -163,7 +163,7 @@ class EODReportGenerator:
                     row_bg = "#ffffff"
 
                 pnl_str = (
-                    f"₹{pnl_val:+.2f}"
+                    f"{CUR_SYM}{pnl_val:+.2f}"
                     if action == "SELL"
                     else "—"
                 )
@@ -175,7 +175,7 @@ class EODReportGenerator:
                     f"<td style='{_TD};font-weight:600;'>{t.get('symbol','')}</td>"
                     f"<td style='{_TD}'>{action}</td>"
                     f"<td style='{_TD};text-align:right;'>{t.get('quantity','')}</td>"
-                    f"<td style='{_TD};text-align:right;'>₹{self._safe_float(t.get('price',0)):.2f}</td>"
+                    f"<td style='{_TD};text-align:right;'>{CUR_SYM}{self._safe_float(t.get('price',0)):.2f}</td>"
                     f"<td style='{_TD};text-align:right;font-weight:600;color:{pnl_cell_colour};'>{pnl_str}</td>"
                     f"<td style='{_TD}'>{t.get('exit_reason','')}</td>"
                     "</tr>"
@@ -196,9 +196,9 @@ class EODReportGenerator:
                     f"<tr>"
                     f"<td style='{_TD};font-weight:600;'>{sym}</td>"
                     f"<td style='{_TD};text-align:right;'>{qty}</td>"
-                    f"<td style='{_TD};text-align:right;'>₹{avg_cost:.2f}</td>"
-                    f"<td style='{_TD};text-align:right;'>₹{market_value:.2f}</td>"
-                    f"<td style='{_TD};text-align:right;font-weight:600;color:{u_colour};'>₹{unrealised:+.2f}</td>"
+                    f"<td style='{_TD};text-align:right;'>{CUR_SYM}{avg_cost:.2f}</td>"
+                    f"<td style='{_TD};text-align:right;'>{CUR_SYM}{market_value:.2f}</td>"
+                    f"<td style='{_TD};text-align:right;font-weight:600;color:{u_colour};'>{CUR_SYM}{unrealised:+.2f}</td>"
                     "</tr>"
                 )
             positions_section = f"""
@@ -262,13 +262,13 @@ class EODReportGenerator:
           <td width='25%' style='padding:4px;'>
             <div style='background:{pnl_bg};border:1px solid #dde;border-radius:6px;padding:14px;text-align:center;'>
               <p style='margin:0;font-size:11px;color:#7f8c8d;text-transform:uppercase;letter-spacing:1px;'>Session P&amp;L</p>
-              <p style='margin:6px 0 0;font-size:20px;font-weight:700;color:{pnl_colour};'>₹{total_pnl:+.2f}</p>
+              <p style='margin:6px 0 0;font-size:20px;font-weight:700;color:{pnl_colour};'>{CUR_SYM}{total_pnl:+.2f}</p>
             </div>
           </td>
           <td width='25%' style='padding:4px;'>
             <div style='background:#f0f4f8;border:1px solid #dde;border-radius:6px;padding:14px;text-align:center;'>
               <p style='margin:0;font-size:11px;color:#7f8c8d;text-transform:uppercase;letter-spacing:1px;'>Portfolio Value</p>
-              <p style='margin:6px 0 0;font-size:20px;font-weight:700;color:#2c3e50;'>₹{portfolio_value:,.2f}</p>
+              <p style='margin:6px 0 0;font-size:20px;font-weight:700;color:#2c3e50;'>{CUR_SYM}{portfolio_value:,.2f}</p>
             </div>
           </td>
           <td width='25%' style='padding:4px;'>
@@ -370,8 +370,8 @@ class EODReportGenerator:
             "",
             "PERFORMANCE OVERVIEW",
             "-" * 40,
-            f"  Session P&L      : ₹{total_pnl:+,.2f}",
-            f"  Portfolio Value  : ₹{portfolio_value:,.2f}",
+            f"  Session P&L      : {CUR_SYM}{total_pnl:+,.2f}",
+            f"  Portfolio Value  : {CUR_SYM}{portfolio_value:,.2f}",
             f"  Win Rate         : {win_rate:.1f}%",
             f"  Trades Executed  : {num_trades}",
             "",
@@ -392,13 +392,13 @@ class EODReportGenerator:
             for t in trades:
                 action = str(t.get("action", "")).upper()
                 pnl_val = self._safe_float(t.get("pnl", ""))
-                pnl_str = f"₹{pnl_val:+.2f}" if action == "SELL" else "—"
+                pnl_str = f"{CUR_SYM}{pnl_val:+.2f}" if action == "SELL" else "—"
                 price_val = self._safe_float(t.get("price", 0))
                 lines.append(
                     f"{t.get('date',''):<12} {t.get('time',''):<10} "
                     f"{t.get('symbol',''):<8} {action:<6} "
                     f"{str(t.get('quantity','')):>6} "
-                    f"₹{price_val:>9.2f} "
+                    f"{CUR_SYM}{price_val:>9.2f} "
                     f"{pnl_str:>10} "
                     f"{str(t.get('exit_reason','')):.<20}"
                 )
@@ -420,8 +420,8 @@ class EODReportGenerator:
                 market_value = self._safe_float(pos.get("market_value", 0))
                 unrealised = self._safe_float(pos.get("unrealised_pnl", 0))
                 lines.append(
-                    f"{sym:<8} {str(qty):>6} ₹{avg_cost:>9.2f} "
-                    f"₹{market_value:>11.2f} ₹{unrealised:>+15.2f}"
+                    f"{sym:<8} {str(qty):>6} {CUR_SYM}{avg_cost:>9.2f} "
+                    f"{CUR_SYM}{market_value:>11.2f} {CUR_SYM}{unrealised:>+15.2f}"
                 )
 
         lines += [
@@ -503,10 +503,10 @@ class EODReportGenerator:
         )
 
         logger.info(
-            "EOD report generated for %s: trades=%d pnl=₹%.2f win_rate=%.1f%%",
+            "EOD report generated for %s: trades=%d pnl=%s%.2f win_rate=%.1f%%",
             session_date,
             num_trades,
-            total_pnl,
+            CUR_SYM, total_pnl,
             win_rate,
         )
 

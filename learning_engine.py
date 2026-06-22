@@ -35,7 +35,7 @@ import string
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from config import config
+from config import config, CUR_SYM
 
 logger = logging.getLogger(__name__)
 
