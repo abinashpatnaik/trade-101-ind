@@ -134,46 +134,48 @@ class DecisionEngine:
         portfolio_value: float,
         current_price: float,
         atr: float,
-    ) -> int:
+    ) -> float:
         """
-        Adaptive position sizing that works for any account size (£50 to £1M+).
+        Adaptive position sizing that works for any account size ($50 to $1M+).
+        Returns fractional share quantities for Alpaca.
 
-        For small accounts (< £500): uses all available funds for a single
-        position (1 share minimum), skipping stocks that cost more than the
-        entire account.
+        For small accounts (< $100): uses all available funds for a single
+        position, skipping stocks that cost more than the entire account.
 
         For normal accounts: ATR-based sizing capped at max_position_size_pct
         of portfolio, also hard-capped by current_price so order cost never
         exceeds the allocation.
 
-        Minimum quantity is always 1 share.
+        Minimum quantity is 0.01 shares (Alpaca fractional minimum).
         """
         if current_price <= 0:
-            return 1
+            return 0.01
 
         # Hard cap: never spend more than max_position_size_pct of portfolio
         # OR the full portfolio for very small accounts
-        if portfolio_value < 500:
+        if portfolio_value < 100:
             # Small account: use up to 95% of available funds on one position
             max_notional = portfolio_value * 0.95
         else:
             max_notional = portfolio_value * self._risk.max_position_size_pct
 
-        # Can't even afford 1 share — skip
-        if current_price > max_notional:
+        # Can't even afford $1 worth — skip
+        if max_notional < 1.0:
             return 0
 
         # ATR-based sizing capped by price-based notional limit
         if atr > 0:
-            atr_qty = math.floor(max_notional / (atr * 2))
+            atr_qty = max_notional / (atr * 2)
         else:
-            atr_qty = math.floor(max_notional / current_price)
+            atr_qty = max_notional / current_price
 
         # Hard cap by notional: never exceed max_notional
-        price_qty = math.floor(max_notional / current_price)
+        price_qty = max_notional / current_price
         qty = min(atr_qty, price_qty)
 
-        return max(1, qty)
+        # Round to 4 decimal places (Alpaca supports up to 9 but 4 is practical)
+        qty = round(qty, 4)
+        return max(0.01, qty)
 
     def _has_capacity(self, open_positions: Dict) -> bool:
         """Return True if the portfolio can take on another position."""
@@ -317,7 +319,7 @@ class DecisionEngine:
         if self.detect_reversal(symbol, trend_signal, portfolio, current_price):
             if already_held:
                 position = open_positions[symbol]
-                quantity = int(position.get("quantity", 0))
+                quantity = float(position.get("quantity", 0))
                 if quantity > 0:
                     reversal_reason = (
                         "Momentum reversal: RSI overbought + MACD bearish — "
@@ -518,7 +520,7 @@ class DecisionEngine:
                 )
 
             position = open_positions[symbol]
-            quantity = int(position.get("quantity", 0))
+            quantity = float(position.get("quantity", 0))
             avg_cost = float(position.get("avg_cost", current_price))
 
             # (Removed stubborn hold rule to allow Early Loss Cutting if momentum flips)

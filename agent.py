@@ -348,7 +348,7 @@ class TradingAgent:
                     if decision.action == "SELL":
                         position = self.portfolio.open_positions.get(symbol, {})
                         avg_cost = float(position.get("avg_cost", current_price))
-                        qty = int(position.get("quantity", decision.quantity))
+                        qty = float(position.get("quantity", decision.quantity))
                         pnl = (current_price - avg_cost) * qty
                         exit_reason = "SELL_SIGNAL"
 
@@ -391,7 +391,7 @@ class TradingAgent:
                     logger.info(
                         "Software exit triggered for %s: %s", symbol, exit_trigger
                     )
-                    qty = int(position.get("quantity", 0))
+                    qty = float(position.get("quantity", 0))
                     if qty > 0:
                         self.executor.close_position(symbol, qty)
                         avg_cost = float(position.get("avg_cost", current_price))
@@ -479,7 +479,7 @@ class TradingAgent:
         )
 
         for symbol, position in list(self.portfolio.open_positions.items()):
-            qty = int(position.get("quantity", 0))
+            qty = float(position.get("quantity", 0))
             if qty <= 0:
                 continue
 

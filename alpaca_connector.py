@@ -160,13 +160,13 @@ class AlpacaConnector:
     # Order Execution API
     # ------------------------------------------------------------------
 
-    def place_market_order(self, symbol: str, action: str, quantity: int) -> Optional[str]:
+    def place_market_order(self, symbol: str, action: str, quantity: float) -> Optional[str]:
         if not self.trading_client:
             return None
             
         if action.upper() == "SELL" and not config.risk.allow_short_selling:
             positions = self.get_positions()
-            held_qty = int(positions.get(symbol, {}).get("quantity", 0))
+            held_qty = float(positions.get(symbol, {}).get("quantity", 0))
             if held_qty <= 0:
                 logger.warning("Short selling blocked for %s.", symbol)
                 return None
@@ -177,12 +177,12 @@ class AlpacaConnector:
             side = OrderSide.BUY if action.upper() == "BUY" else OrderSide.SELL
             req = MarketOrderRequest(
                 symbol=symbol,
-                qty=quantity,
+                qty=round(quantity, 4),
                 side=side,
                 time_in_force=TimeInForce.DAY
             )
             order = self.trading_client.submit_order(order_data=req)
-            logger.info("Alpaca MARKET order placed: %s %d %s, ID: %s", action, quantity, symbol, order.id)
+            logger.info("Alpaca MARKET order placed: %s %.4f %s, ID: %s", action, quantity, symbol, order.id)
             return str(order.id)
         except Exception as exc:
             logger.error("Failed to place MARKET order for %s: %s", symbol, exc)
@@ -209,20 +209,20 @@ class AlpacaConnector:
     def place_stop_loss(self, symbol: str, action: str, quantity: int, stop_price: float) -> Optional[str]:
         return self.place_stop_order(symbol, action, quantity, stop_price)
 
-    def place_trailing_stop_order(self, symbol: str, action: str, quantity: int, trail_percent: float) -> Optional[str]:
+    def place_trailing_stop_order(self, symbol: str, action: str, quantity: float, trail_percent: float) -> Optional[str]:
         if not self.trading_client:
             return None
         try:
             side = OrderSide.BUY if action.upper() == "BUY" else OrderSide.SELL
             req = TrailingStopOrderRequest(
                 symbol=symbol,
-                qty=quantity,
+                qty=round(quantity, 4),
                 side=side,
                 time_in_force=TimeInForce.DAY,
                 trail_percent=round(trail_percent * 100, 2)  # Alpaca expects percentage as e.g. 1.5
             )
             order = self.trading_client.submit_order(order_data=req)
-            logger.info("Alpaca TRAILING STOP order placed: %s %d %s, ID: %s, Trail: %.2f%%", action, quantity, symbol, order.id, trail_percent * 100)
+            logger.info("Alpaca TRAILING STOP order placed: %s %.4f %s, ID: %s, Trail: %.2f%%", action, quantity, symbol, order.id, trail_percent * 100)
             return str(order.id)
         except Exception as exc:
             logger.error("Failed to place trailing stop order for %s: %s", symbol, exc)

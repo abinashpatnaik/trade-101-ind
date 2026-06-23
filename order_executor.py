@@ -43,7 +43,7 @@ class OpenOrder:
     symbol: str
     entry_order_id: int
     order_type: str                           # 'BUY' | 'SELL'
-    quantity: int
+    quantity: float
     entry_price: float
     stop_loss_price: float
     take_profit_price: float
@@ -82,7 +82,7 @@ class OrderExecutor:
     def _place_bracket(
         self,
         symbol: str,
-        quantity: int,
+        quantity: float,
         entry_order_id: int,
         entry_price: float,
         stop_loss_price: float,
@@ -305,7 +305,7 @@ class OrderExecutor:
         """
         return None
 
-    def close_position(self, symbol: str, quantity: int) -> bool:
+    def close_position(self, symbol: str, quantity: float) -> bool:
         """
         Convenience method to immediately close an open position via a market
         SELL order without consulting the Decision engine.

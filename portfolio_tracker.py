@@ -193,7 +193,7 @@ class PortfolioTracker:
                         if current_price is None:
                             current_price = float(old_pos.get("avg_cost", 0.0))
                         
-                        qty = int(old_pos.get("quantity", 0))
+                        qty = float(old_pos.get("quantity", 0))
                         avg_cost = float(old_pos.get("avg_cost", 0.0))
                         pnl = (current_price - avg_cost) * qty
                         
