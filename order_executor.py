@@ -1,31 +1,24 @@
 """
 order_executor.py
 =================
-Translates Decision objects into live IBKR orders.
+Translates Decision objects into live broker orders.
 
 For each BUY decision the executor:
-  1. Places a market order for the desired quantity.
-  2. Places a stop-loss STP order at the computed price.
-  3. Places a take-profit LMT order at the computed price.
-  (Steps 2 and 3 approximate an OCO bracket using separate sibling orders
-   because plain IBKR API stop-limit OCO requires OCA groups, which are
-   submitted here as two independent orders with manual OCO-style monitoring.)
+  1. Places a market order for the desired quantity (fractional OK).
+  2. If quantity >= 1 (whole shares): places a native Alpaca Trailing Stop.
+  3. If quantity < 1 (fractional): uses software-level trailing stop polling.
 
 For each SELL decision the executor places a market order to close the
 full position.
 
-The class also provides check_exit_conditions() as a software-level fallback
-that manually evaluates stop-loss and take-profit thresholds on every loop
-iteration in case the exchange orders are not triggered (e.g. fast gapping,
-pre-open price moves, or paper-trading quirks).
-
 Requires:
-    ibkr_connector.IBKRConnector
+    zerodha_connector / alpaca_connector
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -49,35 +42,33 @@ class OpenOrder:
     take_profit_price: float
     stop_loss_order_id: Optional[int] = None
     take_profit_order_id: Optional[int] = None
+    is_fractional: bool = False               # True = software trailing stop
 
 
 class OrderExecutor:
     """
-    Executes trading decisions via IBKRConnector.
+    Executes trading decisions via broker connector.
 
-    Usage
-    -----
-    >>> connector = IBKRConnector()
-    >>> connector.connect()
-    >>> executor = OrderExecutor(connector)
-    >>> executor.execute(decision, 'HSBA', 620.5)
+    Supports a hybrid trailing stop strategy:
+    - Whole shares (qty >= 1): Native Alpaca trailing stop (instant execution)
+    - Fractional shares (qty < 1): Software trailing stop (polled each loop)
     """
 
-    # Trailing stop percentage: 1.5% — tighter than the 2% fixed stop so it
-    # locks in more profit as price rises.
-    _trailing_stop_pct: float = 0.015
+    _trailing_stop_pct: float = config.risk.trailing_stop_pct
 
     def __init__(self, ibkr: IBKRConnector) -> None:
         self._ibkr = ibkr
-        # Active bracket orders keyed by symbol.
         self._open_orders: Dict[str, OpenOrder] = {}
-        # Highest price seen since entry for each open position (trailing stop).
         self._trailing_high: Dict[str, float] = {}
-        logger.debug("OrderExecutor initialised.")
+        logger.debug("OrderExecutor initialised (trailing_stop=%.2f%%).", self._trailing_stop_pct * 100)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _is_fractional(self, quantity: float) -> bool:
+        """Return True if quantity is less than 1 whole share."""
+        return quantity < 1.0
 
     def _place_bracket(
         self,
@@ -89,44 +80,50 @@ class OrderExecutor:
         take_profit_price: float,
     ) -> OpenOrder:
         """
-        Submit the stop-loss and take-profit sibling orders after the parent
-        market-buy order has been placed.
+        Submit trailing stop after market-buy.
 
-        Both orders are SELL orders for the same quantity, mirroring the entry.
+        - Whole shares: native Alpaca trailing stop order.
+        - Fractional shares: skip native order, use software trailing stop.
         """
         sl_order_id: Optional[int] = None
         tp_order_id: Optional[int] = None
+        fractional = self._is_fractional(quantity)
 
-        # --- Stop-loss (Trailing Stop) ---
-        import time
-        for attempt in range(5):
-            try:
-                sl_order_id = self._ibkr.place_trailing_stop_order(
-                    symbol=symbol,
-                    action="SELL",
-                    quantity=quantity,
-                    trail_percent=config.risk.trailing_stop_pct,
-                )
-                logger.info(
-                    "Trailing Stop-loss placed for %s @ %.2f%% trail (order_id=%s)",
-                    symbol, config.risk.trailing_stop_pct * 100, sl_order_id,
-                )
-                break
-            except Exception as exc:
-                if attempt < 4:
-                    logger.warning(
-                        "Trailing stop placement rejected (likely waiting for BUY to fill) for %s. Retrying in 2s...", 
-                        symbol
+        if fractional:
+            logger.info(
+                "Fractional position for %s (qty=%.4f) — using SOFTWARE trailing stop.",
+                symbol, quantity,
+            )
+        else:
+            # --- Native Trailing Stop (whole shares only) ---
+            for attempt in range(5):
+                try:
+                    sl_order_id = self._ibkr.place_trailing_stop_order(
+                        symbol=symbol,
+                        action="SELL",
+                        quantity=quantity,
+                        trail_percent=config.risk.trailing_stop_pct,
                     )
-                    time.sleep(2)
-                else:
-                    logger.error(
-                        "Failed to place trailing stop-loss for %s after 5 attempts: %s", 
-                        symbol, exc, exc_info=True
+                    logger.info(
+                        "Native Trailing Stop placed for %s @ %.2f%% trail (order_id=%s)",
+                        symbol, config.risk.trailing_stop_pct * 100, sl_order_id,
                     )
-
-        # Note: We skip the static Take-Profit (LMT) order since the trailing
-        # stop will automatically lock in profits as the stock price rises.
+                    break
+                except Exception as exc:
+                    if attempt < 4:
+                        logger.warning(
+                            "Trailing stop rejected for %s (waiting for BUY fill). Retrying in 2s...",
+                            symbol,
+                        )
+                        time.sleep(2)
+                    else:
+                        logger.error(
+                            "Failed to place trailing stop for %s after 5 attempts: %s",
+                            symbol, exc, exc_info=True,
+                        )
+                        # Fall back to software trailing stop
+                        fractional = True
+                        logger.info("Falling back to SOFTWARE trailing stop for %s.", symbol)
 
         return OpenOrder(
             symbol=symbol,
@@ -138,6 +135,7 @@ class OrderExecutor:
             take_profit_price=take_profit_price,
             stop_loss_order_id=sl_order_id,
             take_profit_order_id=tp_order_id,
+            is_fractional=fractional,
         )
 
     def _cancel_bracket(self, symbol: str) -> None:
@@ -176,23 +174,7 @@ class OrderExecutor:
         """
         Execute *decision* for *symbol* at approximately *current_price*.
 
-        Returns True if the primary order was placed successfully, False
-        otherwise.  Bracket orders failing does not cause this method to
-        return False — the entry is still valid; exit management falls back
-        to check_exit_conditions().
-
-        Parameters
-        ----------
-        decision:
-            Output of DecisionEngine.make_decision().
-        symbol:
-            Bare LSE ticker.
-        current_price:
-            Latest price used for logging and bracket calculations.
-
-        Returns
-        -------
-        bool
+        Returns True if the primary order was placed successfully.
         """
         if decision.action == "HOLD":
             logger.debug("OrderExecutor.execute(): HOLD for %s — no action.", symbol)
@@ -200,7 +182,7 @@ class OrderExecutor:
 
         if not self._ibkr.is_connected():
             logger.error(
-                "OrderExecutor.execute(): IBKR not connected — cannot execute "
+                "OrderExecutor.execute(): broker not connected — cannot execute "
                 "%s for %s.", decision.action, symbol
             )
             return False
@@ -232,16 +214,17 @@ class OrderExecutor:
                 take_profit_price=decision.take_profit_price,
             )
             self._open_orders[symbol] = open_order
-            # Initialise the trailing high to the entry price.
             self._trailing_high[symbol] = current_price
 
+            stop_type = "SOFTWARE" if open_order.is_fractional else "NATIVE"
             logger.info(
-                "BUY executed for %s: qty=%d entry_id=%s sl=%.4f tp=%.4f",
+                "BUY executed for %s: qty=%.4f entry_id=%s sl=%.4f tp=%.4f stop=%s",
                 symbol,
                 decision.quantity,
                 entry_order_id,
                 decision.stop_loss_price,
                 decision.take_profit_price,
+                stop_type,
             )
             return True
 
@@ -249,26 +232,24 @@ class OrderExecutor:
         # SELL
         # ---------------------------------------------------------------
         if decision.action == "SELL":
-            # Guard: verify IBKR actually holds this position before selling
             live_positions = self._ibkr.get_positions()
-            live_qty = live_positions.get(symbol, {}).get("quantity", 0)
+            live_qty = float(live_positions.get(symbol, {}).get("quantity", 0))
             if live_qty <= 0:
                 logger.warning(
-                    "SELL skipped for %s — IBKR shows 0 shares held (stale cache). Clearing.",
+                    "SELL skipped for %s — broker shows 0 shares held. Clearing.",
                     symbol,
                 )
                 self._open_orders.pop(symbol, None)
                 self._trailing_high.pop(symbol, None)
                 return False
 
-            # Cancel any pending bracket orders first to avoid orphaned orders.
             self._cancel_bracket(symbol)
 
             try:
                 sell_order_id = self._ibkr.place_market_order(
                     symbol=symbol,
                     action="SELL",
-                    quantity=live_qty,  # use IBKR actual qty, not cached
+                    quantity=live_qty,
                 )
             except Exception as exc:
                 logger.error(
@@ -277,12 +258,12 @@ class OrderExecutor:
                 )
                 return False
 
-            # Remove from open orders tracking.
             self._open_orders.pop(symbol, None)
+            self._trailing_high.pop(symbol, None)
 
             logger.info(
-                "SELL executed for %s: qty=%d order_id=%s",
-                symbol, decision.quantity, sell_order_id,
+                "SELL executed for %s: qty=%.4f order_id=%s",
+                symbol, live_qty, sell_order_id,
             )
             return True
 
@@ -292,6 +273,10 @@ class OrderExecutor:
         )
         return False
 
+    # ------------------------------------------------------------------
+    # Software Trailing Stop (for fractional positions)
+    # ------------------------------------------------------------------
+
     def check_exit_conditions(
         self,
         symbol: str,
@@ -299,10 +284,56 @@ class OrderExecutor:
         position: Dict,
     ) -> Optional[str]:
         """
-        Since we now use native broker trailing stops, this method no longer
-        manages software trailing stops. It will only return None.
-        Native broker execution handles the exit automatically.
+        Software-level trailing stop for fractional positions.
+
+        For whole-share positions with native Alpaca trailing stops, returns None
+        (the broker handles the exit).
+
+        For fractional positions, tracks the high-water mark and triggers a SELL
+        if price drops more than trailing_stop_pct from the peak.
+
+        Returns
+        -------
+        str or None
+            ``'TRAILING_STOP'`` — software trailing stop fired.
+            ``None``            — no exit condition triggered.
         """
+        order = self._open_orders.get(symbol)
+        if order is None:
+            return None
+
+        # Whole-share positions use native Alpaca stops — skip software check
+        if not order.is_fractional:
+            return None
+
+        if current_price <= 0:
+            return None
+
+        # Advance the high-water mark
+        if symbol not in self._trailing_high:
+            self._trailing_high[symbol] = current_price
+        if current_price > self._trailing_high[symbol]:
+            self._trailing_high[symbol] = current_price
+            logger.debug(
+                "Software trailing high updated for %s: %.4f", symbol, current_price
+            )
+
+        trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - self._trailing_stop_pct)
+
+        if current_price <= trailing_stop_trigger:
+            logger.warning(
+                "SOFTWARE TRAILING STOP triggered for %s: price=%.4f <= trigger=%.4f "
+                "(high=%.4f, pct=%.1f%%)",
+                symbol,
+                current_price,
+                trailing_stop_trigger,
+                self._trailing_high[symbol],
+                self._trailing_stop_pct * 100,
+            )
+            self._open_orders.pop(symbol, None)
+            self._trailing_high.pop(symbol, None)
+            return "TRAILING_STOP"
+
         return None
 
     def close_position(self, symbol: str, quantity: float) -> bool:
@@ -318,7 +349,7 @@ class OrderExecutor:
 
         if not self._ibkr.is_connected():
             logger.error(
-                "close_position(): IBKR not connected — cannot close %s.", symbol
+                "close_position(): broker not connected — cannot close %s.", symbol
             )
             return False
 
@@ -329,8 +360,9 @@ class OrderExecutor:
                 quantity=quantity,
             )
             self._open_orders.pop(symbol, None)
+            self._trailing_high.pop(symbol, None)
             logger.info(
-                "Position closed for %s: qty=%d order_id=%s",
+                "Position closed for %s: qty=%.4f order_id=%s",
                 symbol, quantity, order_id,
             )
             return True
@@ -344,3 +376,4 @@ class OrderExecutor:
     def open_orders(self) -> Dict[str, OpenOrder]:
         """Read-only view of the currently tracked open bracket orders."""
         return dict(self._open_orders)
+

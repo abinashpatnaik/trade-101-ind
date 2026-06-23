@@ -387,7 +387,7 @@ class TradingAgent:
                     symbol, current_price, position
                 )
 
-                if exit_trigger in ("STOP_LOSS", "TAKE_PROFIT"):
+                if exit_trigger in ("STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP"):
                     logger.info(
                         "Software exit triggered for %s: %s", symbol, exit_trigger
                     )
