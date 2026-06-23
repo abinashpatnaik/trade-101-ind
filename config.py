@@ -112,7 +112,7 @@ class SentimentConfig:
 @dataclass
 class SignalConfig:
     """Decision-engine thresholds."""
-    buy_threshold: float = 0.45
+    buy_threshold: float = 0.55
     sell_threshold: float = -0.4
 
 

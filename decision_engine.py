@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -101,7 +103,10 @@ class DecisionEngine:
         self._risk = config.risk
         self._sig = config.signal
         self._sent = config.sentiment
-        logger.debug("DecisionEngine initialised.")
+        # Cooldown: {symbol: timestamp} — prevents re-buying a stock too soon after a loss
+        self._sell_cooldowns: Dict[str, float] = {}
+        self._cooldown_seconds: int = int(os.getenv("SELL_COOLDOWN_MINUTES", "30")) * 60
+        logger.debug("DecisionEngine initialised (cooldown=%ds).", self._cooldown_seconds)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -350,6 +355,27 @@ class DecisionEngine:
                     combined_score=combined_score,
                 )
 
+            # --- Cooldown check: don't re-buy a stock we just sold at a loss ---
+            cooldown_until = self._sell_cooldowns.get(symbol, 0)
+            if time.time() < cooldown_until:
+                remaining_min = (cooldown_until - time.time()) / 60
+                logger.info(
+                    "BUY blocked for %s — cooldown active (%.0f min remaining)",
+                    symbol, remaining_min,
+                )
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"BUY signal (score={combined_score:.3f}) but {symbol} "
+                        f"is on cooldown for {remaining_min:.0f} more minutes after a recent loss."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score,
+                )
+
             if not self._has_capacity(open_positions):
                 return Decision(
                     action="HOLD",
@@ -523,6 +549,14 @@ class DecisionEngine:
                 "SELL decision for %s: qty=%d price=%.4f",
                 symbol, quantity, current_price,
             )
+
+            # Record cooldown if selling at a loss
+            if current_price < avg_cost:
+                self._sell_cooldowns[symbol] = time.time() + self._cooldown_seconds
+                logger.info(
+                    "Cooldown activated for %s: blocked from re-buying for %d minutes",
+                    symbol, self._cooldown_seconds // 60,
+                )
 
             return Decision(
                 action="SELL",
