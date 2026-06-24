@@ -340,6 +340,8 @@ class TradingAgent:
                     self._current_signals[symbol]["aiReason"] = decision.ai_reason
                 elif not config.ai.enabled:
                     self._current_signals[symbol]["aiDecision"] = "OFF"
+                else:
+                    self._current_signals[symbol]["aiDecision"] = "IDLE"
 
             # --- 5. Execute ---
             if decision.action != "HOLD" and self.executor is not None:

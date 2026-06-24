@@ -499,6 +499,7 @@
                     <span style="margin-left: 0.8rem; font-weight: 600; color: var(--text-secondary);">AI Val:</span>
                     <span><span style="color: #00c896; font-weight: 600;">APPROVED</span> ML confirms</span>
                     <span><span style="color: #ff4d6a; font-weight: 600;">REJECTED</span> ML overrides</span>
+                    <span><span style="color: #6b7baa;">IDLE</span> = HOLD (nothing to validate)</span>
                     <span>OFF = disabled</span>
                 </div>
             </div>
@@ -707,9 +708,12 @@
                         let aiHtml = '-';
                         if (s.aiDecision === 'OFF') {
                             aiHtml = '<span style="color: var(--text-muted); font-size: 0.85em;">OFF</span>';
-                        } else if (s.aiDecision) {
-                            const decisionClass = s.aiDecision === 'APPROVED' ? 'positive' : 'negative';
-                            aiHtml = `<strong class="${decisionClass}">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReasoning}</small>`;
+                        } else if (s.aiDecision === 'IDLE') {
+                            aiHtml = '<span style="color: #6b7baa; font-size: 0.85em;">IDLE</span>';
+                        } else if (s.aiDecision === 'APPROVED') {
+                            aiHtml = `<strong class="positive">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
+                        } else if (s.aiDecision === 'REJECTED') {
+                            aiHtml = `<strong class="negative">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
                         }
 
                         // Score color: green if near buy threshold, red if near sell threshold, grey if neutral
