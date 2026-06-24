@@ -248,11 +248,9 @@ class TradingAgent:
                 logger.warning("No OHLCV data for %s — skipping.", symbol)
                 return
 
-            current_price = None
-            if self.broker is not None:
+            current_price = self.price_feed.get_current_price(symbol)
+            if (current_price is None or current_price <= 0) and self.broker is not None:
                 current_price = self.broker.get_current_price(symbol)
-            if current_price is None or current_price <= 0:
-                current_price = self.price_feed.get_current_price(symbol)
 
             if current_price is None or current_price <= 0:
                 logger.warning("Invalid price for %s — skipping.", symbol)
