@@ -138,7 +138,7 @@ class PriceFeed:
                 timeframe=tf,
                 start=start_dt,
                 end=end_dt,
-                feed="iex" if config.alpaca.paper_mode else "sip"
+                feed=os.getenv("ALPACA_DATA_FEED", "iex")
             )
             bars = self.alpaca_client.get_stock_bars(req)
             if not bars.data or symbol not in bars.data:
