@@ -685,20 +685,34 @@
                 if (signals.length === 0) {
                     sigContainer.innerHTML = '<div class="empty-state">No signals available</div>';
                 } else {
-                    let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Algo</th><th>AI Val</th></tr>';
+                    let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>AI Val</th></tr>';
                     signals.slice(0, 5).forEach(s => {
                         const sigClass = s.signal === 'BUY' ? 'badge-buy' : (s.signal === 'SELL' ? 'badge-sell' : 'badge-hold');
                         let aiHtml = '-';
-                        if (s.aiDecision) {
+                        if (s.aiDecision === 'OFF') {
+                            aiHtml = '<span style="color: var(--text-muted); font-size: 0.85em;">OFF</span>';
+                        } else if (s.aiDecision) {
                             const decisionClass = s.aiDecision === 'APPROVED' ? 'positive' : 'negative';
                             aiHtml = `<strong class="${decisionClass}">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReasoning}</small>`;
                         }
+
+                        // Score color: green if near buy threshold, red if near sell threshold, grey if neutral
+                        let scoreVal = s.combinedScore !== undefined ? s.combinedScore : 0;
+                        let buyThr = s.buyThreshold || 0.55;
+                        let sellThr = s.sellThreshold || -0.4;
+                        let scoreColor = 'var(--text-muted)';
+                        if (scoreVal >= buyThr) scoreColor = 'var(--positive)';
+                        else if (scoreVal >= buyThr * 0.7) scoreColor = '#f0a500';
+                        else if (scoreVal <= sellThr) scoreColor = 'var(--negative)';
+                        else if (scoreVal <= sellThr * 0.7) scoreColor = '#e07020';
+                        let scoreDisplay = scoreVal !== 0 ? scoreVal.toFixed(3) : '-';
                         
                         html += `<tr>
                             <td><a class="clickable-symbol" onclick="openStockModal('${s.symbol}')">${s.symbol}</a></td>
                             <td>${formatMoney(s.price)}</td>
                             <td>${s.rsi}</td>
                             <td>${s.trendScore}</td>
+                            <td style="font-weight:600; color:${scoreColor};" title="Buy ≥ ${buyThr} | Sell ≤ ${sellThr}">${scoreDisplay}</td>
                             <td><span class="${sigClass}">${s.signal}</span></td>
                             <td style="max-width: 300px; line-height: 1.3;">${aiHtml}</td>
                         </tr>`;

@@ -332,9 +332,14 @@ class TradingAgent:
             if symbol in self._current_signals:
                 self._current_signals[symbol]["signal"] = decision.action
                 self._current_signals[symbol]["confidence"] = int(decision.confidence * 100)
+                self._current_signals[symbol]["combinedScore"] = round(decision.combined_score, 4)
+                self._current_signals[symbol]["buyThreshold"] = config.signal.buy_threshold
+                self._current_signals[symbol]["sellThreshold"] = config.signal.sell_threshold
                 if decision.ai_decision:
                     self._current_signals[symbol]["aiDecision"] = decision.ai_decision
                     self._current_signals[symbol]["aiReason"] = decision.ai_reason
+                elif not config.ai.enabled:
+                    self._current_signals[symbol]["aiDecision"] = "OFF"
 
             # --- 5. Execute ---
             if decision.action != "HOLD" and self.executor is not None:
