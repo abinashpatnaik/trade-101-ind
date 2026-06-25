@@ -339,6 +339,11 @@ class TradingAgent:
                 self._current_signals[symbol]["combinedScore"] = round(decision.combined_score, 4)
                 self._current_signals[symbol]["buyThreshold"] = config.signal.buy_threshold
                 self._current_signals[symbol]["sellThreshold"] = config.signal.sell_threshold
+                # Show reason when score is above threshold but still HOLD
+                if decision.action == "HOLD" and decision.combined_score >= config.signal.buy_threshold:
+                    self._current_signals[symbol]["holdReason"] = decision.reason
+                else:
+                    self._current_signals[symbol]["holdReason"] = ""
                 if decision.ai_decision:
                     self._current_signals[symbol]["aiDecision"] = decision.ai_decision
                     self._current_signals[symbol]["aiReason"] = decision.ai_reason

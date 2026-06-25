@@ -187,7 +187,8 @@ function readSignals() {
                macd_signal as macdSignal, ema_signal as emaSignal,
                combined_score as combinedScore, signal, confidence,
                buy_threshold as buyThreshold, sell_threshold as sellThreshold,
-               ai_decision as aiDecision, ai_reason as aiReason, updated_at
+               ai_decision as aiDecision, ai_reason as aiReason,
+               hold_reason as holdReason, updated_at
         FROM signals ORDER BY ABS(trend_score) DESC LIMIT 30
       `).all();
     } catch (err) {

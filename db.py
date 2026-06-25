@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS signals (
     sell_threshold REAL,
     ai_decision TEXT,
     ai_reason TEXT,
+    hold_reason TEXT DEFAULT '',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -127,6 +128,11 @@ class TradingDB:
         """Create tables if they don't exist."""
         with self._conn() as conn:
             conn.executescript(_SCHEMA_SQL)
+            # Migrate: add hold_reason column if missing (existing DBs)
+            try:
+                conn.execute("ALTER TABLE signals ADD COLUMN hold_reason TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         logger.debug("Database schema verified.")
 
     # ------------------------------------------------------------------
@@ -249,8 +255,8 @@ class TradingDB:
                 """INSERT INTO signals
                    (symbol, price, change_pct, rsi, trend_score, macd_signal, ema_signal,
                     combined_score, signal, confidence, buy_threshold, sell_threshold,
-                    ai_decision, ai_reason, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ai_decision, ai_reason, hold_reason, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                    ON CONFLICT(symbol) DO UPDATE SET
                     price=excluded.price, change_pct=excluded.change_pct,
                     rsi=excluded.rsi, trend_score=excluded.trend_score,
@@ -258,7 +264,8 @@ class TradingDB:
                     combined_score=excluded.combined_score, signal=excluded.signal,
                     confidence=excluded.confidence, buy_threshold=excluded.buy_threshold,
                     sell_threshold=excluded.sell_threshold, ai_decision=excluded.ai_decision,
-                    ai_reason=excluded.ai_reason, updated_at=CURRENT_TIMESTAMP""",
+                    ai_reason=excluded.ai_reason, hold_reason=excluded.hold_reason,
+                    updated_at=CURRENT_TIMESTAMP""",
                 (
                     signal.get("symbol"),
                     signal.get("price"),
@@ -274,6 +281,7 @@ class TradingDB:
                     signal.get("sellThreshold"),
                     signal.get("aiDecision"),
                     signal.get("aiReason"),
+                    signal.get("holdReason", ""),
                 ),
             )
 

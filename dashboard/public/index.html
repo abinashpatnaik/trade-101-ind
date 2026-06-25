@@ -671,13 +671,30 @@
                 else if (scoreVal <= sellThr * 0.7) scoreColor = '#38bdf8';
                 let scoreDisplay = scoreVal !== 0 ? scoreVal.toFixed(3) : '-';
 
+                // Build hold reason display
+                let holdHtml = '';
+                if (s.holdReason && s.signal === 'HOLD' && scoreVal >= buyThr) {
+                    // Extract key info: ADX or volume
+                    let shortReason = s.holdReason;
+                    if (shortReason.includes('ADX=')) {
+                        const adxMatch = shortReason.match(/ADX=([\d.]+)/);
+                        shortReason = `⚡ ADX ${adxMatch ? adxMatch[1] : ''} (need >25)`;
+                    } else if (shortReason.includes('volume')) {
+                        const volMatch = shortReason.match(/([\d.]+)x average/);
+                        shortReason = `📊 Vol ${volMatch ? volMatch[1] : ''}x (need >1.5x)`;
+                    } else {
+                        shortReason = shortReason.substring(0, 60);
+                    }
+                    holdHtml = `<br/><small style="color:#f0a500; font-size:0.75em;" title="${s.holdReason}">${shortReason}</small>`;
+                }
+
                 html += `<tr>
                     <td><a class="clickable-symbol" onclick="openStockModal('${s.symbol}')">${s.symbol}</a></td>
                     <td>${formatMoney(s.price)}</td>
                     <td>${s.rsi}</td>
                     <td>${s.trendScore}</td>
                     <td style="font-weight:600; color:${scoreColor};" title="Buy ≥ ${buyThr} | Sell ≤ ${sellThr}">${scoreDisplay}</td>
-                    <td><span class="${sigClass}">${s.signal}</span></td>
+                    <td><span class="${sigClass}">${s.signal}</span>${holdHtml}</td>
                     <td style="max-width: 300px; line-height: 1.3;">${aiHtml}</td>
                 </tr>`;
             });
