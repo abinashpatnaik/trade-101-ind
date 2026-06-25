@@ -659,7 +659,7 @@
             const start = (page - 1) * SIGNALS_PER_PAGE;
             const pageSignals = signals.slice(start, start + SIGNALS_PER_PAGE);
 
-            let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>AI Val</th></tr>';
+            let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>ML Conf</th></tr>';
             pageSignals.forEach(s => {
                 // Determine if this is a GATED signal (score above threshold but blocked)
                 const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
@@ -670,10 +670,26 @@
                     aiHtml = '<span style="color: var(--text-muted); font-size: 0.85em;">OFF</span>';
                 } else if (s.aiDecision === 'IDLE') {
                     aiHtml = '<span style="color: #6b7baa; font-size: 0.85em;">IDLE</span>';
-                } else if (s.aiDecision === 'APPROVED') {
-                    aiHtml = `<strong class="positive">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
-                } else if (s.aiDecision === 'REJECTED') {
-                    aiHtml = `<strong class="negative">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
+                } else if (s.mlConfidence !== undefined && s.mlConfidence !== null && s.mlConfidence !== 0) {
+                    const conf = s.mlConfidence * 100;
+                    const isUp = conf >= 50;
+                    const color = isUp ? 'var(--positive)' : 'var(--negative)';
+                    const label = isUp ? 'UP' : 'DOWN';
+                    const displayConf = isUp ? conf : 100 - conf;
+                    
+                    aiHtml = `
+                    <div style="width: 100px; margin-top: 4px;" title="${s.aiReason || ''}">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
+                            <span style="color: ${color}; font-weight: bold;">${displayConf.toFixed(0)}% ${label}</span>
+                        </div>
+                        <div style="width: 100%; background: rgba(255,255,255,0.1); border-radius: 4px; height: 6px; overflow: hidden;">
+                            <div style="width: ${displayConf}%; background: ${color}; height: 100%;"></div>
+                        </div>
+                    </div>
+                    `;
+                } else if (s.aiDecision) {
+                    const isPos = s.aiDecision.includes('APPROVED');
+                    aiHtml = `<strong class="${isPos ? 'positive' : 'negative'}">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
                 }
 
                 let scoreVal = s.combinedScore !== undefined ? s.combinedScore : 0;

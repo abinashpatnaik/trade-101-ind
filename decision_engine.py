@@ -73,6 +73,7 @@ class Decision:
     combined_score: float        # [-1.0, 1.0]
     ai_decision: Optional[str] = None
     ai_reason: Optional[str] = None
+    ml_confidence: float = 0.0
 
 
 class DecisionEngine:

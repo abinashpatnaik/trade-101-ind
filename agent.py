@@ -320,7 +320,8 @@ class TradingAgent:
             self.continuous_learning.log_daily_features(
                 symbol=symbol,
                 trend_signal=trend_signal,
-                sentiment_score=sentiment_score
+                sentiment_score=sentiment_score,
+                predicted_prob=decision.ml_confidence
             )
 
             logger.info(
@@ -339,6 +340,7 @@ class TradingAgent:
                 self._current_signals[symbol]["combinedScore"] = round(decision.combined_score, 4)
                 self._current_signals[symbol]["buyThreshold"] = config.signal.buy_threshold
                 self._current_signals[symbol]["sellThreshold"] = config.signal.sell_threshold
+                self._current_signals[symbol]["mlConfidence"] = decision.ml_confidence
                 # Show reason when score is above threshold but still HOLD
                 if decision.action == "HOLD" and decision.combined_score >= config.signal.buy_threshold:
                     self._current_signals[symbol]["holdReason"] = decision.reason

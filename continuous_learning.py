@@ -34,7 +34,7 @@ class ContinuousLearning:
             
         os.makedirs(os.path.dirname(self.features_log_path), exist_ok=True)
 
-    def log_daily_features(self, symbol: str, trend_signal, sentiment_score: float):
+    def log_daily_features(self, symbol: str, trend_signal, sentiment_score: float, predicted_prob: float = 0.0):
         """
         Appends the day's features to the CSV. The 'target' is left empty 
         and filled in later by the retrain script after 5 days have passed.
@@ -48,6 +48,9 @@ class ContinuousLearning:
             "vwap_signal": trend_signal.vwap_signal,
             "overall_trend": trend_signal.overall_trend,
             "sentiment_score": sentiment_score,
+            "adx": trend_signal.adx,
+            "volume_ratio": trend_signal.volume_ratio,
+            "predicted_prob": predicted_prob,
             "target": None  # Unknown until 5 days pass
         }
         
@@ -122,7 +125,7 @@ class ContinuousLearning:
             # Retrain model
             labeled_df = df.dropna(subset=['target'])
             if len(labeled_df) > 50:  # Arbitrary minimum threshold to allow retraining
-                features = ['rsi', 'macd_signal', 'ema_signal', 'vwap_signal', 'overall_trend', 'sentiment_score']
+                features = ['rsi', 'macd_signal', 'ema_signal', 'vwap_signal', 'overall_trend', 'sentiment_score', 'adx', 'volume_ratio']
                 X = labeled_df[features]
                 y = labeled_df['target'].astype(int)
                 

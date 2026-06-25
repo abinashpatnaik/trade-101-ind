@@ -119,6 +119,7 @@ class EODReportGenerator:
         total_pnl: float,
         win_rate: float,
         daily_loss_pct: float,
+        ghost_accuracy_text: str = "",
     ) -> str:
         """Return a fully self-contained HTML email body (inline CSS only)."""
 
@@ -250,8 +251,9 @@ class EODReportGenerator:
       </p>
     </td>
   </tr>
+  {f"<tr><td style='background:#d4edda;color:#155724;padding:12px 32px;font-size:14px;border-bottom:1px solid #c3e6cb;font-family:Arial,sans-serif;font-weight:600;'>{ghost_accuracy_text}</td></tr>" if ghost_accuracy_text else ""}
 
-  <!-- BODY -->
+  <!-- MAIN METRICS -->
   <tr>
     <td style='padding:28px 32px;'>
 
@@ -484,6 +486,30 @@ class EODReportGenerator:
             f"P&L: \u20b9{total_pnl:+.2f}"
         )
 
+        ghost_accuracy_text = ""
+        try:
+            import pandas as pd
+            features_path = "/app/data/training_features.csv" if os.path.exists("/.dockerenv") else "data/training_features.csv"
+            if os.path.exists(features_path):
+                df = pd.read_csv(features_path)
+                if 'target' in df.columns and 'predicted_prob' in df.columns:
+                    df = df.dropna(subset=['target', 'predicted_prob'])
+                    if not df.empty:
+                        df = df.tail(50)
+                        confident_rows = df[(df['predicted_prob'] >= 0.60) | (df['predicted_prob'] <= 0.40)]
+                        if not confident_rows.empty:
+                            correct = 0
+                            for _, row in confident_rows.iterrows():
+                                if row['predicted_prob'] >= 0.60 and row['target'] == 1:
+                                    correct += 1
+                                elif row['predicted_prob'] <= 0.40 and row['target'] == 0:
+                                    correct += 1
+                            acc = (correct / len(confident_rows)) * 100
+                            if acc > 65.0:
+                                ghost_accuracy_text = f"🤖 ML Validator is predicting with {acc:.1f}% accuracy and may be ready to plug back in for live decision making."
+        except Exception as e:
+            logger.error(f"Error calculating Ghost Mode accuracy: {e}")
+
         html_body = self._build_html(
             session_date=session_date,
             portfolio_summary=portfolio_summary,
@@ -492,6 +518,7 @@ class EODReportGenerator:
             total_pnl=total_pnl,
             win_rate=win_rate,
             daily_loss_pct=daily_loss_pct,
+            ghost_accuracy_text=ghost_accuracy_text,
         )
 
         plain_text = self._build_plain_text(

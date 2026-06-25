@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS signals (
     ai_decision TEXT,
     ai_reason TEXT,
     hold_reason TEXT DEFAULT '',
+    ml_confidence REAL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -133,6 +134,11 @@ class TradingDB:
                 conn.execute("ALTER TABLE signals ADD COLUMN hold_reason TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass  # Column already exists
+            # Migrate: add ml_confidence column if missing
+            try:
+                conn.execute("ALTER TABLE signals ADD COLUMN ml_confidence REAL")
+            except sqlite3.OperationalError:
+                pass
         logger.debug("Database schema verified.")
 
     # ------------------------------------------------------------------
@@ -255,8 +261,8 @@ class TradingDB:
                 """INSERT INTO signals
                    (symbol, price, change_pct, rsi, trend_score, macd_signal, ema_signal,
                     combined_score, signal, confidence, buy_threshold, sell_threshold,
-                    ai_decision, ai_reason, hold_reason, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ai_decision, ai_reason, hold_reason, ml_confidence, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                    ON CONFLICT(symbol) DO UPDATE SET
                     price=excluded.price, change_pct=excluded.change_pct,
                     rsi=excluded.rsi, trend_score=excluded.trend_score,
@@ -265,23 +271,25 @@ class TradingDB:
                     confidence=excluded.confidence, buy_threshold=excluded.buy_threshold,
                     sell_threshold=excluded.sell_threshold, ai_decision=excluded.ai_decision,
                     ai_reason=excluded.ai_reason, hold_reason=excluded.hold_reason,
+                    ml_confidence=excluded.ml_confidence,
                     updated_at=CURRENT_TIMESTAMP""",
                 (
-                    signal.get("symbol"),
-                    signal.get("price"),
+                    signal["symbol"],
+                    signal.get("price", 0.0),
                     signal.get("changePct", 0.0),
-                    signal.get("rsi"),
-                    signal.get("trendScore"),
-                    signal.get("macdSignal"),
-                    signal.get("emaSignal"),
-                    signal.get("combinedScore"),
-                    signal.get("signal"),
-                    signal.get("confidence"),
-                    signal.get("buyThreshold"),
-                    signal.get("sellThreshold"),
-                    signal.get("aiDecision"),
-                    signal.get("aiReason"),
+                    signal.get("rsi", 0.0),
+                    signal.get("trendScore", 0.0),
+                    signal.get("macdSignal", "neutral"),
+                    signal.get("emaSignal", "neutral"),
+                    signal.get("combinedScore", 0.0),
+                    signal.get("signal", "HOLD"),
+                    signal.get("confidence", 0),
+                    signal.get("buyThreshold", 0.0),
+                    signal.get("sellThreshold", 0.0),
+                    signal.get("aiDecision", ""),
+                    signal.get("aiReason", ""),
                     signal.get("holdReason", ""),
+                    signal.get("mlConfidence", 0.0),
                 ),
             )
 

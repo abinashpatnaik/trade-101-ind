@@ -104,6 +104,7 @@ class AIValidator:
             # Predict Probability of Success (Class 1)
             # XGBoost predict_proba returns array of [prob_0, prob_1]
             prob_success = self.model.predict_proba(features)[0][1]
+            decision.ml_confidence = float(prob_success)
             
             # Risk Management Thresholds
             # For BUY: we want high confidence of success (e.g., > 60%)
@@ -120,30 +121,16 @@ class AIValidator:
 
             self._save_log(symbol, decision.action, bool(approved), reason)
             
-            if approved:
-                logger.info(reason)
-                decision.ai_decision = "APPROVED"
-                decision.ai_reason = reason
-                return decision
-            else:
-                logger.warning(reason)
-                # Convert the decision to HOLD
-                return Decision(
-                    action="HOLD",
-                    confidence=decision.confidence,
-                    reason=f"ML Validator rejected {decision.action}: {reason}",
-                    quantity=0,
-                    stop_loss_price=0.0,
-                    take_profit_price=0.0,
-                    combined_score=decision.combined_score,
-                    ai_decision="REJECTED",
-                    ai_reason=reason
-                )
+            # GHOST MODE: Always let the trade pass, but log the ai_decision
+            logger.info(f"Ghost Mode: {reason}")
+            decision.ai_decision = "GHOST_APPROVED" if approved else "GHOST_REJECTED"
+            decision.ai_reason = reason
+            return decision
                 
         except Exception as e:
             logger.error("ML Validation failed for %s: %s", symbol, e)
             reason_msg = f"Bypassed: ML Model Error ({str(e)})"
             self._save_log(symbol, decision.action, True, reason_msg)
-            decision.ai_decision = "APPROVED"
+            decision.ai_decision = "GHOST_APPROVED"
             decision.ai_reason = reason_msg
             return decision
