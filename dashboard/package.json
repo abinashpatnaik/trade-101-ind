@@ -1,7 +1,7 @@
 {
-  "name": "ftse-trading-dashboard",
+  "name": "trading-dashboard",
   "version": "1.0.0",
-  "description": "Real-time web dashboard for FTSE 100 Trading Agent",
+  "description": "Real-time web dashboard for multi-market Trading Agent",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

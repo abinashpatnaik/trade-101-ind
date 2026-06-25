@@ -85,7 +85,7 @@ class ReportSender:
         back to plain text otherwise.
         """
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = report.get("subject", "FTSE 100 Trading Report")
+        msg["Subject"] = report.get("subject", "Trading Agent Daily Report")
         msg["From"] = self._sender
         msg["To"] = self._recipient
 

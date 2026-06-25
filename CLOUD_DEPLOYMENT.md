@@ -66,16 +66,16 @@ The script will:
 1. Update system packages.
 2. Install Docker and Docker Compose.
 3. Configure the active user in the `docker` group (remember to log out and log back in to apply group changes).
-4. Create the `~/nse-agent/` workspace folder.
+4. Create the `~/trading-agent/` workspace folder.
 
 ---
 
 ## 4. Credential Setup
 
-Copy `.env.example` to `.env` inside `~/nse-agent` and configure the following variables:
+Copy `.env.example` to `.env` inside `~/trading-agent` and configure the following variables:
 
 ```bash
-cd ~/nse-agent
+cd ~/trading-agent
 cp .env.example .env
 nano .env
 ```
@@ -108,7 +108,7 @@ To allow the GitHub Actions runner to connect to your EC2 instance securely, add
 ### 5b. How the Workflow Operates
 1.  **Checkout**: Pulls the codebase on push.
 2.  **Authentication**: Loads the SSH private key safely on the runner.
-3.  **Sync**: Uses `rsync` to sync code files to `~/nse-agent/` (excluding local `.venv`, local `.env`, database cache, and logs).
+3.  **Sync**: Uses `rsync` to sync code files to `~/trading-agent/` (excluding local `.venv`, local `.env`, database cache, and logs).
 4.  **Launch**: Remotely runs a command on EC2 to pre-create folders and launch the container stack using `docker-compose up -d --build`.
 
 ---
@@ -126,11 +126,11 @@ docker-compose logs --tail=100 trading-agent
 
 ### Check local agent.log
 ```bash
-tail -f ~/nse-agent/logs/agent.log
+tail -f ~/trading-agent/logs/agent.log
 ```
 
 ### Trade records CSV
 All executed trades are logged directly in:
 ```bash
-cat ~/nse-agent/data/trades.csv
+cat ~/trading-agent/data/trades.csv
 ```

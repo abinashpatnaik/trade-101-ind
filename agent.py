@@ -1,7 +1,7 @@
 """
 agent.py
 ========
-Main orchestrator for the FTSE 100 automated trading agent.
+Main orchestrator for the automated multi-market trading agent.
 
 Architecture
 ------------
@@ -19,7 +19,7 @@ Running
 The agent will:
   1. Wait until LSE opens (08:00 London time) if run outside market hours.
   2. Connect to IBKR TWS / IB Gateway.
-  3. Scan all 20 FTSE 100 tickers every 60 seconds.
+  3. Scan all tickers every 60 seconds.
   4. At 16:15 (15 min before close) close all open positions.
   5. Disconnect gracefully and log the session summary.
 
@@ -113,7 +113,7 @@ logger = _setup_logging()
 
 class TradingAgent:
     """
-    Top-level orchestrator for the FTSE 100 automated trading agent.
+    Top-level orchestrator for the automated multi-market trading agent.
 
     Lifecycle
     ---------

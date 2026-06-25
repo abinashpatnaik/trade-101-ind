@@ -137,7 +137,7 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 class SentimentEngine:
     """
-    Multi-signal sentiment engine for FTSE 100 stocks.
+    Multi-signal sentiment engine for traded stocks.
 
     Combines three free-data signals:
       1. RSS news sentiment     (weight 0.5)

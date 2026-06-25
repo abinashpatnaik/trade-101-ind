@@ -46,7 +46,7 @@ class TradeRecord:
 
 class PortfolioTracker:
     """
-    Tracks portfolio state and trade history for the FTSE 100 trading agent.
+    Tracks portfolio state and trade history for the trading agent.
 
     This class:
       1. Syncs account and position data from IBKR.

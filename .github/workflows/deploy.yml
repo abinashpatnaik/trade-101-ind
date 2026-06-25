@@ -23,11 +23,11 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}${{ vars.EC2_HOST }}
           EC2_USERNAME: ${{ secrets.EC2_USERNAME }}${{ vars.EC2_USERNAME }}
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='logs' --exclude='data' ./ $EC2_USERNAME@$EC2_HOST:~/nse-agent/
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='logs' --exclude='data' ./ $EC2_USERNAME@$EC2_HOST:~/trading-agent/
 
       - name: Start Container Stack on EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}${{ vars.EC2_HOST }}
           EC2_USERNAME: ${{ secrets.EC2_USERNAME }}${{ vars.EC2_USERNAME }}
         run: |
-          ssh -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST "mkdir -p ~/nse-agent/logs ~/nse-agent/data && cd ~/nse-agent && docker-compose down && docker-compose up -d --build"
+          ssh -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST "mkdir -p ~/trading-agent/logs ~/trading-agent/data && cd ~/trading-agent && docker-compose down && docker-compose up -d --build"

@@ -1,5 +1,5 @@
 /**
- * FTSE 100 Trading Agent — Dashboard Server
+ * Trading Agent — Dashboard Server
  *
  * Express REST API that the dashboard frontend consumes.
  * Reads trades.csv and agent.log from shared Docker volumes,
@@ -552,7 +552,7 @@ app.get("/api/logs", (_req, res) => {
 
 /**
  * GET /api/ticker
- * Returns live top 20 FTSE 100 stocks for the marquee ticker (read from agent background process)
+ * Returns live top 20 stocks for the marquee ticker (read from agent background process)
  */
 app.get("/api/ticker", async (_req, res) => {
   try {
@@ -693,7 +693,7 @@ app.get("/api/apps-health", async (_req, res) => {
     });
   };
 
-  const agentContainerName = MARKET_TYPE === "US" ? "us-trading-agent" : "nse-trading-agent";
+  const agentContainerName = MARKET_TYPE === "US" ? "us-trading-agent" : "in-trading-agent";
   let agentStatus = await getDockerStatus(agentContainerName);
   
   if (agentStatus === "running" && !isMarketOpen()) {

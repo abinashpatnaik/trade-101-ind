@@ -7,7 +7,7 @@ services:
   #   build:
   #     context: .
   #     dockerfile: Dockerfile
-  #   container_name: nse-trading-agent
+  #   container_name: in-trading-agent
   #   environment:
   #     - TRADING_MARKET=IN
   #     - KITE_API_KEY=${KITE_API_KEY}
@@ -56,7 +56,7 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
-    container_name: nse-dashboard
+    container_name: trading-dashboard
     ports:
       - "3001:3000"
     environment:

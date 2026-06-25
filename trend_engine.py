@@ -67,7 +67,7 @@ class TrendSignal:
 
 class TrendEngine:
     """
-    Computes technical trend signals for a single FTSE 100 equity.
+    Computes technical trend signals for a single equity.
 
     Design
     ------

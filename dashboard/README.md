@@ -1,6 +1,6 @@
 # Trading Dashboard
 
-A real-time web dashboard for monitoring the FTSE 100 Trading Agent. Displays live portfolio data, open positions, signal scanner, trade log, and agent logs.
+A real-time web dashboard for monitoring the multi-market Trading Agent. Displays live portfolio data, open positions, signal scanner, trade log, and agent logs.
 
 ## What It Shows
 
