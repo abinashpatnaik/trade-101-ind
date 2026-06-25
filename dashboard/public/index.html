@@ -335,6 +335,17 @@
             font-weight: 600;
         }
 
+        .badge-gated {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            display: inline-block;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -497,6 +508,7 @@
                     <span><span class="badge-buy" style="font-size: 0.75rem; padding: 1px 6px;">BUY</span> Strong bullish</span>
                     <span><span class="badge-sell" style="font-size: 0.75rem; padding: 1px 6px;">SELL</span> Bearish exit</span>
                     <span><span class="badge-hold" style="font-size: 0.75rem; padding: 1px 6px;">HOLD</span> No action</span>
+                    <span><span class="badge-gated" style="font-size: 0.75rem; padding: 1px 6px;">GATED</span> Score passed, ADX/Vol blocked</span>
                     <span style="margin-left: 0.8rem; font-weight: 600; color: var(--text-secondary);">AI Val:</span>
                     <span><span style="color: #00c896; font-weight: 600;">APPROVED</span> ML confirms</span>
                     <span><span style="color: #ff4d6a; font-weight: 600;">REJECTED</span> ML overrides</span>
@@ -649,7 +661,10 @@
 
             let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>AI Val</th></tr>';
             pageSignals.forEach(s => {
-                const sigClass = s.signal === 'BUY' ? 'badge-buy' : (s.signal === 'SELL' ? 'badge-sell' : 'badge-hold');
+                // Determine if this is a GATED signal (score above threshold but blocked)
+                const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
+                const displaySignal = isGated ? 'GATED' : s.signal;
+                const sigClass = displaySignal === 'BUY' ? 'badge-buy' : (displaySignal === 'SELL' ? 'badge-sell' : (displaySignal === 'GATED' ? 'badge-gated' : 'badge-hold'));
                 let aiHtml = '-';
                 if (s.aiDecision === 'OFF') {
                     aiHtml = '<span style="color: var(--text-muted); font-size: 0.85em;">OFF</span>';
@@ -671,10 +686,9 @@
                 else if (scoreVal <= sellThr * 0.7) scoreColor = '#38bdf8';
                 let scoreDisplay = scoreVal !== 0 ? scoreVal.toFixed(3) : '-';
 
-                // Build hold reason display
-                let holdHtml = '';
-                if (s.holdReason && s.signal === 'HOLD' && scoreVal >= buyThr) {
-                    // Extract key info: ADX or volume
+                // Build gate reason display for GATED signals
+                let gateHtml = '';
+                if (isGated) {
                     let shortReason = s.holdReason;
                     if (shortReason.includes('ADX=')) {
                         const adxMatch = shortReason.match(/ADX=([\d.]+)/);
@@ -685,7 +699,7 @@
                     } else {
                         shortReason = shortReason.substring(0, 60);
                     }
-                    holdHtml = `<br/><small style="color:#f0a500; font-size:0.75em;" title="${s.holdReason}">${shortReason}</small>`;
+                    gateHtml = `<br/><small style="color:#f59e0b; font-size:0.75em;" title="${s.holdReason}">${shortReason}</small>`;
                 }
 
                 html += `<tr>
@@ -694,7 +708,7 @@
                     <td>${s.rsi}</td>
                     <td>${s.trendScore}</td>
                     <td style="font-weight:600; color:${scoreColor};" title="Buy ≥ ${buyThr} | Sell ≤ ${sellThr}">${scoreDisplay}</td>
-                    <td><span class="${sigClass}">${s.signal}</span>${holdHtml}</td>
+                    <td><span class="${sigClass}">${displaySignal}</span>${gateHtml}</td>
                     <td style="max-width: 300px; line-height: 1.3;">${aiHtml}</td>
                 </tr>`;
             });
