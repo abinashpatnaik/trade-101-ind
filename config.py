@@ -66,11 +66,11 @@ class UniverseConfig:
 @dataclass
 class RiskConfig:
     """Position-level and portfolio-level risk controls."""
-    max_position_size_pct: float = 0.05
+    max_position_size_pct: float = 0.90
     max_daily_loss_pct: float = 0.02
-    stop_loss_pct: float = 0.02
-    take_profit_pct: float = 0.04
-    max_open_positions: int = 5
+    stop_loss_pct: float = 0.015
+    take_profit_pct: float = 0.025
+    max_open_positions: int = 1
     allow_short_selling: bool = False
     trailing_stop_pct: float = field(default_factory=lambda: float(os.getenv("TRAILING_STOP_PCT", "0.015")))
 
@@ -112,8 +112,8 @@ class SentimentConfig:
 @dataclass
 class SignalConfig:
     """Decision-engine thresholds."""
-    buy_threshold: float = 0.55
-    sell_threshold: float = -0.4
+    buy_threshold: float = 0.48
+    sell_threshold: float = -0.35
 
 
 @dataclass

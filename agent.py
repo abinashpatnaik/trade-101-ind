@@ -288,6 +288,8 @@ class TradingAgent:
                 "trendScore": trend_signal.overall_trend,
                 "macdSignal": trend_signal.macd_signal,
                 "emaSignal": trend_signal.ema_signal,
+                "adx": getattr(trend_signal, 'adx', 0.0),
+                "volumeRatio": getattr(trend_signal, 'volume_ratio', 1.0),
                 "signal": "HOLD"
             }
 

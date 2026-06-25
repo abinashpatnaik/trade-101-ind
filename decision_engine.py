@@ -343,6 +343,52 @@ class DecisionEngine:
         # BUY logic
         # ---------------------------------------------------------------
         if combined_score >= self._sig.buy_threshold:
+            # --- Sniper Mode: ADX trend strength filter ---
+            # Only trade in clear trends (ADX > 25). Protects against
+            # whipsaw losses in choppy/sideways markets.
+            adx = getattr(trend_signal, 'adx', 0.0)
+            if adx > 0 and adx < 25:
+                logger.info(
+                    "BUY blocked for %s — ADX=%.1f (weak trend, need >25). "
+                    "Protecting capital by avoiding choppy market.",
+                    symbol, adx,
+                )
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"BUY signal (score={combined_score:.3f}) but ADX={adx:.1f} "
+                        "indicates weak/choppy trend. Waiting for stronger trend."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score,
+                )
+
+            # --- Sniper Mode: Volume confirmation filter ---
+            # Only trade when volume is above average (>1.5x). Low volume
+            # moves often reverse — high volume confirms conviction.
+            vol_ratio = getattr(trend_signal, 'volume_ratio', 1.0)
+            if vol_ratio > 0 and vol_ratio < 1.5:
+                logger.info(
+                    "BUY blocked for %s — volume_ratio=%.2f (need >1.5x avg). "
+                    "No market conviction behind this move.",
+                    symbol, vol_ratio,
+                )
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"BUY signal (score={combined_score:.3f}) but volume "
+                        f"is only {vol_ratio:.2f}x average. Waiting for conviction."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score,
+                )
+
             if already_held:
                 return Decision(
                     action="HOLD",
@@ -482,7 +528,8 @@ class DecisionEngine:
                 f"(trend={trend_signal.overall_trend:.3f}, "
                 f"sentiment={sentiment_score:.3f}). "
                 f"RSI={trend_signal.rsi:.1f}, EMA={trend_signal.ema_signal}, "
-                f"MACD={trend_signal.macd_signal}, VWAP={trend_signal.vwap_signal}. "
+                f"MACD={trend_signal.macd_signal}, VWAP={trend_signal.vwap_signal}, "
+                f"ADX={adx:.1f}, Vol={vol_ratio:.2f}x. "
                 f"SL={stop_loss_price:.4f}, TP={take_profit_price:.4f}."
             )
 

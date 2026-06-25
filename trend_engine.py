@@ -63,6 +63,8 @@ class TrendSignal:
     vwap_signal: str         # 'above' | 'below'
     overall_trend: float     # [-1.0, 1.0]
     current_price: float
+    adx: float = 0.0         # Average Directional Index (0-100)
+    volume_ratio: float = 1.0  # Current volume / 20-day avg volume
 
 
 class TrendEngine:
@@ -218,6 +220,44 @@ class TrendEngine:
             return 0.0
         return float(atr_series.dropna().iloc[-1])
 
+    def _compute_adx(self, high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> float:
+        """Compute the Average Directional Index (ADX).
+        
+        ADX measures trend strength regardless of direction.
+        Values > 25 indicate a strong trend worth trading.
+        """
+        plus_dm = high.diff()
+        minus_dm = -low.diff()
+        plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+        minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+
+        tr1 = high - low
+        tr2 = (high - close.shift(1)).abs()
+        tr3 = (low - close.shift(1)).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+        atr_smooth = tr.rolling(window=period).mean()
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr_smooth)
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr_smooth)
+
+        dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1))
+        adx = dx.rolling(window=period).mean()
+
+        latest = adx.iloc[-1]
+        return float(latest) if not np.isnan(latest) else 0.0
+
+    def _compute_volume_ratio(self, volume: pd.Series, lookback: int = 20) -> float:
+        """Compute current volume relative to the 20-period average.
+        
+        A ratio > 1.5 indicates above-average volume (conviction).
+        """
+        if volume.empty or len(volume) < lookback:
+            return 1.0
+        avg_vol = volume.iloc[-lookback:].mean()
+        if avg_vol <= 0:
+            return 1.0
+        return float(volume.iloc[-1] / avg_vol)
+
     def _compute_vwap_signal(
         self, df: pd.DataFrame, current_price: float
     ) -> tuple[str, float]:
@@ -307,6 +347,8 @@ class TrendEngine:
             macd_label, macd_score = self._compute_macd_signal(close)
             atr_val = self._compute_atr(high, low, close)
             vwap_label, vwap_score = self._compute_vwap_signal(df, current_price)
+            adx_val = self._compute_adx(high, low, close)
+            vol_ratio = self._compute_volume_ratio(df["Volume"].astype(float))
 
             # --- Weighted composite score ---
             overall_trend = (
@@ -327,13 +369,16 @@ class TrendEngine:
                 vwap_signal=vwap_label,
                 overall_trend=round(overall_trend, 4),
                 current_price=round(current_price, 4),
+                adx=round(adx_val, 2),
+                volume_ratio=round(vol_ratio, 2),
             )
 
             logger.info(
                 "TrendSignal %s: rsi=%.1f ema=%s macd=%s vwap=%s "
-                "atr=%.4f overall=%.4f",
+                "atr=%.4f adx=%.1f vol_ratio=%.2f overall=%.4f",
                 symbol, signal.rsi, signal.ema_signal, signal.macd_signal,
-                signal.vwap_signal, signal.atr, signal.overall_trend,
+                signal.vwap_signal, signal.atr, signal.adx, signal.volume_ratio,
+                signal.overall_trend,
             )
             return signal
 
