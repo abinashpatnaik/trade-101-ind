@@ -2,7 +2,7 @@
 portfolio_tracker.py
 ====================
 Maintains a real-time view of the agent's portfolio, tracks P&L,
-and persists trade history to CSV.
+and persists trade history to SQLite.
 
 Syncs with IBKR account data on demand via IBKRConnector and applies
 the daily-loss-limit rule to protect against runaway drawdowns.
@@ -10,12 +10,11 @@ the daily-loss-limit rule to protect against runaway drawdowns.
 Outputs
 -------
 - In-memory state (portfolio_value, cash, open_positions, daily_pnl, etc.)
-- trades.csv: append-mode CSV log of every completed trade
+- SQLite trades table via db.py
 """
 
 from __future__ import annotations
 
-import csv
 import json
 import logging
 import os
@@ -24,6 +23,7 @@ from datetime import date
 from typing import Dict, List, Optional
 
 from config import config, CUR_SYM
+from db import TradingDB
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class TradeRecord:
     notional: float      # quantity × price
     pnl: Optional[float] = None   # realised P&L for SELL trades
     exit_reason: Optional[str] = None  # 'SELL_SIGNAL' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'EOD'
+    mode: str = "paper"  # 'paper' | 'live'
 
 
 class PortfolioTracker:
@@ -80,66 +81,37 @@ class PortfolioTracker:
         self.daily_spent: float = 0.0          # Total BUY notional today (INR)
         self.daily_realised_profit: float = 0.0  # Profits from closed trades today
 
-        # Trade history (in-memory; also persisted to CSV)
+        # Trade history (in-memory; also persisted to SQLite)
         self.closed_trades: List[TradeRecord] = []
-        self._trades_csv_path: str = config.agent.trades_csv
-
-        # Ensure the CSV file exists with headers.
-        self._init_csv()
+        self._db = TradingDB()
 
         logger.info(
-            "PortfolioTracker initialised — daily spend cap: %s%.2f reinvest: %s",
+            "PortfolioTracker initialised — daily spend cap: %s%.2f reinvest: %s (db: %s)",
             CUR_SYM, self._wallet.daily_spend_cap, self._wallet.reinvest_profits,
+            self._db.db_path,
         )
 
     # ------------------------------------------------------------------
-    # CSV management
+    # Database helpers
     # ------------------------------------------------------------------
 
-    def _init_csv(self) -> None:
-        """Create the trades CSV with a header row if it doesn't exist."""
-        csv_dir = os.path.dirname(self._trades_csv_path)
-        if csv_dir and not os.path.exists(csv_dir):
-            os.makedirs(csv_dir, exist_ok=True)
-
-        if not os.path.exists(self._trades_csv_path):
-            with open(self._trades_csv_path, mode="w", newline="") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=[
-                        "date", "time", "symbol", "action", "quantity",
-                        "price", "notional", "pnl", "exit_reason",
-                    ],
-                )
-                writer.writeheader()
-            logger.info("Trade log CSV created: %s", self._trades_csv_path)
-
-    def _append_to_csv(self, trade: TradeRecord) -> None:
-        """Append a single trade record to the CSV file."""
+    def _persist_trade(self, trade: TradeRecord) -> None:
+        """Write a single trade record to the SQLite database."""
         try:
-            with open(self._trades_csv_path, mode="a", newline="") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=[
-                        "date", "time", "symbol", "action", "quantity",
-                        "price", "notional", "pnl", "exit_reason",
-                    ],
-                )
-                writer.writerow(
-                    {
-                        "date": trade.date,
-                        "time": trade.time,
-                        "symbol": trade.symbol,
-                        "action": trade.action,
-                        "quantity": trade.quantity,
-                        "price": trade.price,
-                        "notional": round(trade.notional, 2),
-                        "pnl": round(trade.pnl, 2) if trade.pnl is not None else "",
-                        "exit_reason": trade.exit_reason or "",
-                    }
-                )
-        except OSError as exc:
-            logger.error("Failed to write trade to CSV: %s", exc, exc_info=True)
+            self._db.insert_trade(
+                date=trade.date,
+                time=trade.time,
+                symbol=trade.symbol,
+                action=trade.action,
+                quantity=trade.quantity,
+                price=trade.price,
+                notional=trade.notional,
+                pnl=trade.pnl,
+                exit_reason=trade.exit_reason,
+                mode=trade.mode,
+            )
+        except Exception as exc:
+            logger.error("Failed to write trade to DB: %s", exc, exc_info=True)
 
     def _dump_local_positions(self) -> None:
         """Dump the local open_positions to a JSON file for the dashboard."""
@@ -302,6 +274,7 @@ class PortfolioTracker:
         from datetime import datetime
 
         now = datetime.now()
+        trading_mode = os.getenv("TRADING_MODE", "paper").lower()
         trade = TradeRecord(
             date=now.strftime("%Y-%m-%d"),
             time=now.strftime("%H:%M:%S"),
@@ -312,6 +285,7 @@ class PortfolioTracker:
             notional=quantity * price,
             pnl=pnl,
             exit_reason=exit_reason,
+            mode=trading_mode,
         )
 
         notional = quantity * price
@@ -368,7 +342,7 @@ class PortfolioTracker:
         pos_val = sum(float(pos.get("market_value", 0.0)) for pos in self.open_positions.values())
         self.portfolio_value = self.cash + pos_val
 
-        self._append_to_csv(trade)
+        self._persist_trade(trade)
 
         logger.info(
             "Trade recorded: %s %s %d @ %s%.4f notional=%s%.2f pnl=%s reason=%s",

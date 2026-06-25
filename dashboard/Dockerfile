@@ -1,7 +1,9 @@
 FROM node:20-slim
 WORKDIR /app
 COPY package.json .
-RUN npm install --production
+RUN apt-get update && apt-get install -y python3 make g++ && \
+    npm install --production && \
+    apt-get purge -y python3 make g++ && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 COPY server.js .
 COPY public ./public
 ENV NODE_ENV=production

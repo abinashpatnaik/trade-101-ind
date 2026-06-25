@@ -17,6 +17,7 @@ const https = require("https");
 const { parse } = require("csv-parse/sync");
 const { execSync } = require("child_process");
 const http = require("http");
+const Database = require("better-sqlite3");
 
 const app = express();
 
@@ -29,6 +30,26 @@ const AGENT_LOG = process.env.AGENT_LOG_PATH || "/logs/agent.log";
 const IBKR_GATEWAY = process.env.IBKR_GATEWAY_URL || "https://localhost:5000";
 const MARKET_TYPE = (process.env.MARKET_TYPE || "IN").toUpperCase();
 const PORT = parseInt(process.env.PORT || "3000", 10);
+const DB_PATH = process.env.TRADING_DB_PATH || "/data/trading.db";
+
+// ---------------------------------------------------------------------------
+// SQLite Database
+// ---------------------------------------------------------------------------
+
+let _db = null;
+
+function getDB() {
+  if (_db) return _db;
+  try {
+    if (!fs.existsSync(DB_PATH)) return null;
+    _db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+    _db.pragma("journal_mode = WAL");
+    return _db;
+  } catch (err) {
+    console.error("Failed to open SQLite DB:", err.message);
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,19 +111,111 @@ function ibkrGet(apiPath) {
 }
 
 /**
- * Read and parse trades.csv.
+ * Read trades from SQLite (with CSV fallback for legacy data).
  * @param {string} [dateFilter] - Only return rows matching this YYYY-MM-DD date.
+ * @param {string} [mode] - Filter by 'paper' or 'live'.
+ * @param {string} [symbol] - Filter by symbol.
+ * @param {number} [limit] - Max rows (default 200).
  */
-function readTrades(dateFilter) {
+function readTrades(dateFilter, mode, symbol, limit = 200) {
+  const db = getDB();
+  if (db) {
+    try {
+      const clauses = [];
+      const params = {};
+      if (dateFilter) { clauses.push("date = $date"); params.$date = dateFilter; }
+      if (mode) { clauses.push("mode = $mode"); params.$mode = mode; }
+      if (symbol) { clauses.push("symbol = $symbol"); params.$symbol = symbol; }
+      const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+      return db.prepare(`SELECT * FROM trades ${where} ORDER BY date DESC, time DESC LIMIT $limit`)
+        .all({ ...params, $limit: limit });
+    } catch (err) {
+      console.error("SQLite readTrades error:", err.message);
+    }
+  }
+  // Fallback to CSV
   try {
     if (!fs.existsSync(TRADES_CSV)) return [];
     const content = fs.readFileSync(TRADES_CSV, "utf8");
     const records = parse(content, { columns: true, skip_empty_lines: true, relax_column_count: true });
-    if (dateFilter) {
-      return records.filter((r) => r.date === dateFilter);
-    }
-    return records;
+    let filtered = records;
+    if (dateFilter) filtered = filtered.filter(r => r.date === dateFilter);
+    if (mode) filtered = filtered.filter(r => r.mode === mode);
+    if (symbol) filtered = filtered.filter(r => r.symbol === symbol);
+    return filtered.slice(0, limit);
   } catch {
+    return [];
+  }
+}
+
+/**
+ * Get trade summary aggregates from SQLite.
+ */
+function getTradeSummary(symbol, sinceDate, mode) {
+  const db = getDB();
+  if (!db) return { totalBought: 0, totalSold: 0, totalPnl: 0 };
+  try {
+    const clauses = ["symbol = $symbol"];
+    const params = { $symbol: symbol };
+    if (sinceDate) { clauses.push("date >= $since"); params.$since = sinceDate; }
+    if (mode) { clauses.push("mode = $mode"); params.$mode = mode; }
+    const where = `WHERE ${clauses.join(" AND ")}`;
+    const row = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN action='BUY' THEN notional ELSE 0 END), 0) as totalBought,
+        COALESCE(SUM(CASE WHEN action='SELL' THEN notional ELSE 0 END), 0) as totalSold,
+        COALESCE(SUM(CASE WHEN action='SELL' THEN pnl ELSE 0 END), 0) as totalPnl
+      FROM trades ${where}
+    `).get(params);
+    return row || { totalBought: 0, totalSold: 0, totalPnl: 0 };
+  } catch (err) {
+    console.error("getTradeSummary error:", err.message);
+    return { totalBought: 0, totalSold: 0, totalPnl: 0 };
+  }
+}
+
+/**
+ * Read signals from SQLite (with JSON file fallback).
+ */
+function readSignals() {
+  const db = getDB();
+  if (db) {
+    try {
+      return db.prepare(`
+        SELECT symbol, price, change_pct as changePct, rsi, trend_score as trendScore,
+               macd_signal as macdSignal, ema_signal as emaSignal,
+               combined_score as combinedScore, signal, confidence,
+               buy_threshold as buyThreshold, sell_threshold as sellThreshold,
+               ai_decision as aiDecision, ai_reason as aiReason, updated_at
+        FROM signals ORDER BY ABS(trend_score) DESC LIMIT 20
+      `).all();
+    } catch (err) {
+      console.error("readSignals SQLite error:", err.message);
+    }
+  }
+  // Fallback to JSON
+  const dataPath = path.join(__dirname, "..", "data", "local_signals.json");
+  try {
+    if (fs.existsSync(dataPath)) {
+      return JSON.parse(fs.readFileSync(dataPath, "utf8"));
+    }
+  } catch { }
+  return [];
+}
+
+/**
+ * Read ML validation logs from SQLite.
+ */
+function readMLValidations(limit = 100) {
+  const db = getDB();
+  if (!db) return [];
+  try {
+    return db.prepare(`
+      SELECT timestamp, symbol, action, approved, reason
+      FROM ml_validations ORDER BY id DESC LIMIT $limit
+    `).all({ $limit: limit });
+  } catch (err) {
+    console.error("readMLValidations error:", err.message);
     return [];
   }
 }
@@ -281,7 +394,8 @@ app.get("/api/portfolio", async (_req, res) => {
     }
 
     // Win rate from today's SELL trades
-    const trades = readTrades(today());
+    const tradingMode = process.env.TRADING_MODE || "paper";
+    const trades = readTrades(today(), tradingMode);
     const sells = trades.filter((t) => t.action === "SELL" && t.pnl);
     const winners = sells.filter((t) => parseFloat(t.pnl) > 0);
     const winRate =
@@ -383,18 +497,12 @@ app.get("/api/signals", async (_req, res) => {
     const authStatus = await ibkrGet("/iserver/auth/status");
     const isAuth = authStatus?.authenticated === true;
 
-    const dataPath = path.join(__dirname, "..", "data", "local_signals.json");
-    let signals = [];
-    if (fs.existsSync(dataPath)) {
-      const data = fs.readFileSync(dataPath, "utf8");
-      signals = JSON.parse(data);
-    }
+    let signals = readSignals();
 
     signals = signals.map((s) => ({
       ...s,
       ibkrLive: isAuth,
     })).sort((a, b) => Math.abs(b.trendScore) - Math.abs(a.trendScore));
-
 
     res.json(signals);
   } catch {
@@ -408,17 +516,9 @@ app.get("/api/signals", async (_req, res) => {
  */
 app.get("/api/trades", async (_req, res) => {
   try {
-    const activeAccountId = await getActiveAccountId();
-    const isLive = activeAccountId && !activeAccountId.startsWith("D");
-    let trades = readTrades(today());
-    
-    if (activeAccountId) {
-      trades = trades.filter(t => {
-        if (t.account_id) return t.account_id === activeAccountId;
-        return !isLive; // Historical trades without account_id belong to paper
-      });
-    }
-    res.json(trades.reverse().slice(0, 50));
+    const tradingMode = process.env.TRADING_MODE || "paper";
+    const trades = readTrades(today(), tradingMode);
+    res.json(trades.slice(0, 50));
   } catch {
     res.json([]);
   }
@@ -430,17 +530,9 @@ app.get("/api/trades", async (_req, res) => {
  */
 app.get("/api/trades/all", async (_req, res) => {
   try {
-    const activeAccountId = await getActiveAccountId();
-    const isLive = activeAccountId && !activeAccountId.startsWith("D");
-    let trades = readTrades();
-    
-    if (activeAccountId) {
-      trades = trades.filter(t => {
-        if (t.account_id) return t.account_id === activeAccountId;
-        return !isLive; // Historical trades without account_id belong to paper
-      });
-    }
-    res.json(trades.reverse().slice(0, 200));
+    const tradingMode = process.env.TRADING_MODE || "paper";
+    const trades = readTrades(null, tradingMode, null, 200);
+    res.json(trades);
   } catch {
     res.json([]);
   }
@@ -506,50 +598,21 @@ app.get("/api/stock/:symbol", async (req, res) => {
       price: closes[i]
     }));
 
-    // 2. Fetch and filter 6-month trade history
+    // 2. Fetch trade history and aggregates from SQLite
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const activeAccountId = await getActiveAccountId();
-    const isLive = activeAccountId && !activeAccountId.startsWith("D");
+    const sinceDate = sixMonthsAgo.toISOString().split('T')[0];
+    const tradingMode = process.env.TRADING_MODE || "paper";
     
-    let trades = readTrades();
-    trades = trades.filter(t => {
-      if (t.symbol !== symbol) return false;
-      
-      // Filter by account ID
-      if (activeAccountId) {
-        if (t.account_id) {
-          if (t.account_id !== activeAccountId) return false;
-        } else {
-          if (isLive) return false;
-        }
-      }
-      
-      // Filter by 6 months
-      const tradeDate = new Date(t.date);
-      return tradeDate >= sixMonthsAgo;
-    });
-
-    let totalBought = 0;
-    let totalSold = 0;
-    let totalPnl = 0;
-    
-    trades.forEach(t => {
-      if (t.action === "BUY") totalBought += parseFloat(t.notional) || 0;
-      if (t.action === "SELL") {
-        totalSold += parseFloat(t.notional) || 0;
-        totalPnl += parseFloat(t.pnl) || 0;
-      }
-    });
+    const summary = getTradeSummary(symbol, sinceDate, tradingMode);
+    const trades = readTrades(null, tradingMode, symbol, 100);
+    // Filter to 6 months
+    const filteredTrades = trades.filter(t => t.date >= sinceDate);
 
     res.json({
       chartData,
-      summary: {
-        totalBought,
-        totalSold,
-        totalPnl
-      },
-      trades: trades.reverse() // Most recent first
+      summary,
+      trades: filteredTrades
     });
 
   } catch (error) {
@@ -560,10 +623,15 @@ app.get("/api/stock/:symbol", async (req, res) => {
 
 /**
  * GET /api/ai-reasoning
- * Reads AI validation reasoning from data/ai_validation.json
+ * Reads ML validation logs from SQLite
  */
 app.get("/api/ai-reasoning", (_req, res) => {
   try {
+    const logs = readMLValidations(100);
+    if (logs.length > 0) {
+      return res.json(logs);
+    }
+    // Fallback to legacy JSON file
     const aiLogPath = process.env.AI_LOG_PATH || path.join(path.dirname(TRADES_CSV), "ai_validation.json");
     if (!fs.existsSync(aiLogPath)) {
       return res.json([]);

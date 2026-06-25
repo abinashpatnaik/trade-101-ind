@@ -59,6 +59,7 @@ from trend_engine import TrendEngine
 from ai_validator import AIValidator
 from continuous_learning import ContinuousLearning
 from ticker_fetcher import TickerFetcher
+from db import TradingDB
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -157,6 +158,7 @@ class TradingAgent:
         self.ai_validator = AIValidator()
         self.continuous_learning = ContinuousLearning()
         self.ticker_fetcher = TickerFetcher()
+        self._trading_db = TradingDB()
         self._current_signals = {}
         
         # XGBoost model bootstrap training check
@@ -682,12 +684,10 @@ class TradingAgent:
 
                 # Dump signals for dashboard
                 try:
-                    data_dir = os.path.dirname(config.agent.trades_csv)
-                    out_path = os.path.join(data_dir, "local_signals.json")
-                    with open(out_path, "w") as f:
-                        json.dump(list(self._current_signals.values()), f, indent=2)
+                    signals_list = list(self._current_signals.values())
+                    self._trading_db.upsert_signals(signals_list)
                 except Exception as exc:
-                    logger.error("Failed to dump local signals: %s", exc, exc_info=True)
+                    logger.error("Failed to dump signals to DB: %s", exc, exc_info=True)
 
                 # e. Portfolio summary log
                 summary = self.portfolio.get_summary()

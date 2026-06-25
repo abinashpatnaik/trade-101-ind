@@ -5,7 +5,6 @@ Provides an ML assurance layer to validate trading decisions using a local
 XGBoost model, replacing the legacy Gemini LLM dependency.
 """
 
-import json
 import logging
 import os
 import joblib
@@ -15,6 +14,7 @@ from datetime import datetime
 from config import config
 from decision_engine import Decision
 from trend_engine import TrendSignal
+from db import TradingDB
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,6 @@ class AIValidator:
         self.validate_sells = config.ai.validate_sells
         
         self._in_docker = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
-        self.log_file = "/app/data/ml_validation.json" if self._in_docker else "data/ml_validation.json"
         self.model_path = "/app/data/ml_validator_model.pkl" if self._in_docker else "data/ml_validator_model.pkl"
         
         # We also look in the current directory if it's not found in data/ (e.g. testing)
@@ -34,16 +33,9 @@ class AIValidator:
                 self.model_path = local_fallback
 
         self.model = None
+        self._db = TradingDB()
         if self.enabled:
             self._load_model()
-        
-        try:
-            os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
-            if not os.path.exists(self.log_file):
-                with open(self.log_file, "w") as f:
-                    json.dump([], f)
-        except Exception as e:
-            logger.warning("Could not initialize ML validation log file: %s", e)
             
     def _load_model(self):
         try:
@@ -59,27 +51,15 @@ class AIValidator:
 
     def _save_log(self, symbol: str, action: str, approved: bool, reason: str):
         try:
-            with open(self.log_file, "r") as f:
-                logs = json.load(f)
-        except Exception:
-            logs = []
-            
-        logs.append({
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "symbol": symbol,
-            "action": action,
-            "approved": approved,
-            "reason": reason
-        })
-        
-        # Keep last 100
-        logs = logs[-100:]
-        
-        try:
-            with open(self.log_file, "w") as f:
-                json.dump(logs, f, indent=2)
+            self._db.insert_ml_validation(
+                timestamp=datetime.utcnow().isoformat() + "Z",
+                symbol=symbol,
+                action=action,
+                approved=approved,
+                reason=reason,
+            )
         except Exception as e:
-            logger.error("Failed to write to ML validation log: %s", e)
+            logger.error("Failed to write ML validation log to DB: %s", e)
 
     def validate_decision(
         self,

@@ -65,6 +65,8 @@ services:
       - TRADES_CSV_PATH=/data/trades_US.csv
       - AGENT_LOG_PATH=/logs/agent_US.log
       - MARKET_TYPE=US
+      - TRADING_MODE=${TRADING_MODE:-paper}
+      - TRADING_DB_PATH=/data/trading.db
     volumes:
       - ./logs:/logs
       - ./data:/data
