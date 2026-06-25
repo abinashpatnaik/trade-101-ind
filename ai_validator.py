@@ -75,12 +75,6 @@ class AIValidator:
         if not self.enabled or self.model is None:
             return decision
 
-        if decision.action == "HOLD":
-            return decision
-
-        if decision.action == "SELL" and not self.validate_sells:
-            return decision
-
         logger.info("Requesting ML validation for %s %s decision...", symbol, decision.action)
 
         try:
@@ -117,13 +111,16 @@ class AIValidator:
                 reason = f"ML Validator {'APPROVED' if approved else 'REJECTED'} SELL (Confidence of upward trend: {prob_success*100:.1f}%)"
             else:
                 approved = True
-                reason = "Unknown action bypassed."
+                reason = f"ML Validator EVALUATED {decision.action} (Confidence: {prob_success*100:.1f}%)"
 
             self._save_log(symbol, decision.action, bool(approved), reason)
             
             # GHOST MODE: Always let the trade pass, but log the ai_decision
-            logger.info(f"Ghost Mode: {reason}")
+            if decision.action in ("BUY", "SELL"):
+                logger.info(f"Ghost Mode: {reason}")
             decision.ai_decision = "GHOST_APPROVED" if approved else "GHOST_REJECTED"
+            if decision.action == "HOLD":
+                decision.ai_decision = "GHOST_EVALUATED"
             decision.ai_reason = reason
             return decision
                 
