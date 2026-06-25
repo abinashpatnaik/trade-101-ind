@@ -37,7 +37,8 @@ DATA_DIR = "/app/data" if _IN_DOCKER else "data"
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
-UNIVERSE_FILE = os.path.join(os.path.dirname(__file__), "nse_universe.json")
+_UNIVERSE_FILENAME = "us_universe.json" if ACTIVE_MARKET == "US" else "nse_universe.json"
+UNIVERSE_FILE = os.path.join(os.path.dirname(__file__), _UNIVERSE_FILENAME)
 TARGETS_FILE = os.path.join(DATA_DIR, "daily_targets.json")
 
 def fetch_rss_sentiment(symbol: str) -> float:
@@ -71,7 +72,8 @@ def run_scanner():
         universe_map = json.load(f)
         
     tickers = list(universe_map.keys())
-    logger.info(f"Loaded {len(tickers)} tickers from the Nifty 50 universe.")
+    _market_label = "NASDAQ 20" if ACTIVE_MARKET == "US" else "Nifty 50"
+    logger.info(f"Loaded {len(tickers)} tickers from the {_market_label} universe.")
     
     # 1. Bulk Download 1 Month of Data
     logger.info("Downloading 1-month OHLCV data for momentum calculation...")

@@ -1,0 +1,106 @@
+[
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/xml_backup_rules.xml.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/xml/backup_rules.xml"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/xml_data_extraction_rules.xml.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-mdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/drawable_ic_launcher_background.xml.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/drawable/ic_launcher_background.xml"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-hdpi_ic_launcher_round.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-hdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-xhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-xxxhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-xxxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-hdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-xxxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-xhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-mdpi_ic_launcher_round.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-mdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-xxxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-mdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-xxhdpi_ic_launcher_round.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-xxhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-xhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-xxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/drawable/ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-xhdpi_ic_launcher_round.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-xhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.example.tradingagent.app-debug-42:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "com.example.tradingagent.app-main-44:/mipmap-xxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-hdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-xxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-debug-42:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/abinash/.gradle/daemon/9.1.0/com.example.tradingagent.app-main-44:/mipmap-mdpi/ic_launcher_round.webp"
+    }
+]

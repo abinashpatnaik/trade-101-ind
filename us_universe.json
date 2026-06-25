@@ -1,0 +1,22 @@
+{
+  "AAPL": "Technology",
+  "MSFT": "Technology",
+  "NVDA": "Semiconductors",
+  "GOOGL": "Technology",
+  "AMZN": "Consumer Discretionary",
+  "META": "Technology",
+  "TSLA": "Automobile",
+  "AVGO": "Semiconductors",
+  "COST": "Consumer Staples",
+  "PEP": "Consumer Staples",
+  "NFLX": "Communication Services",
+  "CSCO": "Technology",
+  "TMUS": "Telecom",
+  "INTC": "Semiconductors",
+  "CMCSA": "Communication Services",
+  "AMD": "Semiconductors",
+  "QCOM": "Semiconductors",
+  "ADBE": "Technology",
+  "TXN": "Semiconductors",
+  "AMGN": "Healthcare"
+}
