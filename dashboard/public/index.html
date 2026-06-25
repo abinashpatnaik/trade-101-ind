@@ -481,7 +481,7 @@
         
         <div class="grid" style="grid-template-columns: 1fr;">
             <div class="card">
-                <h2>Market Signals (Top 5)</h2>
+                <h2>Market Signals</h2>
                 <div id="signals-table-container">
                     <div class="empty-state">Loading signals...</div>
                 </div>
@@ -715,7 +715,7 @@
                     sigContainer.innerHTML = '<div class="empty-state">No signals available</div>';
                 } else {
                     let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>AI Val</th></tr>';
-                    signals.slice(0, 5).forEach(s => {
+                    signals.forEach(s => {
                         const sigClass = s.signal === 'BUY' ? 'badge-buy' : (s.signal === 'SELL' ? 'badge-sell' : 'badge-hold');
                         let aiHtml = '-';
                         if (s.aiDecision === 'OFF') {
