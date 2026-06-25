@@ -640,9 +640,48 @@
         }
 
         const SIGNALS_PER_PAGE = 10;
+        
+        window._sortCol = 'combinedScore';
+        window._sortDir = 'desc';
+
+        function handleSort(col) {
+            if (window._sortCol === col) {
+                window._sortDir = window._sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                window._sortCol = col;
+                window._sortDir = 'desc';
+            }
+            renderSignalsPage(1);
+        }
+
+        function getSortIcon(col) {
+            if (window._sortCol !== col) return '<span style="opacity:0.3; font-size:0.8em; margin-left:4px;">↕</span>';
+            return window._sortDir === 'asc' 
+                ? '<span style="color:var(--accent); font-size:0.8em; margin-left:4px;">↑</span>' 
+                : '<span style="color:var(--accent); font-size:0.8em; margin-left:4px;">↓</span>';
+        }
 
         function renderSignalsPage(page) {
-            const signals = window._allSignals || [];
+            let signals = [...(window._allSignals || [])];
+            
+            // Sort signals
+            signals.sort((a, b) => {
+                let valA = a[window._sortCol];
+                let valB = b[window._sortCol];
+                
+                if (valA === undefined || valA === null) valA = '';
+                if (valB === undefined || valB === null) valB = '';
+                
+                let diff = 0;
+                if (typeof valA === 'number' && typeof valB === 'number') {
+                    diff = valA - valB;
+                } else {
+                    diff = String(valA).localeCompare(String(valB));
+                }
+                
+                return window._sortDir === 'asc' ? diff : -diff;
+            });
+
             const sigContainer = document.getElementById('signals-table-container');
             const sigPagination = document.getElementById('signals-pagination');
 
@@ -660,13 +699,13 @@
             const pageSignals = signals.slice(start, start + SIGNALS_PER_PAGE);
 
             let html = '<table><tr>' +
-                '<th style="width: 10%;">Symbol</th>' +
-                '<th style="width: 12%;">Price</th>' +
-                '<th style="width: 10%;">RSI</th>' +
-                '<th style="width: 12%;">Trend</th>' +
-                '<th style="width: 12%;">Score</th>' +
-                '<th style="width: 24%;">Algo</th>' +
-                '<th style="width: 20%;">ML Conf</th></tr>';
+                `<th style="width: 10%; cursor: pointer; user-select: none;" onclick="handleSort('symbol')">Symbol ${getSortIcon('symbol')}</th>` +
+                `<th style="width: 12%; cursor: pointer; user-select: none;" onclick="handleSort('price')">Price ${getSortIcon('price')}</th>` +
+                `<th style="width: 10%; cursor: pointer; user-select: none;" onclick="handleSort('rsi')">RSI ${getSortIcon('rsi')}</th>` +
+                `<th style="width: 12%; cursor: pointer; user-select: none;" onclick="handleSort('trendScore')">Trend ${getSortIcon('trendScore')}</th>` +
+                `<th style="width: 12%; cursor: pointer; user-select: none;" onclick="handleSort('combinedScore')">Score ${getSortIcon('combinedScore')}</th>` +
+                `<th style="width: 24%; cursor: pointer; user-select: none;" onclick="handleSort('signal')">Algo ${getSortIcon('signal')}</th>` +
+                `<th style="width: 20%; cursor: pointer; user-select: none;" onclick="handleSort('mlConfidence')">ML Conf ${getSortIcon('mlConfidence')}</th></tr>`;
             pageSignals.forEach(s => {
                 // Determine if this is a GATED signal (score above threshold but blocked)
                 const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
