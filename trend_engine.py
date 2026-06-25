@@ -249,14 +249,18 @@ class TrendEngine:
     def _compute_volume_ratio(self, volume: pd.Series, lookback: int = 20) -> float:
         """Compute current volume relative to the 20-period average.
         
+        Uses the last *completed* candle (iloc[-2]) since the current
+        candle (iloc[-1]) is still forming and has artificially low volume.
         A ratio > 1.5 indicates above-average volume (conviction).
         """
-        if volume.empty or len(volume) < lookback:
+        if volume.empty or len(volume) < lookback + 2:
             return 1.0
-        avg_vol = volume.iloc[-lookback:].mean()
+        # Exclude the current incomplete candle from both current and average
+        completed = volume.iloc[:-1]
+        avg_vol = completed.iloc[-lookback:].mean()
         if avg_vol <= 0:
             return 1.0
-        return float(volume.iloc[-1] / avg_vol)
+        return float(completed.iloc[-1] / avg_vol)
 
     def _compute_vwap_signal(
         self, df: pd.DataFrame, current_price: float
