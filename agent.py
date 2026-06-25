@@ -744,7 +744,16 @@ class TradingAgent:
                 CUR_SYM, perf["worst_trade"],
             )
 
-            self.send_eod_report()
+            # Only send EOD report if market is closed or near close.
+            # Avoids spurious emails on mid-day container restarts.
+            if not self.session.is_market_open() or self.session.is_near_close():
+                self.send_eod_report()
+            else:
+                logger.info(
+                    "Skipping EOD report — market still open (%.1f min remaining). "
+                    "This appears to be a mid-session restart.",
+                    self.session.minutes_remaining(),
+                )
             self.ticker_fetcher.stop()
             self._disconnect_broker()
             logger.info("=" * 70)
