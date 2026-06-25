@@ -1,16 +1,21 @@
 package com.example.tradingagent.ui.positions
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.tradingagent.TradingAgentApp
+import com.example.tradingagent.data.api.Position as ApiPosition
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
+/** UI-friendly position model with computed P&L. */
 data class Position(
     val symbol: String,
     val quantity: Int,
     val avgCost: Double,
     val currentPrice: Double,
-    val exchange: String = "NSE",
+    val exchange: String = "US",
 ) {
     val unrealizedPnl: Double
         get() = (currentPrice - avgCost) * quantity
@@ -22,41 +27,38 @@ data class Position(
 
 data class PositionsUiState(
     val positions: List<Position> = emptyList(),
-    val isLoading: Boolean = false,
+    val isLoading: Boolean = true,
 )
 
 class PositionsViewModel : ViewModel() {
-    private val _uiState = MutableStateFlow(
-        PositionsUiState(
-            positions = listOf(
-                Position(
-                    symbol = "RELIANCE",
-                    quantity = 10,
-                    avgCost = 2480.50,
-                    currentPrice = 2523.75,
-                    exchange = "NSE",
-                ),
-                Position(
-                    symbol = "TCS",
-                    quantity = 5,
-                    avgCost = 3650.00,
-                    currentPrice = 3612.30,
-                    exchange = "NSE",
-                ),
-                Position(
-                    symbol = "INFY",
-                    quantity = 15,
-                    avgCost = 1520.00,
-                    currentPrice = 1548.90,
-                    exchange = "NSE",
-                ),
-            )
-        )
-    )
+    private val repository = TradingAgentApp.instance.repository
+    private val _uiState = MutableStateFlow(PositionsUiState())
     val uiState: StateFlow<PositionsUiState> = _uiState.asStateFlow()
 
+    init {
+        viewModelScope.launch {
+            repository.positions.collect { apiPositions ->
+                val mapped = apiPositions.map { it.toUiPosition() }
+                _uiState.value = PositionsUiState(
+                    positions = mapped,
+                    isLoading = false,
+                )
+            }
+        }
+    }
+
     fun refresh() {
-        _uiState.value = _uiState.value.copy(isLoading = true)
-        _uiState.value = _uiState.value.copy(isLoading = false)
+        viewModelScope.launch { repository.refresh() }
+    }
+
+    /** Map API Position (supports both IBKR and Alpaca formats) to UI Position. */
+    private fun ApiPosition.toUiPosition(): Position {
+        return Position(
+            symbol = displaySymbol,
+            quantity = displayQuantity.toInt(),
+            avgCost = displayAvgCost,
+            currentPrice = displayCurrentPrice,
+            exchange = "US",
+        )
     }
 }

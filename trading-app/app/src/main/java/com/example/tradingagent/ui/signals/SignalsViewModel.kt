@@ -1,83 +1,56 @@
 package com.example.tradingagent.ui.signals
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.tradingagent.TradingAgentApp
+import com.example.tradingagent.data.api.Signal as ApiSignal
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
+/** UI-friendly signal model. */
 data class Signal(
     val symbol: String,
     val price: Double,
     val changePct: Double,
     val trendScore: Double,
     val signal: String,     // "BUY", "SELL", "HOLD"
-    val aiDecision: String, // "BUY", "SELL", "HOLD", "SKIP"
+    val aiDecision: String, // "APPROVED", "REJECTED", "IDLE", "OFF"
 )
 
 data class SignalsUiState(
     val signals: List<Signal> = emptyList(),
-    val isLoading: Boolean = false,
+    val isLoading: Boolean = true,
 )
 
 class SignalsViewModel : ViewModel() {
-    private val _uiState = MutableStateFlow(
-        SignalsUiState(
-            signals = listOf(
-                Signal(
-                    symbol = "RELIANCE",
-                    price = 2523.75,
-                    changePct = 1.74,
-                    trendScore = 0.72,
-                    signal = "BUY",
-                    aiDecision = "BUY",
-                ),
-                Signal(
-                    symbol = "TCS",
-                    price = 3612.30,
-                    changePct = -1.03,
-                    trendScore = -0.61,
-                    signal = "SELL",
-                    aiDecision = "SELL",
-                ),
-                Signal(
-                    symbol = "INFY",
-                    price = 1548.90,
-                    changePct = 1.90,
-                    trendScore = 0.48,
-                    signal = "HOLD",
-                    aiDecision = "HOLD",
-                ),
-                Signal(
-                    symbol = "HDFCBANK",
-                    price = 1687.40,
-                    changePct = 0.32,
-                    trendScore = 0.15,
-                    signal = "HOLD",
-                    aiDecision = "SKIP",
-                ),
-                Signal(
-                    symbol = "ICICIBANK",
-                    price = 1234.55,
-                    changePct = -0.58,
-                    trendScore = -0.45,
-                    signal = "HOLD",
-                    aiDecision = "HOLD",
-                ),
-                Signal(
-                    symbol = "WIPRO",
-                    price = 456.80,
-                    changePct = 2.15,
-                    trendScore = 0.85,
-                    signal = "BUY",
-                    aiDecision = "BUY",
-                ),
-            )
-        )
-    )
+    private val repository = TradingAgentApp.instance.repository
+    private val _uiState = MutableStateFlow(SignalsUiState())
     val uiState: StateFlow<SignalsUiState> = _uiState.asStateFlow()
 
-    fun refresh() {
-        _uiState.value = _uiState.value.copy(isLoading = true)
-        _uiState.value = _uiState.value.copy(isLoading = false)
+    init {
+        viewModelScope.launch {
+            repository.signals.collect { apiSignals ->
+                val mapped = apiSignals.map { it.toUiSignal() }
+                _uiState.value = SignalsUiState(
+                    signals = mapped,
+                    isLoading = false,
+                )
+            }
+        }
     }
+
+    fun refresh() {
+        viewModelScope.launch { repository.refresh() }
+    }
+
+    private fun ApiSignal.toUiSignal(): Signal = Signal(
+        symbol = symbol,
+        price = price ?: 0.0,
+        changePct = changePct ?: 0.0,
+        trendScore = trendScore ?: combinedScore ?: 0.0,
+        signal = signal ?: "HOLD",
+        aiDecision = aiDecision ?: "OFF",
+    )
 }
