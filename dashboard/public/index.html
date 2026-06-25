@@ -485,6 +485,7 @@
                 <div id="signals-table-container">
                     <div class="empty-state">Loading signals...</div>
                 </div>
+                <div id="signals-pagination" style="display:flex; justify-content:center; align-items:center; gap:6px; margin-top:12px;"></div>
                 <div style="display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid rgba(255,255,255,0.06); font-size: 0.8rem; color: var(--text-muted);">
                     <span style="font-weight: 600; color: var(--text-secondary);">Score:</span>
                     <span><span style="color: #00c896; font-weight: 600;">●</span> BUY zone (≥ 0.55)</span>
@@ -626,6 +627,96 @@
             }
         }
 
+        const SIGNALS_PER_PAGE = 10;
+
+        function renderSignalsPage(page) {
+            const signals = window._allSignals || [];
+            const sigContainer = document.getElementById('signals-table-container');
+            const sigPagination = document.getElementById('signals-pagination');
+
+            if (signals.length === 0) {
+                sigContainer.innerHTML = '<div class="empty-state">No signals available</div>';
+                sigPagination.innerHTML = '';
+                return;
+            }
+
+            const totalPages = Math.ceil(signals.length / SIGNALS_PER_PAGE);
+            page = Math.max(1, Math.min(page, totalPages));
+            window._sigPage = page;
+
+            const start = (page - 1) * SIGNALS_PER_PAGE;
+            const pageSignals = signals.slice(start, start + SIGNALS_PER_PAGE);
+
+            let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>AI Val</th></tr>';
+            pageSignals.forEach(s => {
+                const sigClass = s.signal === 'BUY' ? 'badge-buy' : (s.signal === 'SELL' ? 'badge-sell' : 'badge-hold');
+                let aiHtml = '-';
+                if (s.aiDecision === 'OFF') {
+                    aiHtml = '<span style="color: var(--text-muted); font-size: 0.85em;">OFF</span>';
+                } else if (s.aiDecision === 'IDLE') {
+                    aiHtml = '<span style="color: #6b7baa; font-size: 0.85em;">IDLE</span>';
+                } else if (s.aiDecision === 'APPROVED') {
+                    aiHtml = `<strong class="positive">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
+                } else if (s.aiDecision === 'REJECTED') {
+                    aiHtml = `<strong class="negative">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
+                }
+
+                let scoreVal = s.combinedScore !== undefined ? s.combinedScore : 0;
+                let buyThr = s.buyThreshold || 0.48;
+                let sellThr = s.sellThreshold || -0.35;
+                let scoreColor = 'var(--text-muted)';
+                if (scoreVal >= buyThr) scoreColor = 'var(--positive)';
+                else if (scoreVal >= buyThr * 0.7) scoreColor = '#f0a500';
+                else if (scoreVal <= sellThr) scoreColor = 'var(--negative)';
+                else if (scoreVal <= sellThr * 0.7) scoreColor = '#38bdf8';
+                let scoreDisplay = scoreVal !== 0 ? scoreVal.toFixed(3) : '-';
+
+                html += `<tr>
+                    <td><a class="clickable-symbol" onclick="openStockModal('${s.symbol}')">${s.symbol}</a></td>
+                    <td>${formatMoney(s.price)}</td>
+                    <td>${s.rsi}</td>
+                    <td>${s.trendScore}</td>
+                    <td style="font-weight:600; color:${scoreColor};" title="Buy ≥ ${buyThr} | Sell ≤ ${sellThr}">${scoreDisplay}</td>
+                    <td><span class="${sigClass}">${s.signal}</span></td>
+                    <td style="max-width: 300px; line-height: 1.3;">${aiHtml}</td>
+                </tr>`;
+            });
+            html += '</table>';
+            sigContainer.innerHTML = html;
+
+            // Render pagination tabs
+            if (totalPages <= 1) {
+                sigPagination.innerHTML = '';
+                return;
+            }
+            let pagHtml = '';
+            // Previous button
+            pagHtml += `<button onclick="renderSignalsPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}
+                style="padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12);
+                background:${page <= 1 ? 'transparent' : 'rgba(255,255,255,0.06)'};
+                color:${page <= 1 ? 'var(--text-muted)' : 'var(--text-primary)'};
+                cursor:${page <= 1 ? 'default' : 'pointer'}; font-size:0.85rem;">‹</button>`;
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const isActive = i === page;
+                pagHtml += `<button onclick="renderSignalsPage(${i})"
+                    style="padding:4px 12px; border-radius:6px;
+                    border:1px solid ${isActive ? 'var(--accent)' : 'rgba(255,255,255,0.12)'};
+                    background:${isActive ? 'var(--accent)' : 'rgba(255,255,255,0.06)'};
+                    color:${isActive ? '#fff' : 'var(--text-secondary)'};
+                    cursor:pointer; font-weight:${isActive ? '700' : '400'}; font-size:0.85rem;">${i}</button>`;
+            }
+            // Next button
+            pagHtml += `<button onclick="renderSignalsPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}
+                style="padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12);
+                background:${page >= totalPages ? 'transparent' : 'rgba(255,255,255,0.06)'};
+                color:${page >= totalPages ? 'var(--text-muted)' : 'var(--text-primary)'};
+                cursor:${page >= totalPages ? 'default' : 'pointer'}; font-size:0.85rem;">›</button>`;
+            // Item count
+            pagHtml += `<span style="color:var(--text-muted); font-size:0.8rem; margin-left:8px;">${start + 1}–${Math.min(start + SIGNALS_PER_PAGE, signals.length)} of ${signals.length}</span>`;
+            sigPagination.innerHTML = pagHtml;
+        }
+
         async function fetchDashboardData() {
             document.getElementById('loading').style.display = 'inline-block';
             try {
@@ -709,49 +800,12 @@
                     posContainer.innerHTML = html;
                 }
 
-                // Update Signals
+                // Update Signals (paginated)
                 const sigContainer = document.getElementById('signals-table-container');
-                if (signals.length === 0) {
-                    sigContainer.innerHTML = '<div class="empty-state">No signals available</div>';
-                } else {
-                    let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>AI Val</th></tr>';
-                    signals.forEach(s => {
-                        const sigClass = s.signal === 'BUY' ? 'badge-buy' : (s.signal === 'SELL' ? 'badge-sell' : 'badge-hold');
-                        let aiHtml = '-';
-                        if (s.aiDecision === 'OFF') {
-                            aiHtml = '<span style="color: var(--text-muted); font-size: 0.85em;">OFF</span>';
-                        } else if (s.aiDecision === 'IDLE') {
-                            aiHtml = '<span style="color: #6b7baa; font-size: 0.85em;">IDLE</span>';
-                        } else if (s.aiDecision === 'APPROVED') {
-                            aiHtml = `<strong class="positive">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
-                        } else if (s.aiDecision === 'REJECTED') {
-                            aiHtml = `<strong class="negative">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
-                        }
-
-                        // Score color: green if near buy threshold, red if near sell threshold, grey if neutral
-                        let scoreVal = s.combinedScore !== undefined ? s.combinedScore : 0;
-                        let buyThr = s.buyThreshold || 0.55;
-                        let sellThr = s.sellThreshold || -0.4;
-                        let scoreColor = 'var(--text-muted)';
-                        if (scoreVal >= buyThr) scoreColor = 'var(--positive)';
-                        else if (scoreVal >= buyThr * 0.7) scoreColor = '#f0a500';
-                        else if (scoreVal <= sellThr) scoreColor = 'var(--negative)';
-                        else if (scoreVal <= sellThr * 0.7) scoreColor = '#38bdf8';
-                        let scoreDisplay = scoreVal !== 0 ? scoreVal.toFixed(3) : '-';
-                        
-                        html += `<tr>
-                            <td><a class="clickable-symbol" onclick="openStockModal('${s.symbol}')">${s.symbol}</a></td>
-                            <td>${formatMoney(s.price)}</td>
-                            <td>${s.rsi}</td>
-                            <td>${s.trendScore}</td>
-                            <td style="font-weight:600; color:${scoreColor};" title="Buy ≥ ${buyThr} | Sell ≤ ${sellThr}">${scoreDisplay}</td>
-                            <td><span class="${sigClass}">${s.signal}</span></td>
-                            <td style="max-width: 300px; line-height: 1.3;">${aiHtml}</td>
-                        </tr>`;
-                    });
-                    html += '</table>';
-                    sigContainer.innerHTML = html;
-                }
+                const sigPagination = document.getElementById('signals-pagination');
+                window._allSignals = signals;
+                window._sigPage = window._sigPage || 1;
+                renderSignalsPage(window._sigPage);
 
             } catch (err) {
                 console.error('Failed to fetch dashboard data', err);
