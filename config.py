@@ -211,7 +211,9 @@ def get_us_config() -> Config:
         universe=UniverseConfig(
             tickers=["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", 
                      "AVGO", "COST", "PEP", "NFLX", "CSCO", "TMUS", "INTC", 
-                     "CMCSA", "AMD", "QCOM", "ADBE", "TXN", "AMGN"]
+                     "CMCSA", "AMD", "QCOM", "ADBE", "TXN", "AMGN",
+                     "INTU", "ISRG", "AMAT", "LRCX", "MU",
+                     "PANW", "SNPS", "KLAC", "MELI", "CRWD"]
         ),
         risk=RiskConfig(),
         wallet=WalletConfig(
