@@ -122,13 +122,14 @@ function readTrades(dateFilter, mode, symbol, limit = 200) {
   if (db) {
     try {
       const clauses = [];
-      const params = {};
-      if (dateFilter) { clauses.push("date = $date"); params.$date = dateFilter; }
-      if (mode) { clauses.push("mode = $mode"); params.$mode = mode; }
-      if (symbol) { clauses.push("symbol = $symbol"); params.$symbol = symbol; }
+      const params = [];
+      if (dateFilter) { clauses.push("date = ?"); params.push(dateFilter); }
+      if (mode) { clauses.push("mode = ?"); params.push(mode); }
+      if (symbol) { clauses.push("symbol = ?"); params.push(symbol); }
       const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-      return db.prepare(`SELECT * FROM trades ${where} ORDER BY date DESC, time DESC LIMIT $limit`)
-        .all({ ...params, $limit: limit });
+      params.push(limit);
+      return db.prepare(`SELECT * FROM trades ${where} ORDER BY date DESC, time DESC LIMIT ?`)
+        .all(...params);
     } catch (err) {
       console.error("SQLite readTrades error:", err.message);
     }
@@ -155,10 +156,10 @@ function getTradeSummary(symbol, sinceDate, mode) {
   const db = getDB();
   if (!db) return { totalBought: 0, totalSold: 0, totalPnl: 0 };
   try {
-    const clauses = ["symbol = $symbol"];
-    const params = { $symbol: symbol };
-    if (sinceDate) { clauses.push("date >= $since"); params.$since = sinceDate; }
-    if (mode) { clauses.push("mode = $mode"); params.$mode = mode; }
+    const clauses = ["symbol = ?"];
+    const params = [symbol];
+    if (sinceDate) { clauses.push("date >= ?"); params.push(sinceDate); }
+    if (mode) { clauses.push("mode = ?"); params.push(mode); }
     const where = `WHERE ${clauses.join(" AND ")}`;
     const row = db.prepare(`
       SELECT
@@ -166,7 +167,7 @@ function getTradeSummary(symbol, sinceDate, mode) {
         COALESCE(SUM(CASE WHEN action='SELL' THEN notional ELSE 0 END), 0) as totalSold,
         COALESCE(SUM(CASE WHEN action='SELL' THEN pnl ELSE 0 END), 0) as totalPnl
       FROM trades ${where}
-    `).get(params);
+    `).get(...params);
     return row || { totalBought: 0, totalSold: 0, totalPnl: 0 };
   } catch (err) {
     console.error("getTradeSummary error:", err.message);
@@ -212,8 +213,8 @@ function readMLValidations(limit = 100) {
   try {
     return db.prepare(`
       SELECT timestamp, symbol, action, approved, reason
-      FROM ml_validations ORDER BY id DESC LIMIT $limit
-    `).all({ $limit: limit });
+      FROM ml_validations ORDER BY id DESC LIMIT ?
+    `).all(limit);
   } catch (err) {
     console.error("readMLValidations error:", err.message);
     return [];
