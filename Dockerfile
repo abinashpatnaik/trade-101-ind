@@ -14,14 +14,15 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy agent source files
+# Copy agent source files and universe data
 COPY *.py .
+COPY *.json .
 
 # Create directories for persistent logs and trade data
 RUN mkdir -p /app/logs /app/data
 
 # Set timezone and ensure unbuffered Python output (important for Docker logs)
-ENV TZ=Asia/Kolkata
+ENV TZ=${TZ:-America/New_York}
 ENV PYTHONUNBUFFERED=1
 
 # Health check: verify the agent has started logging
