@@ -526,6 +526,18 @@
                 </div>
             </div>
         </div>
+
+        <div class="grid" style="grid-template-columns: 1fr;">
+            <div class="card tile-purple">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h2 style="margin: 0;">Recent Trade History</h2>
+                    <span style="font-size: 0.8rem; color: var(--text-muted);" id="trade-history-count">Loading...</span>
+                </div>
+                <div id="trade-history-container" style="max-height: 500px; overflow-y: auto;">
+                    <div class="empty-state">Loading trade history...</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Stock Detail Modal -->
@@ -834,15 +846,59 @@
             }
         }
 
+        async function fetchTradeHistory() {
+            try {
+                const res = await fetch('/api/trades/all');
+                const trades = await res.json();
+                const container = document.getElementById('trade-history-container');
+                const countEl = document.getElementById('trade-history-count');
+
+                if (trades.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No trade history available</div>';
+                    countEl.innerText = '0 trades';
+                    return;
+                }
+
+                countEl.innerText = `${trades.length} trades`;
+                let html = '<table><tr><th>Date</th><th>Time</th><th>Action</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Notional</th><th>P&L</th><th>Reason</th><th>Mode</th></tr>';
+                trades.forEach(t => {
+                    const actionClass = t.action === 'BUY' ? 'badge-buy' : 'badge-sell';
+                    const pnlVal = parseFloat(t.pnl) || 0;
+                    const pnlClass = pnlVal >= 0 ? 'positive' : 'negative';
+                    const pnlDisplay = t.pnl ? formatMoney(pnlVal) : '-';
+                    const modeClass = t.mode === 'live' ? 'color: var(--success);' : 'color: var(--text-muted);';
+                    html += `<tr>
+                        <td>${t.date}</td>
+                        <td>${t.time}</td>
+                        <td><span class="${actionClass}">${t.action}</span></td>
+                        <td><strong>${t.symbol}</strong></td>
+                        <td>${t.quantity}</td>
+                        <td>${formatMoney(t.price)}</td>
+                        <td>${formatMoney(parseFloat(t.notional) || 0)}</td>
+                        <td class="${t.pnl ? pnlClass : ''}">${pnlDisplay}</td>
+                        <td><small>${t.exit_reason || '-'}</small></td>
+                        <td><small style="${modeClass}">${(t.mode || 'paper').toUpperCase()}</small></td>
+                    </tr>`;
+                });
+                html += '</table>';
+                container.innerHTML = html;
+            } catch (err) {
+                console.error('Failed to fetch trade history', err);
+            }
+        }
+
         // Initial fetch and poll every 5 seconds
         async function start() {
             await initMarketConfig();
             fetchDashboardData();
             fetchTradesAudit();
+            fetchTradeHistory();
             setInterval(() => {
                 fetchDashboardData();
                 fetchTradesAudit();
             }, 5000);
+            // Refresh history less frequently (every 30s)
+            setInterval(fetchTradeHistory, 30000);
         }
         start();
 
