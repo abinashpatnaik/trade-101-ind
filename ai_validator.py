@@ -96,7 +96,9 @@ class AIValidator:
                 'ema_signal': ema_val,
                 'vwap_signal': vwap_val,
                 'overall_trend': trend_signal.overall_trend,
-                'sentiment_score': sentiment_score
+                'sentiment_score': sentiment_score,
+                'adx': trend_signal.adx,
+                'volume_ratio': trend_signal.volume_ratio
             }])
             
             # Predict Probability of Success (Class 1)

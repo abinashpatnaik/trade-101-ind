@@ -65,6 +65,29 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     momentum = df['Close'].pct_change(periods=2) * 20
     df['sentiment_score'] = momentum.clip(-1.0, 1.0).fillna(0.0)
     
+    # ADX
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
+    period = 14
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr_smooth = tr.rolling(window=period).mean()
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr_smooth)
+    minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr_smooth)
+    dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1))
+    df['adx'] = dx.rolling(window=period).mean().fillna(0.0)
+    
+    # Volume Ratio
+    avg_vol = df['Volume'].rolling(window=20, min_periods=1).mean()
+    df['volume_ratio'] = (df['Volume'] / avg_vol.replace(0, 1)).fillna(1.0)
+    
     # Target: 5-day forward return > 1%
     df['future_5d_return'] = df['Close'].shift(-5) / df['Close'] - 1
     df['target'] = np.where(df['future_5d_return'] > 0.01, 1, 0)
@@ -106,7 +129,7 @@ def train_model():
         
     full_df = pd.concat(all_data, ignore_index=True)
     
-    features = ['rsi', 'macd_signal', 'ema_signal', 'vwap_signal', 'overall_trend', 'sentiment_score']
+    features = ['rsi', 'macd_signal', 'ema_signal', 'vwap_signal', 'overall_trend', 'sentiment_score', 'adx', 'volume_ratio']
     X = full_df[features]
     y = full_df['target']
     
