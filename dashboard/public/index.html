@@ -659,7 +659,14 @@
             const start = (page - 1) * SIGNALS_PER_PAGE;
             const pageSignals = signals.slice(start, start + SIGNALS_PER_PAGE);
 
-            let html = '<table><tr><th>Symbol</th><th>Price</th><th>RSI</th><th>Trend</th><th>Score</th><th>Algo</th><th>ML Conf</th></tr>';
+            let html = '<table><tr>' +
+                '<th style="width: 10%;">Symbol</th>' +
+                '<th style="width: 12%;">Price</th>' +
+                '<th style="width: 10%;">RSI</th>' +
+                '<th style="width: 12%;">Trend</th>' +
+                '<th style="width: 12%;">Score</th>' +
+                '<th style="width: 24%;">Algo</th>' +
+                '<th style="width: 20%;">ML Conf</th></tr>';
             pageSignals.forEach(s => {
                 // Determine if this is a GATED signal (score above threshold but blocked)
                 const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
