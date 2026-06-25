@@ -564,6 +564,16 @@ class TradingAgent:
         # Start the ticker fetcher immediately so the dashboard gets data
         self.ticker_fetcher.start()
 
+        # --- Initial portfolio snapshot for dashboard ---
+        # Connect briefly to fetch NAV/cash so the dashboard shows real
+        # numbers even while the agent waits for market open.
+        try:
+            if self._connect_broker():
+                self.portfolio.update(self.broker)
+                logger.info("Initial portfolio snapshot written for dashboard.")
+        except Exception as exc:
+            logger.warning("Initial portfolio snapshot failed (non-fatal): %s", exc)
+
         # --- Step 1: Wait for market open ---
         if not self.session.is_market_open():
             secs = self.session.seconds_to_open()
