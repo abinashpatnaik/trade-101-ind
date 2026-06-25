@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import com.example.tradingagent.theme.LossRed
 import com.example.tradingagent.theme.ProfitGreen
 
@@ -59,6 +60,7 @@ import com.example.tradingagent.theme.ProfitGreen
 fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel(),
     modifier: Modifier = Modifier,
+    onBack: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
 
@@ -66,6 +68,14 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
