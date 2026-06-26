@@ -95,6 +95,11 @@ class AIValidator:
                 'volume_ratio': trend_signal.volume_ratio
             }])
             
+            # Ensure backward compatibility with older models trained on fewer features
+            if hasattr(self.model, 'feature_names_in_'):
+                expected_features = list(self.model.feature_names_in_)
+                features = features[expected_features]
+            
             # Predict Probability of Success (Class 1)
             # XGBoost predict_proba returns array of [prob_0, prob_1]
             prob_success = self.model.predict_proba(features)[0][1]
