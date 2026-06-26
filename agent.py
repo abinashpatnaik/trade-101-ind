@@ -636,6 +636,7 @@ class TradingAgent:
                 # a. Sync portfolio from broker
                 try:
                     self.portfolio.update(self.broker)
+                    self.executor.sync_positions(self.portfolio.open_positions, self.broker)
                 except Exception as exc:
                     logger.error(
                         "Portfolio update failed: %s", exc, exc_info=True

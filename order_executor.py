@@ -372,6 +372,37 @@ class OrderExecutor:
             )
             return False
 
+    def sync_positions(self, open_positions: dict, broker: IBKRConnector) -> None:
+        """
+        Synchronise trailing stop tracker with the current broker state.
+        Called on agent startup to restore software trailing stops for
+        existing fractional positions.
+        """
+        for symbol, pos in open_positions.items():
+            qty = float(pos.get("quantity", 0))
+            if qty > 0 and self._is_fractional(qty):
+                # Only sync if we don't already have an active trailing high
+                if symbol not in self._trailing_high:
+                    current_price = broker.get_current_price(symbol)
+                    if current_price is None or current_price <= 0:
+                        current_price = float(pos.get("current_price", pos.get("avg_cost", 0)))
+                    
+                    if current_price > 0:
+                        # Re-create OpenOrder entry for trailing stop processing
+                        self._open_orders[symbol] = OpenOrder(
+                            symbol=symbol,
+                            entry_order_id=0, # Unknown from boot
+                            order_type="BUY",
+                            quantity=qty,
+                            entry_price=float(pos.get("avg_cost", current_price)),
+                            stop_loss_price=0.0,
+                            take_profit_price=0.0,
+                            is_fractional=True
+                        )
+                        self._trailing_high[symbol] = current_price
+                        logger.info("Restored software trailing stop tracker for %s at %.4f", symbol, current_price)
+
+
     @property
     def open_orders(self) -> Dict[str, OpenOrder]:
         """Read-only view of the currently tracked open bracket orders."""
