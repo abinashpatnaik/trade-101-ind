@@ -28,7 +28,7 @@ class EODReportGenerator:
     ...     session_date='2026-06-08',
     ...     portfolio_summary={'portfolio_value': 100_000, 'cash': 50_000, ...},
     ...     performance={'total_pnl': 250.0, 'win_rate': 66.7, 'num_trades': 3, ...},
-    ...     trades_csv_path='trading_agent/trades.csv',
+    ...     trades=[{'symbol': 'AAPL', 'action': 'BUY', ...}],
     ... )
     """
 
@@ -225,7 +225,7 @@ class EODReportGenerator:
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NSE Nifty 50 Trading Report — {session_date}</title>
+        <title>US Market Trading Report — {session_date}</title>
 </head>
 <body style='margin:0;padding:0;background:#f4f6f9;font-family:Arial,sans-serif;'>
 
@@ -244,7 +244,7 @@ class EODReportGenerator:
       </p>
       <h1 style='margin:6px 0 0;font-size:22px;color:#ecf0f1;font-family:Arial,sans-serif;
                  font-weight:700;'>
-        NSE Nifty 50 Automated Trading Report
+        US Market Automated Trading Report
       </h1>
       <p style='margin:8px 0 0;font-size:13px;color:#bdc3c7;font-family:Arial,sans-serif;'>
         Session date: <strong style='color:#ecf0f1;'>{session_date}</strong>
@@ -331,7 +331,7 @@ class EODReportGenerator:
   <tr>
     <td style='background:#f4f6f9;border-top:1px solid #dde;padding:16px 32px;text-align:center;'>
       <p style='margin:0;font-size:11px;color:#95a5a6;font-family:Arial,sans-serif;line-height:1.6;'>
-        Agent run by Perplexity Computer — for informational purposes only.
+        Automated Trading Agent — for informational purposes only.
         Not financial advice.
       </p>
     </td>
@@ -368,7 +368,7 @@ class EODReportGenerator:
 
         lines: List[str] = [
             SEP,
-            "  NSE NIFTY 50 AUTOMATED TRADING REPORT",
+            "  US MARKET AUTOMATED TRADING REPORT",
             f"  Session date : {session_date}",
             SEP,
             "",
@@ -431,7 +431,7 @@ class EODReportGenerator:
         lines += [
             "",
             SEP,
-            "  Agent run by Perplexity Computer — for informational purposes only.",
+            "  Automated Trading Agent — for informational purposes only.",
             "  Not financial advice.",
             SEP,
         ]
@@ -446,7 +446,8 @@ class EODReportGenerator:
         session_date: str,
         portfolio_summary: dict,
         performance: dict,
-        trades_csv_path: str,
+        trades: List[Dict] = None,
+        trades_csv_path: str = None,
     ) -> dict:
         """
         Generate the end-of-day trading report.
@@ -459,8 +460,10 @@ class EODReportGenerator:
             Dict as returned by ``PortfolioTracker.get_summary()``.
         performance:
             Dict as returned by ``PortfolioTracker.get_performance()``.
+        trades:
+            List of trade dictionaries for the current session.
         trades_csv_path:
-            Path to the trades CSV file (``config.agent.trades_csv``).
+            (Legacy) Path to the trades CSV file. Used if trades is not provided.
 
         Returns
         -------
@@ -468,7 +471,8 @@ class EODReportGenerator:
             subject, plain_text, html_body, session_date,
             total_pnl, num_trades, win_rate
         """
-        trades = self._read_today_trades(trades_csv_path, session_date)
+        if trades is None:
+            trades = self._read_today_trades(trades_csv_path, session_date) if trades_csv_path else []
         total_pnl = self._compute_total_pnl(trades)
         win_rate = self._compute_win_rate(trades)
         num_trades = len(trades)
@@ -482,8 +486,8 @@ class EODReportGenerator:
         )
 
         subject = (
-            f"NSE Nifty 50 Trading Report \u2014 {session_date} | "
-            f"P&L: \u20b9{total_pnl:+.2f}"
+            f"US Market Trading Report \u2014 {session_date} | "
+            f"P&L: {CUR_SYM}{total_pnl:+.2f}"
         )
 
         ghost_accuracy_text = ""
