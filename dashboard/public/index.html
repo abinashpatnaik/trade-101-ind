@@ -728,8 +728,8 @@
                         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
                             <span style="color: ${color}; font-weight: bold;">${displayConf.toFixed(0)}% ${label}</span>
                         </div>
-                        <div style="width: 100%; background: rgba(255,255,255,0.1); border-radius: 4px; height: 6px; overflow: hidden;">
-                            <div style="width: ${displayConf}%; background: ${color}; height: 100%;"></div>
+                        <div style="width: 100%; background: var(--danger); border-radius: 4px; height: 6px; overflow: hidden; display: flex;">
+                            <div style="width: ${conf}%; background: var(--success); height: 100%;"></div>
                         </div>
                     </div>
                     `;
