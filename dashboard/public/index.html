@@ -16,8 +16,8 @@
       <h1>Alpha Trader</h1>
     </div>
     <div class="header-badges" style="padding-right: 32px;">
-      <div id="badge-dashboard" class="pill-badge offline">UI Dashboard</div>
-      <div id="badge-agent" class="pill-badge offline">Agent Runtime</div>
+      <div id="badge-market" class="pill-badge offline">Market Closed</div>
+      <div id="badge-agent" class="pill-badge offline">Agent Offline</div>
     </div>
   </header>
 
@@ -65,12 +65,12 @@
     <div class="card" style="margin-bottom: 24px;">
       <div class="chart-header">
         <h2>Portfolio Performance</h2>
-        <div class="time-toggles">
-          <button>1D</button>
-          <button>1W</button>
-          <button class="active">1M</button>
-          <button>3M</button>
-          <button>1Y</button>
+        <div class="time-toggles" id="nav-time-toggles">
+          <button onclick="fetchNavHistory('1d')">1D</button>
+          <button onclick="fetchNavHistory('5d')">1W</button>
+          <button class="active" onclick="fetchNavHistory('1mo')">1M</button>
+          <button onclick="fetchNavHistory('3mo')">3M</button>
+          <button onclick="fetchNavHistory('1y')">1Y</button>
         </div>
       </div>
       <div class="chart-container">

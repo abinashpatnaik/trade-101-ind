@@ -11,16 +11,20 @@ let state = {
 
 async function fetchDashboardData() {
   try {
-    const [portRes, posRes, sigRes, tradesRes, analyticsRes, tickerRes] = await Promise.all([
+    const [portRes, posRes, sigRes, tradesRes, analyticsRes, tickerRes, healthRes] = await Promise.all([
       fetch('/api/portfolio').catch(() => null),
       fetch('/api/positions').catch(() => null),
       fetch('/api/signals').catch(() => null),
       fetch('/api/trades').catch(() => null),
       fetch('/api/analytics').catch(() => null),
-      fetch('/api/ticker').catch(() => null)
+      fetch('/api/ticker').catch(() => null),
+      fetch('/api/apps-health').catch(() => null)
     ]);
 
-    if (portRes && portRes.ok) renderPortfolio(await portRes.json());
+    let healthData = null;
+    if (healthRes && healthRes.ok) healthData = await healthRes.json();
+    
+    if (portRes && portRes.ok) renderPortfolio(await portRes.json(), healthData);
     if (posRes && posRes.ok) renderPositions(await posRes.json());
     if (sigRes && sigRes.ok) {
       state.signals = await sigRes.json();
@@ -30,14 +34,12 @@ async function fetchDashboardData() {
     if (analyticsRes && analyticsRes.ok) renderAnalytics(await analyticsRes.json());
     if (tickerRes && tickerRes.ok) renderTicker(await tickerRes.json());
 
-    // Update health badges
-    document.getElementById('badge-dashboard').className = 'pill-badge active';
   } catch (e) {
     console.error("Dashboard data fetch error", e);
   }
 }
 
-function renderPortfolio(data) {
+function renderPortfolio(data, healthData) {
   document.getElementById('val-nav').textContent = formatMoney(data.nav);
   const pnlEl = document.getElementById('val-pnl');
   pnlEl.textContent = `${formatMoney(data.dailyPnl)} (${data.dailyPnlPct.toFixed(2)}%) Today`;
@@ -51,11 +53,34 @@ function renderPortfolio(data) {
   
   document.getElementById('val-positions').textContent = data.openPositions;
   
+  // Market Badge
+  const marketBadge = document.getElementById('badge-market');
+  if (marketBadge) {
+    if (data.marketOpen) {
+      marketBadge.className = 'pill-badge active';
+      marketBadge.textContent = 'Market Open';
+    } else {
+      marketBadge.className = 'pill-badge offline';
+      marketBadge.textContent = 'Market Closed';
+    }
+  }
+
+  // Agent Badge
   const agentBadge = document.getElementById('badge-agent');
-  if (data.agentStatus === 'running') {
-    agentBadge.className = 'pill-badge active';
-  } else {
-    agentBadge.className = 'pill-badge offline';
+  if (agentBadge) {
+    let status = healthData ? healthData.trading_agent : data.agentStatus;
+    if (status === 'running') {
+      agentBadge.className = 'pill-badge active';
+      agentBadge.textContent = 'Agent Online';
+    } else if (status === 'sleeping') {
+      agentBadge.className = 'pill-badge';
+      agentBadge.style.color = 'var(--signal-orange)';
+      agentBadge.style.borderColor = 'rgba(255, 165, 2, 0.3)';
+      agentBadge.textContent = 'Agent Sleeping';
+    } else {
+      agentBadge.className = 'pill-badge offline';
+      agentBadge.textContent = 'Agent Offline';
+    }
   }
 }
 
@@ -231,6 +256,31 @@ function initCharts() {
       }
     });
   }
+
+  // Load initial NAV history
+  fetchNavHistory('1mo');
+}
+
+async function fetchNavHistory(range) {
+  try {
+    const res = await fetch(`/api/nav-history?range=${range}`);
+    if (res.ok && charts.nav) {
+      const data = await res.json();
+      charts.nav.data.labels = data.map(d => d.date);
+      charts.nav.data.datasets[0].data = data.map(d => d.nav);
+      charts.nav.update();
+      
+      // Update active button
+      document.querySelectorAll('#nav-time-toggles button').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.getAttribute('onclick').includes(`'${range}'`)) {
+          btn.classList.add('active');
+        }
+      });
+    }
+  } catch (e) {
+    console.error("Failed to fetch nav history", e);
+  }
 }
 
 function renderAnalytics(data) {
@@ -286,14 +336,20 @@ function renderAnalytics(data) {
 
 function renderTicker(data) {
   const container = document.getElementById('ticker-content');
-  if (!data || !data.ticker || data.ticker.length === 0) return;
+  if (!data || !data.ticker || data.ticker.length === 0) {
+    container.innerHTML = '<span class="ticker-item">No ticker data available</span>';
+    return;
+  }
   
   let html = '';
   data.ticker.forEach(t => {
-    const isUp = t.changePercent >= 0;
+    let changePct = parseFloat(t.changePercent);
+    if (isNaN(changePct)) changePct = 0;
+    
+    const isUp = changePct >= 0;
     const arrow = isUp ? '▲' : '▼';
     const cls = isUp ? 'up' : 'down';
-    html += `<span class="ticker-item ${cls}"><strong>${t.symbol}</strong> ${formatMoney(t.price)} ${arrow} ${Math.abs(t.changePercent).toFixed(2)}%</span>`;
+    html += `<span class="ticker-item ${cls}"><strong>${t.symbol}</strong> ${formatMoney(t.price)} ${arrow} ${Math.abs(changePct).toFixed(2)}%</span>`;
   });
   
   // Duplicate for seamless scroll

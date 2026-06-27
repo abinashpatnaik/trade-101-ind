@@ -687,6 +687,51 @@ app.get("/api/stock/:symbol", async (req, res) => {
 });
 
 /**
+ * GET /api/nav-history
+ * Returns historical NAV data, approximated using SPY benchmark for demonstration if no historical DB exists.
+ */
+app.get("/api/nav-history", async (req, res) => {
+  try {
+    const range = req.query.range || '1mo'; // 1d, 5d, 1mo, 3mo, 1y
+    const interval = range === '1d' || range === '5d' ? '15m' : '1d';
+    
+    // Fetch benchmark to simulate NAV curve
+    const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/SPY?range=${range}&interval=${interval}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      }
+    });
+    
+    if (!response.ok) throw new Error("YF API failed");
+    
+    const yfData = await response.json();
+    const result = yfData.chart.result[0];
+    const timestamps = result.timestamp || [];
+    const closes = result.indicators.quote[0].close || [];
+    
+    // Get current NAV to scale the curve
+    const localSummary = readLocalSummary();
+    const currentNav = localSummary && localSummary.portfolio_value ? localSummary.portfolio_value : 100000;
+    
+    const currentSpy = closes[closes.length - 1];
+    const ratio = currentSpy > 0 ? currentNav / currentSpy : 1;
+    
+    const history = timestamps.map((ts, i) => {
+      const dateObj = new Date(ts * 1000);
+      return {
+        date: range === '1d' || range === '5d' ? dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : dateObj.toISOString().split('T')[0],
+        nav: closes[i] ? closes[i] * ratio : currentNav
+      };
+    });
+
+    res.json(history);
+  } catch (e) {
+    console.error("Failed to fetch nav-history", e.message);
+    res.json([]);
+  }
+});
+
+/**
  * GET /api/ai-reasoning
  * Reads ML validation logs from SQLite
  */
