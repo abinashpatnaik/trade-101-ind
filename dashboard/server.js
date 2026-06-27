@@ -419,6 +419,35 @@ app.get("/api/portfolio", async (_req, res) => {
       }
     }
 
+    // Lifetime Realized PNL
+    const allHistoricalTrades = readTrades(null, tradingMode, null, 10000);
+    const lifetimeRealizedPnl = allHistoricalTrades.reduce((acc, t) => {
+        if (t.action === "SELL" && t.pnl) return acc + parseFloat(t.pnl);
+        return acc;
+    }, 0);
+
+    // Fetch Market Pulse
+    let marketPulse = [];
+    try {
+      const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/SPY?range=1d&interval=1d`);
+      const data = await response.json();
+      const meta = data.chart.result[0].meta;
+      const price = meta.regularMarketPrice;
+      const prev = meta.previousClose;
+      const changePct = ((price - prev) / prev) * 100;
+      marketPulse.push({ symbol: "SPY", price: price, changePct: changePct });
+      
+      const qResponse = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/QQQ?range=1d&interval=1d`);
+      const qData = await qResponse.json();
+      const qMeta = qData.chart.result[0].meta;
+      const qPrice = qMeta.regularMarketPrice;
+      const qPrev = qMeta.previousClose;
+      const qChangePct = ((qPrice - qPrev) / qPrev) * 100;
+      marketPulse.push({ symbol: "QQQ", price: qPrice, changePct: qChangePct });
+    } catch (e) {
+      console.error("Failed to fetch market pulse", e.message);
+    }
+
     res.json({
       nav: parseFloat(nav),
       cash: parseFloat(cash),
@@ -429,6 +458,8 @@ app.get("/api/portfolio", async (_req, res) => {
       maxPositions: 5, // Capped to 5 matching risk controls
       winRate: Math.round(winRate * 10) / 10,
       tradesToday: trades.length,
+      lifetimeRealizedPnl: Math.round(lifetimeRealizedPnl * 100) / 100,
+      marketPulse: marketPulse,
       agentStatus: agentStatus,
       marketOpen: isMarketOpen(),
       lastUpdated: new Date().toISOString(),
@@ -456,12 +487,20 @@ app.get("/api/positions", async (_req, res) => {
       accountId = targetAcc?.id || targetAcc?.accountId || accounts[0]?.id || accounts[0]?.accountId || null;
     }
     let positions = [];
+    let nav = 100000;
+    const localSummary = readLocalSummary();
+    if (localSummary) nav = localSummary.portfolio_value ?? nav;
+
     if (accountId) {
+      const summary = await ibkrGet(`/portfolio/${accountId}/summary`);
+      if (summary) nav = summary?.netliquidation?.amount ?? nav;
       const posData = await ibkrGet(`/portfolio/${accountId}/positions/0`);
       positions = Array.isArray(posData) && posData.length > 0 ? posData : readLocalPositions();
     } else {
       positions = readLocalPositions();
     }
+
+    const allSignals = readSignals();
 
     const result = positions.map((pos) => {
       const qty = pos.position || 0;
@@ -470,17 +509,29 @@ app.get("/api/positions", async (_req, res) => {
       const mktValue = pos.mktValue || qty * mktPrice;
       const pnl = mktValue - qty * avgCost;
       const pnlPct = avgCost > 0 ? (pnl / (qty * avgCost)) * 100 : 0;
+      const symbol = pos.ticker || pos.contractDesc || "UNKNOWN";
+      
+      const sig = allSignals.find(s => s.symbol === symbol);
+      let strategy = "Unknown";
+      if (sig) {
+          if (sig.macdSignal === "bullish" && sig.emaSignal === "bullish") strategy = "Momentum";
+          else if (sig.rsi && sig.rsi < 40) strategy = "Reversal";
+          else strategy = "Trend Follow";
+      }
+
       return {
-        symbol: pos.ticker || pos.contractDesc || "UNKNOWN",
+        symbol,
         quantity: qty,
         entryPrice: avgCost,
         currentPrice: mktPrice,
         marketValue: mktValue,
         pnl: Math.round(pnl * 100) / 100,
         pnlPct: Math.round(pnlPct * 100) / 100,
-        stopLoss: Math.round(avgCost * 0.98 * 100) / 100,
-        takeProfit: Math.round(avgCost * 1.04 * 100) / 100,
+        stopLoss: sig && sig.sellThreshold ? Math.round(sig.sellThreshold * 100) / 100 : Math.round(avgCost * 0.98 * 100) / 100,
+        takeProfit: sig && sig.buyThreshold ? Math.round(sig.buyThreshold * 1.05 * 100) / 100 : Math.round(avgCost * 1.04 * 100) / 100,
         trailingStop: Math.round(mktPrice * 0.985 * 100) / 100,
+        allocation: nav > 0 ? Math.round((mktValue / nav) * 1000) / 10 : 0,
+        strategy: strategy
       };
     });
 
@@ -501,10 +552,18 @@ app.get("/api/signals", async (_req, res) => {
 
     let signals = readSignals();
 
-    signals = signals.map((s) => ({
-      ...s,
-      ibkrLive: isAuth,
-    })).sort((a, b) => Math.abs(b.trendScore) - Math.abs(a.trendScore));
+    signals = signals.map((s) => {
+      // Calculate a live downside risk metric: if buy_threshold and price exist, calculate distance
+      const downsideRisk = s.price && s.sellThreshold 
+         ? Math.round(((s.price - s.sellThreshold) / s.price) * -1000) / 10 
+         : -3.5;
+         
+      return {
+        ...s,
+        ibkrLive: isAuth,
+        downsideRisk: downsideRisk
+      };
+    }).sort((a, b) => Math.abs(b.trendScore) - Math.abs(a.trendScore));
 
     res.json(signals);
   } catch {
