@@ -435,7 +435,7 @@ app.get("/api/portfolio", async (_req, res) => {
       const price = meta.regularMarketPrice;
       const prev = meta.previousClose;
       const changePct = ((price - prev) / prev) * 100;
-      marketPulse.push({ symbol: "SPY", price: price, changePct: changePct });
+      marketPulse.push({ symbol: "SPY", price: price, changePercent: changePct });
       
       const qResponse = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/QQQ?range=1d&interval=1d`);
       const qData = await qResponse.json();
@@ -443,7 +443,7 @@ app.get("/api/portfolio", async (_req, res) => {
       const qPrice = qMeta.regularMarketPrice;
       const qPrev = qMeta.previousClose;
       const qChangePct = ((qPrice - qPrev) / qPrev) * 100;
-      marketPulse.push({ symbol: "QQQ", price: qPrice, changePct: qChangePct });
+      marketPulse.push({ symbol: "QQQ", price: qPrice, changePercent: qChangePct });
     } catch (e) {
       console.error("Failed to fetch market pulse", e.message);
     }
