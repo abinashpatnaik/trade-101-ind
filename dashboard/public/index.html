@@ -1,1174 +1,215 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        :root {
-            /* Dark Theme (Default) */
-            --bg-color-1: #000000;
-            --bg-color-2: #111111;
-            --card-bg: rgba(24, 24, 24, 0.65);
-            --card-border: rgba(255, 255, 255, 0.08);
-            --card-shadow: rgba(0, 0, 0, 0.5);
-            --card-shadow-hover: rgba(0, 0, 0, 0.7);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent: #3b82f6;
-            --success: #10b981;
-            --danger: #ef4444;
-            --warning: #f59e0b;
-            --table-border: rgba(255, 255, 255, 0.05);
-            --gradient-text: linear-gradient(to right, #fff, #94a3b8);
-        }
-
-        [data-theme="light"] {
-            /* Light Theme */
-            --bg-color-1: #f8fafc;
-            --bg-color-2: #e2e8f0;
-            --card-bg: rgba(255, 255, 255, 0.75);
-            --card-border: rgba(0, 0, 0, 0.1);
-            --card-shadow: rgba(0, 0, 0, 0.05);
-            --card-shadow-hover: rgba(0, 0, 0, 0.15);
-            --text-main: #0f172a;
-            --text-muted: #475569;
-            --table-border: rgba(0, 0, 0, 0.05);
-            --gradient-text: linear-gradient(to right, #0f172a, #475569);
-        }
-
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, var(--bg-color-1) 0%, var(--bg-color-2) 100%);
-            color: var(--text-main);
-            min-height: 100vh;
-            transition: background 0.3s ease, color 0.3s ease;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
-
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--card-border);
-        }
-
-        h1 {
-            margin: 0;
-            font-weight: 600;
-            font-size: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .theme-toggle {
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            color: var(--text-main);
-            border-radius: 999px;
-            padding: 0.5rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s ease;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            font-size: 1.2rem;
-        }
-
-        /* Modal Styles */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            z-index: 1000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            opacity: 0;
-            animation: fadeIn 0.2s forwards;
-        }
-
-        @keyframes fadeIn {
-            to { opacity: 1; }
-        }
-
-        .modal-content {
-            width: 100%;
-            max-width: 650px;
-            max-height: 85vh;
-            overflow-y: auto;
-            position: relative;
-            background: var(--bg-color-1);
-            border: 1px solid var(--card-border);
-            border-radius: 20px;
-            padding: 2rem;
-            box-shadow: 0 25px 50px -12px var(--card-shadow);
-            transform: translateY(20px) scale(0.95);
-            animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        @keyframes modalSlideUp {
-            to { transform: translateY(0) scale(1); }
-        }
-
-        .modal-close {
-            position: absolute;
-            top: 1.5rem;
-            right: 1.5rem;
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 50%;
-            width: 32px;
-            height: 32px;
-            color: var(--text-muted);
-            font-size: 1rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s;
-            z-index: 10;
-        }
-        .modal-close:hover {
-            color: var(--text-main);
-            background: var(--card-border);
-        }
-
-        .theme-toggle:hover {
-            transform: scale(1.05);
-            background: var(--card-border);
-        }
-
-        .header-controls {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-        }
-
-        .status-badge {
-            padding: 0.25rem 0.75rem;
-            border-radius: 999px;
-            font-size: 0.875rem;
-            font-weight: 500;
-            background: rgba(16, 185, 129, 0.15);
-            color: var(--success);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-        }
-        
-        .status-badge.offline {
-            background: rgba(239, 68, 68, 0.15);
-            color: var(--danger);
-            border-color: rgba(239, 68, 68, 0.3);
-        }
-
-        .status-badge.warning {
-            background: rgba(245, 158, 11, 0.15);
-            color: var(--warning);
-            border-color: rgba(245, 158, 11, 0.3);
-        }
-
-        /* Marquee Ticker */
-        .ticker-wrap {
-            width: 100%;
-            overflow: hidden;
-            background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            padding: 0.75rem 0;
-            margin-bottom: 2rem;
-            box-shadow: 0 4px 6px -1px var(--card-shadow);
-            white-space: nowrap;
-            box-sizing: border-box;
-        }
-
-        .ticker {
-            display: inline-block;
-            animation: ticker 40s linear infinite;
-        }
-        
-        .ticker:hover {
-            animation-play-state: paused;
-        }
-
-        .ticker-item {
-            display: inline-block;
-            padding: 0 2rem;
-            font-size: 0.95rem;
-            font-weight: 500;
-        }
-
-        @keyframes ticker {
-            0% { transform: translate3d(0, 0, 0); }
-            100% { transform: translate3d(-50%, 0, 0); } /* We will duplicate items to loop smoothly */
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        .card {
-            background: var(--card-bg);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid var(--card-border);
-            border-radius: 16px;
-            padding: 1.5rem;
-            /* 3D Bump out effect */
-            box-shadow: 
-                0 4px 6px -1px var(--card-shadow), 
-                0 10px 15px -3px var(--card-shadow),
-                inset 0 1px 0 rgba(255, 255, 255, 0.05);
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        /* Colorful Tiles Effects */
-        .card.tile-green {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, var(--card-bg) 100%);
-            border-top: 1px solid rgba(16, 185, 129, 0.3);
-        }
-        .card.tile-blue {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, var(--card-bg) 100%);
-            border-top: 1px solid rgba(59, 130, 246, 0.3);
-        }
-        .card.tile-purple {
-            background: linear-gradient(135deg, rgba(168, 85, 247, 0.1) 0%, var(--card-bg) 100%);
-            border-top: 1px solid rgba(168, 85, 247, 0.3);
-        }
-        .card.tile-orange {
-            background: linear-gradient(135deg, rgba(249, 115, 22, 0.1) 0%, var(--card-bg) 100%);
-            border-top: 1px solid rgba(249, 115, 22, 0.3);
-        }
-
-        .card:hover {
-            transform: translateY(-6px) scale(1.01);
-            box-shadow: 
-                0 20px 25px -5px var(--card-shadow-hover), 
-                0 10px 10px -5px var(--card-shadow-hover),
-                inset 0 1px 0 rgba(255, 255, 255, 0.1);
-        }
-
-        .card h2 {
-            margin: 0 0 1rem 0;
-            font-size: 1rem;
-            font-weight: 500;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .metric {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin: 0;
-            background: var(--gradient-text);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .metric-sub {
-            font-size: 1rem;
-            margin-top: 0.5rem;
-        }
-
-        .positive { color: var(--success) !important; -webkit-text-fill-color: var(--success); }
-        .negative { color: var(--danger) !important; -webkit-text-fill-color: var(--danger); }
-
-        .badge-buy {
-            background: rgba(16, 185, 129, 0.15);
-            color: var(--success);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            display: inline-block;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-
-        .badge-sell {
-            background: rgba(239, 68, 68, 0.15);
-            color: var(--danger);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            display: inline-block;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-
-        .badge-hold {
-            background: rgba(148, 163, 184, 0.15);
-            color: var(--text-muted);
-            border: 1px solid rgba(148, 163, 184, 0.3);
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            display: inline-block;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-
-        .badge-gated {
-            background: rgba(245, 158, 11, 0.15);
-            color: #f59e0b;
-            border: 1px solid rgba(245, 158, 11, 0.35);
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            display: inline-block;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-        }
-
-        th {
-            color: var(--text-muted);
-            font-weight: 500;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--card-border);
-        }
-
-        td {
-            padding: 1rem 0;
-            border-bottom: 1px solid var(--table-border);
-        }
-
-        tr:last-child td {
-            border-bottom: none;
-        }
-        
-        /* Table responsive wrappers */
-        #positions-table-container,
-        #signals-table-container,
-        #audit-aggregated-container,
-        #audit-trades-container {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            width: 100%;
-        }
-
-        /* Mobile Adjustments */
-        @media (max-width: 768px) {
-            .container {
-                padding: 1rem;
-            }
-            header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
-            }
-            .header-controls {
-                width: 100%;
-                justify-content: space-between;
-            }
-            #health-badges {
-                justify-content: flex-start !important;
-            }
-            h1 {
-                font-size: 1.25rem;
-            }
-            .metric {
-                font-size: 2rem;
-            }
-            .card {
-                padding: 1.25rem;
-            }
-            td, th {
-                white-space: nowrap;
-                padding-right: 1.5rem;
-            }
-            td:last-child, th:last-child {
-                padding-right: 0;
-            }
-        }
-        
-        .empty-state {
-            text-align: center;
-            color: var(--text-muted);
-            padding: 2rem 0;
-        }
-
-        .loader {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(128,128,128, 0.3);
-            border-radius: 50%;
-            border-top-color: var(--text-main);
-            animation: spin 1s ease-in-out infinite;
-            margin-left: 10px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>US Equities Trading Portfolio</title>
+  <link rel="stylesheet" href="index.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-                <span id="dashboard-title">Trading Dashboard</span>
-                <span id="loading" class="loader" style="display: none;"></span>
-            </h1>
-            <div class="header-controls">
-                <div id="health-badges" style="display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end;">
-                    <div id="health-dashboard" class="status-badge offline">Dashboard: ...</div>
-                    <div id="health-agent" class="status-badge offline">Agent: ...</div>
-                    <div id="health-ibeam" class="status-badge offline">Broker: ...</div>
-                </div>
-                <button class="theme-toggle" id="theme-toggle" aria-label="Toggle Theme">
-                    ☀️
-                </button>
-            </div>
-        </header>
+  
+  <!-- Global Header -->
+  <header>
+    <div style="padding-left: 32px; display: flex; align-items: center; gap: 12px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary-accent)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+      <h1>Alpha Trader</h1>
+    </div>
+    <div class="header-badges" style="padding-right: 32px;">
+      <div id="badge-dashboard" class="pill-badge offline">UI Dashboard</div>
+      <div id="badge-agent" class="pill-badge offline">Agent Runtime</div>
+    </div>
+  </header>
 
-        <!-- Ticker Marquee -->
-        <div class="ticker-wrap">
-            <div class="ticker" id="ticker-content">
-                <span class="ticker-item" style="color: var(--text-muted)">Loading market data...</span>
-            </div>
-        </div>
+  <!-- Ticker Tape -->
+  <div class="ticker-wrap">
+    <div class="ticker" id="ticker-content">
+      <span class="ticker-item">Loading live ticker...</span>
+    </div>
+  </div>
 
-        <div class="grid">
-            <div class="card tile-green">
-                <h2>Net Asset Value</h2>
-                <div class="metric" id="nav">0.00</div>
-                <div class="metric-sub" id="daily-pnl">0.00 (0.00%) Today</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Available Cash</div>
-                <div class="metric" id="cash">0.00</div>
-                <div class="metric-sub" style="color: var(--text-muted)">Available for trading</div>
-            </div>
-            <div class="card tile-purple">
-                <h2>Open Positions</h2>
-                <div class="metric" id="positions-count">0</div>
-                <div class="metric-sub" id="win-rate">0% Win Rate Today</div>
-            </div>
+  <div class="container">
+    
+    <!-- Summary Cards -->
+    <div class="grid-row-3">
+      <!-- NAV Card -->
+      <div class="card summary-card" style="border-top: 2px solid var(--primary-accent);">
+        <div class="summary-data">
+          <div class="micro-label">Net Asset Value</div>
+          <div class="summary-value mono" id="val-nav">$0.00</div>
+          <div class="summary-change" id="val-pnl">+$0.00 (0.00%) Today</div>
         </div>
-
-        <div class="grid" style="grid-template-columns: 1fr;">
-            <div class="card tile-orange">
-                <h2>Live Positions</h2>
-                <div id="positions-table-container">
-                    <div class="empty-state">Loading positions...</div>
-                </div>
-            </div>
+        <div class="sparkline-container"></div>
+      </div>
+      <!-- Cash Card -->
+      <div class="card summary-card" style="border-top: 2px solid var(--signal-blue);">
+        <div class="summary-data">
+          <div class="micro-label">Available Cash</div>
+          <div class="summary-value mono" id="val-cash">$0.00</div>
+          <div class="summary-change" style="color: var(--text-secondary);">Intraday BP: <span id="val-bp" class="mono">$0.00</span></div>
         </div>
-        
-        <div class="grid" style="grid-template-columns: 1fr;">
-            <div class="card">
-                <h2>Market Signals</h2>
-                <div id="signals-table-container">
-                    <div class="empty-state">Loading signals...</div>
-                </div>
-                <div id="signals-pagination" style="display:flex; justify-content:center; align-items:center; gap:6px; margin-top:12px;"></div>
-                <div style="display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid rgba(255,255,255,0.06); font-size: 0.8rem; color: var(--text-muted);">
-                    <span style="font-weight: 600; color: var(--text-secondary);">Score:</span>
-                    <span><span style="color: #00c896; font-weight: 600;">●</span> BUY zone (≥ 0.48)</span>
-                    <span><span style="color: #f0a500; font-weight: 600;">●</span> Warming up</span>
-                    <span><span style="color: var(--text-muted); font-weight: 600;">●</span> Neutral</span>
-                    <span><span style="color: #38bdf8; font-weight: 600;">●</span> Cooling down</span>
-                    <span><span style="color: #ff4d6a; font-weight: 600;">●</span> SELL zone (≤ -0.35)</span>
-                    <span style="margin-left: 0.8rem; font-weight: 600; color: var(--text-secondary);">Algo:</span>
-                    <span><span class="badge-buy" style="font-size: 0.75rem; padding: 1px 6px;">BUY</span> Strong bullish</span>
-                    <span><span class="badge-sell" style="font-size: 0.75rem; padding: 1px 6px;">SELL</span> Bearish exit</span>
-                    <span><span class="badge-hold" style="font-size: 0.75rem; padding: 1px 6px;">HOLD</span> No action</span>
-                    <span><span class="badge-gated" style="font-size: 0.75rem; padding: 1px 6px;">GATED</span> Score passed, ADX/Vol blocked</span>
-                    <span style="margin-left: 0.8rem; font-weight: 600; color: var(--text-secondary);">AI Val:</span>
-                    <span><span style="color: #00c896; font-weight: 600;">APPROVED</span> ML confirms</span>
-                    <span><span style="color: #ff4d6a; font-weight: 600;">REJECTED</span> ML overrides</span>
-                    <span><span style="color: #6b7baa;">IDLE</span> = HOLD (nothing to validate)</span>
-                    <span>OFF = disabled</span>
-                </div>
-            </div>
+        <div class="sparkline-container"></div>
+      </div>
+      <!-- Positions Card -->
+      <div class="card summary-card" style="border-top: 2px solid #A855F7;">
+        <div class="summary-data">
+          <div class="micro-label">Open Positions</div>
+          <div class="summary-value mono" id="val-positions">0</div>
+          <div class="summary-change" style="color: var(--text-secondary);">Active Portfolio</div>
         </div>
-
-        <div class="grid" style="grid-template-columns: 1fr;">
-            <div class="card tile-purple">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                    <h2 style="margin: 0;">Daily Trading Audit</h2>
-                    <div style="text-align: right;">
-                        <span style="font-size: 0.9rem; color: var(--text-muted);">Realised P&L Today</span>
-                        <div class="metric" id="audit-total-pnl" style="font-size: 1.5rem;">0.00</div>
-                    </div>
-                </div>
-                
-                <h3 style="font-size: 1rem; color: var(--text-main); margin-top: 1.5rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.5rem;">Aggregated View</h3>
-                <div id="audit-aggregated-container">
-                    <div class="empty-state">Loading aggregated data...</div>
-                </div>
-
-                <h3 style="font-size: 1rem; color: var(--text-main); margin-top: 2rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.5rem;">Raw Trades Log</h3>
-                <div id="audit-trades-container" style="max-height: 400px; overflow-y: auto;">
-                    <div class="empty-state">Loading trades log...</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="grid" style="grid-template-columns: 1fr;">
-            <div class="card tile-purple">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                    <h2 style="margin: 0;">Recent Trade History</h2>
-                    <span style="font-size: 0.8rem; color: var(--text-muted);" id="trade-history-count">Loading...</span>
-                </div>
-                <div id="trade-history-container" style="max-height: 500px; overflow-y: auto;">
-                    <div class="empty-state">Loading trade history...</div>
-                </div>
-            </div>
-        </div>
+        <div class="sparkline-container"></div>
+      </div>
     </div>
 
-    <!-- Stock Detail Modal -->
-    <div id="stock-modal" class="modal-overlay" style="display: none;" onclick="if(event.target === this) closeStockModal()">
-        <div class="modal-content">
-            <button class="modal-close" onclick="closeStockModal()">✕</button>
-            <h2 id="modal-title" style="margin-top: 0; margin-bottom: 0.25rem; font-size: 1.5rem;">Stock Details</h2>
-            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.5rem;">6-Month Overview</div>
-            
-            <!-- 6 Month Trend Chart -->
-            <div style="height: 250px; margin-bottom: 2rem; position: relative;">
-                <canvas id="trendChart"></canvas>
-                <div id="modal-chart-loader" class="loader" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none;"></div>
-            </div>
-
-            <!-- 6 Month PnL Summary -->
-            <div class="grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 2rem; gap: 1rem;">
-                <div>
-                    <div style="color: var(--text-muted); font-size: 0.85rem;">Total Bought</div>
-                    <div id="modal-bought" class="metric" style="font-size: 1.25rem; font-weight: 600;">0.00</div>
-                </div>
-                <div>
-                    <div class="card-title" style="font-size: 0.8rem;">Total Sold</div>
-                    <div id="modal-sold" class="metric" style="font-size: 1.25rem; font-weight: 600;">0.00</div>
-                </div>
-                <div>
-                    <div class="card-title" style="font-size: 0.8rem;">Net P&L</div>
-                    <div id="modal-pnl" class="metric" style="font-size: 1.25rem; font-weight: 600;">0.00</div>
-                </div>
-            </div>
-
-            <!-- Trade History -->
-            <h3 style="font-size: 1rem; color: var(--text-main); margin-bottom: 0.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.5rem;">Trade History</h3>
-            <div id="modal-trades-container" style="max-height: 250px; overflow-y: auto; overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%;">
-                <div class="empty-state">Loading trades...</div>
-            </div>
+    <!-- Main Chart Panel -->
+    <div class="card" style="margin-bottom: 24px;">
+      <div class="chart-header">
+        <h2>Portfolio Performance</h2>
+        <div class="time-toggles">
+          <button>1D</button>
+          <button>1W</button>
+          <button class="active">1M</button>
+          <button>3M</button>
+          <button>1Y</button>
         </div>
+      </div>
+      <div class="chart-container">
+        <canvas id="navChart"></canvas>
+      </div>
     </div>
 
-    <script>
-        // Theme Toggle Logic
-        const themeToggle = document.getElementById('theme-toggle');
-        const currentTheme = localStorage.getItem('theme') || 'dark';
+    <!-- 2-Column Split: Positions & AI -->
+    <div class="grid-row-2-split">
+      <!-- Left: Live Positions -->
+      <div class="card">
+        <h2>Live Positions & Orders</h2>
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 20%;">Symbol</th>
+                <th class="th-right" style="width: 15%;">Qty</th>
+                <th class="th-right" style="width: 20%;">Price</th>
+                <th class="th-right" style="width: 25%;">Unrealized P&L</th>
+                <th class="th-right" style="width: 20%;">Target/Stop</th>
+              </tr>
+            </thead>
+            <tbody id="table-positions">
+              <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <!-- Right: AI Intelligence -->
+      <div class="card">
+        <h2>Agent Intelligence</h2>
         
-        if (currentTheme === 'light') {
-            document.documentElement.setAttribute('data-theme', 'light');
-            themeToggle.innerText = '🌙';
-        }
+        <!-- Model Health Metrics -->
+        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div class="micro-label">Prediction Acc.</div>
+            <div class="mono" style="font-size: 18px; font-weight: 600; margin-top: 4px;" id="val-accuracy">0.0%</div>
+          </div>
+          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div class="micro-label">Signals Today</div>
+            <div class="mono" style="font-size: 18px; font-weight: 600; margin-top: 4px;" id="val-signals-today">0</div>
+          </div>
+          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div class="micro-label">Avg Confidence</div>
+            <div class="mono" style="font-size: 18px; font-weight: 600; margin-top: 4px;" id="val-avg-conf">0.0%</div>
+          </div>
+        </div>
 
-        themeToggle.addEventListener('click', () => {
-            const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-            if (isLight) {
-                document.documentElement.removeAttribute('data-theme');
-                localStorage.setItem('theme', 'dark');
-                themeToggle.innerText = '☀️';
-            } else {
-                document.documentElement.setAttribute('data-theme', 'light');
-                localStorage.setItem('theme', 'light');
-                themeToggle.innerText = '🌙';
-            }
-        });
+        <h3 class="micro-label">Decision Log</h3>
+        <div class="feed-list" id="agent-feed">
+          <div class="empty-state">Loading AI logs...</div>
+        </div>
+      </div>
+    </div>
 
-        // Dashboard Data Fetching
-        let MARKET_CONFIG = { market: "IN" };
-        let formatMoney = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
-        const formatPct = (val) => (val > 0 ? '+' : '') + parseFloat(val).toFixed(2) + '%';
+    <!-- Signals Table -->
+    <div class="card" style="margin-bottom: 24px;">
+      <h2>Market Signals (Top 10)</h2>
+      <div class="filter-bar">
+        <button class="filter-btn active" onclick="setSignalFilter('ALL')">All Signals</button>
+        <button class="filter-btn" onclick="setSignalFilter('BUY')">Buy Zone</button>
+        <button class="filter-btn" onclick="setSignalFilter('SELL')">Sell Alerts</button>
+        <button class="filter-btn" onclick="setSignalFilter('GATED')">Gated</button>
+      </div>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 15%;">Ticker</th>
+              <th style="width: 15%;">Engine Score</th>
+              <th style="width: 20%;">Recommendation</th>
+              <th style="width: 30%;">ML Confidence</th>
+              <th class="th-right" style="width: 20%;">Current Price</th>
+            </tr>
+          </thead>
+          <tbody id="table-signals">
+            <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-        async function initMarketConfig() {
-            try {
-                const res = await fetch('/api/market-config');
-                if (res.ok) {
-                    MARKET_CONFIG = await res.json();
-                }
-            } catch (err) {
-                console.error('Failed to load market config', err);
-            }
+    <!-- Risk Analytics & Recent Trades -->
+    <div class="grid-row-2-half">
+      
+      <!-- Risk Panel -->
+      <div class="card">
+        <h2>Risk & Analytics</h2>
+        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div class="micro-label">Max Drawdown</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600; color: var(--secondary-accent);" id="val-drawdown">-0.0%</div>
+          </div>
+          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div class="micro-label">Portfolio VaR (95%)</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600; color: var(--signal-orange);" id="val-var">0.0%</div>
+          </div>
+          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div class="micro-label">Portfolio Beta</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600;" id="val-beta">0.0</div>
+          </div>
+          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div class="micro-label">Volatility (Ann.)</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600;" id="val-volatility">0.0%</div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 24px; align-items: center; justify-content: center; height: 200px;">
+          <div style="width: 50%; height: 100%; position: relative;">
+            <canvas id="sectorChart"></canvas>
+          </div>
+        </div>
+      </div>
 
-            if (MARKET_CONFIG.market === "US") {
-                document.title = "US Equities Trading Dashboard";
-                document.getElementById('dashboard-title').innerText = "US Equities Trading Dashboard";
-                formatMoney = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(val);
-            } else {
-                document.title = "NSE Nifty 50 Trading Dashboard";
-                document.getElementById('dashboard-title').innerText = "NSE Nifty 50 Trading Dashboard";
-                formatMoney = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
-            }
-        }
+      <!-- Trade History -->
+      <div class="card">
+        <h2>Recent Execution History</h2>
+        <div style="overflow-x: auto; max-height: 320px;">
+          <table>
+            <thead style="position: sticky; top: 0; background: var(--card-bg); z-index: 10;">
+              <tr>
+                <th style="width: 20%;">Time</th>
+                <th style="width: 25%;">Symbol</th>
+                <th style="width: 25%;">Action</th>
+                <th class="th-right" style="width: 30%;">Exec. Price</th>
+              </tr>
+            </thead>
+            <tbody id="table-trades">
+              <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+    </div>
 
-        const SIGNALS_PER_PAGE = 10;
-        
-        window._sortCol = 'combinedScore';
-        window._sortDir = 'desc';
+  </div>
 
-        function handleSort(col) {
-            if (window._sortCol === col) {
-                window._sortDir = window._sortDir === 'asc' ? 'desc' : 'asc';
-            } else {
-                window._sortCol = col;
-                window._sortDir = 'desc';
-            }
-            renderSignalsPage(1);
-        }
-
-        function getSortIcon(col) {
-            if (window._sortCol !== col) return '<span style="opacity:0.3; font-size:0.8em; margin-left:4px;">↕</span>';
-            return window._sortDir === 'asc' 
-                ? '<span style="color:var(--accent); font-size:0.8em; margin-left:4px;">↑</span>' 
-                : '<span style="color:var(--accent); font-size:0.8em; margin-left:4px;">↓</span>';
-        }
-
-        function renderSignalsPage(page) {
-            let signals = [...(window._allSignals || [])];
-            
-            // Sort signals
-            signals.sort((a, b) => {
-                let valA = a[window._sortCol];
-                let valB = b[window._sortCol];
-                
-                if (valA === undefined || valA === null) valA = '';
-                if (valB === undefined || valB === null) valB = '';
-                
-                let diff = 0;
-                if (typeof valA === 'number' && typeof valB === 'number') {
-                    diff = valA - valB;
-                } else {
-                    diff = String(valA).localeCompare(String(valB));
-                }
-                
-                return window._sortDir === 'asc' ? diff : -diff;
-            });
-
-            const sigContainer = document.getElementById('signals-table-container');
-            const sigPagination = document.getElementById('signals-pagination');
-
-            if (signals.length === 0) {
-                sigContainer.innerHTML = '<div class="empty-state">No signals available</div>';
-                sigPagination.innerHTML = '';
-                return;
-            }
-
-            const totalPages = Math.ceil(signals.length / SIGNALS_PER_PAGE);
-            page = Math.max(1, Math.min(page, totalPages));
-            window._sigPage = page;
-
-            const start = (page - 1) * SIGNALS_PER_PAGE;
-            const pageSignals = signals.slice(start, start + SIGNALS_PER_PAGE);
-
-            let html = '<table><tr>' +
-                `<th style="width: 10%; cursor: pointer; user-select: none;" onclick="handleSort('symbol')">Symbol ${getSortIcon('symbol')}</th>` +
-                `<th style="width: 12%; cursor: pointer; user-select: none;" onclick="handleSort('price')">Price ${getSortIcon('price')}</th>` +
-                `<th style="width: 10%; cursor: pointer; user-select: none;" onclick="handleSort('rsi')">RSI ${getSortIcon('rsi')}</th>` +
-                `<th style="width: 12%; cursor: pointer; user-select: none;" onclick="handleSort('trendScore')">Trend ${getSortIcon('trendScore')}</th>` +
-                `<th style="width: 12%; cursor: pointer; user-select: none;" onclick="handleSort('combinedScore')">Score ${getSortIcon('combinedScore')}</th>` +
-                `<th style="width: 24%; cursor: pointer; user-select: none;" onclick="handleSort('signal')">Algo ${getSortIcon('signal')}</th>` +
-                `<th style="width: 20%; cursor: pointer; user-select: none;" onclick="handleSort('mlConfidence')">ML Conf ${getSortIcon('mlConfidence')}</th></tr>`;
-            pageSignals.forEach(s => {
-                // Determine if this is a GATED signal (score above threshold but blocked)
-                const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
-                const displaySignal = isGated ? 'GATED' : s.signal;
-                const sigClass = displaySignal === 'BUY' ? 'badge-buy' : (displaySignal === 'SELL' ? 'badge-sell' : (displaySignal === 'GATED' ? 'badge-gated' : 'badge-hold'));
-                let aiHtml = '-';
-                if (s.aiDecision === 'OFF') {
-                    aiHtml = '<span style="color: var(--text-muted); font-size: 0.85em;">OFF</span>';
-                } else if (s.aiDecision === 'IDLE') {
-                    aiHtml = '<span style="color: #6b7baa; font-size: 0.85em;">IDLE</span>';
-                } else if (s.mlConfidence !== undefined && s.mlConfidence !== null && s.mlConfidence !== 0) {
-                    const conf = s.mlConfidence * 100;
-                    const isUp = conf >= 50;
-                    const color = isUp ? 'var(--success)' : 'var(--danger)';
-                    const label = isUp ? 'UP' : 'DOWN';
-                    const displayConf = isUp ? conf : 100 - conf;
-                    
-                    aiHtml = `
-                    <div style="width: 100px; margin-top: 4px;" title="${s.aiReason || ''}">
-                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-                            <span style="color: ${color}; font-weight: bold;">${displayConf.toFixed(0)}% ${label}</span>
-                        </div>
-                        <div style="width: 100%; background: var(--danger); border-radius: 4px; height: 6px; overflow: hidden; display: flex;">
-                            <div style="width: ${conf}%; background: var(--success); height: 100%;"></div>
-                        </div>
-                    </div>
-                    `;
-                } else if (s.aiDecision) {
-                    const isPos = s.aiDecision.includes('APPROVED');
-                    aiHtml = `<strong class="${isPos ? 'positive' : 'negative'}">${s.aiDecision}</strong><br/><small style="color: var(--text-muted); font-size: 0.85em;">${s.aiReason || ''}</small>`;
-                }
-
-                let scoreVal = s.combinedScore !== undefined ? s.combinedScore : 0;
-                let buyThr = s.buyThreshold || 0.48;
-                let sellThr = s.sellThreshold || -0.35;
-                let scoreColor = 'var(--text-muted)';
-                if (scoreVal >= buyThr) scoreColor = 'var(--success)';
-                else if (scoreVal >= buyThr * 0.7) scoreColor = '#f0a500';
-                else if (scoreVal <= sellThr) scoreColor = 'var(--danger)';
-                else if (scoreVal <= sellThr * 0.7) scoreColor = '#38bdf8';
-                let scoreDisplay = scoreVal !== 0 ? scoreVal.toFixed(3) : '-';
-
-                // Build gate reason display for GATED signals
-                let gateHtml = '';
-                if (isGated) {
-                    let shortReason = s.holdReason;
-                    if (shortReason.includes('ADX=')) {
-                        const adxMatch = shortReason.match(/ADX=([\d.]+)/);
-                        shortReason = `⚡ ADX ${adxMatch ? adxMatch[1] : ''} (need >25)`;
-                    } else if (shortReason.includes('volume')) {
-                        const volMatch = shortReason.match(/([\d.]+)x average/);
-                        shortReason = `📊 Vol ${volMatch ? volMatch[1] : ''}x (need >1.5x)`;
-                    } else {
-                        shortReason = shortReason.substring(0, 60);
-                    }
-                    gateHtml = `<br/><small style="color:#f59e0b; font-size:0.75em;" title="${s.holdReason}">${shortReason}</small>`;
-                }
-
-                html += `<tr>
-                    <td><a class="clickable-symbol" onclick="openStockModal('${s.symbol}')">${s.symbol}</a></td>
-                    <td>${formatMoney(s.price)}</td>
-                    <td>${s.rsi}</td>
-                    <td>${s.trendScore}</td>
-                    <td style="font-weight:600; color:${scoreColor};" title="Buy ≥ ${buyThr} | Sell ≤ ${sellThr}">${scoreDisplay}</td>
-                    <td><span class="${sigClass}">${displaySignal}</span>${gateHtml}</td>
-                    <td style="max-width: 300px; line-height: 1.3;">${aiHtml}</td>
-                </tr>`;
-            });
-            html += '</table>';
-            sigContainer.innerHTML = html;
-
-            // Render pagination tabs
-            if (totalPages <= 1) {
-                sigPagination.innerHTML = '';
-                return;
-            }
-            let pagHtml = '';
-            // Previous button
-            pagHtml += `<button onclick="renderSignalsPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}
-                style="padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12);
-                background:${page <= 1 ? 'transparent' : 'rgba(255,255,255,0.06)'};
-                color:${page <= 1 ? 'var(--text-muted)' : 'var(--text-primary)'};
-                cursor:${page <= 1 ? 'default' : 'pointer'}; font-size:0.85rem;">‹</button>`;
-            // Page numbers
-            for (let i = 1; i <= totalPages; i++) {
-                const isActive = i === page;
-                pagHtml += `<button onclick="renderSignalsPage(${i})"
-                    style="padding:4px 12px; border-radius:6px;
-                    border:1px solid ${isActive ? 'var(--accent)' : 'rgba(255,255,255,0.12)'};
-                    background:${isActive ? 'var(--accent)' : 'rgba(255,255,255,0.06)'};
-                    color:${isActive ? '#fff' : 'var(--text-secondary)'};
-                    cursor:pointer; font-weight:${isActive ? '700' : '400'}; font-size:0.85rem;">${i}</button>`;
-            }
-            // Next button
-            pagHtml += `<button onclick="renderSignalsPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}
-                style="padding:4px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12);
-                background:${page >= totalPages ? 'transparent' : 'rgba(255,255,255,0.06)'};
-                color:${page >= totalPages ? 'var(--text-muted)' : 'var(--text-primary)'};
-                cursor:${page >= totalPages ? 'default' : 'pointer'}; font-size:0.85rem;">›</button>`;
-            // Item count
-            pagHtml += `<span style="color:var(--text-muted); font-size:0.8rem; margin-left:8px;">${start + 1}–${Math.min(start + SIGNALS_PER_PAGE, signals.length)} of ${signals.length}</span>`;
-            sigPagination.innerHTML = pagHtml;
-        }
-
-        async function fetchDashboardData() {
-            document.getElementById('loading').style.display = 'inline-block';
-            try {
-                const [portfolioRes, positionsRes, signalsRes, healthRes, tickerRes] = await Promise.all([
-                    fetch('/api/portfolio'),
-                    fetch('/api/positions'),
-                    fetch('/api/signals'),
-                    fetch('/api/apps-health'),
-                    fetch('/api/ticker')
-                ]);
-
-                if (!portfolioRes.ok) throw new Error('API Error');
-
-                const portfolio = await portfolioRes.json();
-                const positions = await positionsRes.json();
-                const signals = await signalsRes.json();
-                const health = await healthRes.ok ? await healthRes.json() : {};
-                const tickerData = await tickerRes.ok ? await tickerRes.json() : { ticker: [] };
-
-                // Update Ticker
-                if (tickerData.ticker && tickerData.ticker.length > 0) {
-                    let tickerHtml = '';
-                    tickerData.ticker.forEach(t => {
-                        const tClass = parseFloat(t.change) >= 0 ? 'positive' : 'negative';
-                        const tArrow = parseFloat(t.change) >= 0 ? '▲' : '▼';
-                        tickerHtml += `<div class="ticker-item"><strong>${t.symbol}</strong> ${formatMoney(t.price)} <span class="${tClass}">${tArrow} ${Math.abs(t.change)}%</span></div>`;
-                    });
-                    // Duplicate for smooth infinite scrolling
-                    const fullTickerHtml = tickerHtml + tickerHtml;
-                    document.getElementById('ticker-content').innerHTML = fullTickerHtml;
-                }
-
-                // Update Portfolio
-                document.getElementById('nav').innerText = formatMoney(portfolio.nav);
-                const pnlEl = document.getElementById('daily-pnl');
-                pnlEl.innerText = `${portfolio.dailyPnl >= 0 ? '+' : ''}${formatMoney(portfolio.dailyPnl)} (${portfolio.dailyPnlPct.toFixed(2)}%) Today`;
-                pnlEl.className = `metric-sub ${portfolio.dailyPnl >= 0 ? 'positive' : 'negative'}`;
-                
-                document.getElementById('cash').innerText = formatMoney(portfolio.cash);
-                document.getElementById('positions-count').innerText = portfolio.openPositions;
-                document.getElementById('win-rate').innerText = `${portfolio.winRate}% Win Rate Today`;
-                document.getElementById('win-rate').style.color = "var(--text-muted)";
-
-                // Update Health Badges
-                const setBadge = (id, status, label) => {
-                    const el = document.getElementById(id);
-                    if (!el) return;
-                    if (status === 'running') {
-                        el.innerText = `${label}: Online`;
-                        el.className = 'status-badge';
-                    } else if (status === 'sleeping') {
-                        el.innerText = `${label}: Sleeping (Market Closed)`;
-                        el.className = 'status-badge warning';
-                    } else {
-                        el.innerText = `${label}: Offline`;
-                        el.className = 'status-badge offline';
-                    }
-                };
-                
-                setBadge('health-dashboard', health.dashboard, 'Dashboard');
-                setBadge('health-agent', health.trading_agent, 'Agent');
-                setBadge('health-ibeam', health.ibeam, MARKET_CONFIG.market === "US" ? "Alpaca" : "Zerodha");
-
-                // Update Positions
-                const posContainer = document.getElementById('positions-table-container');
-                if (positions.length === 0) {
-                    posContainer.innerHTML = '<div class="empty-state">No open positions</div>';
-                } else {
-                    let html = '<table><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&L</th></tr>';
-                    positions.forEach(p => {
-                        const pnlClass = p.pnl >= 0 ? 'positive' : 'negative';
-                        html += `<tr>
-                            <td><a class="clickable-symbol" onclick="openStockModal('${p.symbol}')">${p.symbol}</a></td>
-                            <td>${p.quantity}</td>
-                            <td>${formatMoney(p.entryPrice)}</td>
-                            <td>${formatMoney(p.currentPrice)}</td>
-                            <td class="${pnlClass}">${formatMoney(p.pnl)} (${formatPct(p.pnlPct)})</td>
-                        </tr>`;
-                    });
-                    html += '</table>';
-                    posContainer.innerHTML = html;
-                }
-
-                // Update Signals (paginated)
-                const sigContainer = document.getElementById('signals-table-container');
-                const sigPagination = document.getElementById('signals-pagination');
-                window._allSignals = signals;
-                window._sigPage = window._sigPage || 1;
-                renderSignalsPage(window._sigPage);
-
-            } catch (err) {
-                console.error('Failed to fetch dashboard data', err);
-            } finally {
-                document.getElementById('loading').style.display = 'none';
-            }
-        }
-
-        async function fetchTradesAudit() {
-            try {
-                const res = await fetch('/api/trades');
-                const trades = await res.json();
-                
-                // Process trades
-                let totalPnl = 0;
-                const agg = {};
-                
-                trades.forEach(t => {
-                    if (!agg[t.symbol]) {
-                        agg[t.symbol] = { buyQty: 0, sellQty: 0, buyVol: 0, sellVol: 0, pnl: 0 };
-                    }
-                    const qty = parseInt(t.quantity) || 0;
-                    const notional = parseFloat(t.notional) || 0;
-                    const pnl = parseFloat(t.pnl) || 0;
-                    
-                    if (t.action === 'BUY') {
-                        agg[t.symbol].buyQty += qty;
-                        agg[t.symbol].buyVol += notional;
-                    } else if (t.action === 'SELL') {
-                        agg[t.symbol].sellQty += qty;
-                        agg[t.symbol].sellVol += notional;
-                        agg[t.symbol].pnl += pnl;
-                        totalPnl += pnl;
-                    }
-                });
-                
-                // Update Total P&L
-                const pnlEl = document.getElementById('audit-total-pnl');
-                pnlEl.innerText = formatMoney(totalPnl);
-                pnlEl.className = 'metric ' + (totalPnl >= 0 ? 'positive' : 'negative');
-                
-                // Render Aggregated View
-                const aggContainer = document.getElementById('audit-aggregated-container');
-                const symbols = Object.keys(agg);
-                if (symbols.length === 0) {
-                    aggContainer.innerHTML = '<div class="empty-state">No trades executed today</div>';
-                } else {
-                    let html = '<table><tr><th>Symbol</th><th>Total Bought</th><th>Total Sold</th><th>Total Volume</th><th>Realised P&L</th></tr>';
-                    symbols.forEach(sym => {
-                        const data = agg[sym];
-                        const vol = data.buyVol + data.sellVol;
-                        const pnlClass = data.pnl >= 0 ? 'positive' : 'negative';
-                        html += `<tr>
-                            <td><strong>${sym}</strong></td>
-                            <td>${data.buyQty}</td>
-                            <td>${data.sellQty}</td>
-                            <td>${formatMoney(vol)}</td>
-                            <td class="${pnlClass}">${formatMoney(data.pnl)}</td>
-                        </tr>`;
-                    });
-                    html += '</table>';
-                    aggContainer.innerHTML = html;
-                }
-                
-                // Render Raw Trades
-                const tradesContainer = document.getElementById('audit-trades-container');
-                if (trades.length === 0) {
-                    tradesContainer.innerHTML = '<div class="empty-state">No trades executed today</div>';
-                } else {
-                    let html = '<table><tr><th>Time</th><th>Action</th><th>Symbol</th><th>Qty</th><th>Price</th><th>P&L</th><th>Reason</th></tr>';
-                    trades.forEach(t => {
-                        const actionClass = t.action === 'BUY' ? 'badge-buy' : 'badge-sell';
-                        const pnlVal = parseFloat(t.pnl) || 0;
-                        const pnlClass = pnlVal >= 0 ? 'positive' : 'negative';
-                        const pnlDisplay = t.pnl ? formatMoney(pnlVal) : '-';
-                        html += `<tr>
-                            <td>${t.time}</td>
-                            <td><span class="${actionClass}">${t.action}</span></td>
-                            <td><strong>${t.symbol}</strong></td>
-                            <td>${t.quantity}</td>
-                            <td>${formatMoney(t.price)}</td>
-                            <td class="${t.pnl ? pnlClass : ''}">${pnlDisplay}</td>
-                            <td><small>${t.exit_reason || '-'}</small></td>
-                        </tr>`;
-                    });
-                    html += '</table>';
-                    tradesContainer.innerHTML = html;
-                }
-                
-            } catch (err) {
-                console.error('Failed to fetch trades audit', err);
-            }
-        }
-
-        async function fetchTradeHistory() {
-            try {
-                const res = await fetch('/api/trades/all');
-                const trades = await res.json();
-                const container = document.getElementById('trade-history-container');
-                const countEl = document.getElementById('trade-history-count');
-
-                if (trades.length === 0) {
-                    container.innerHTML = '<div class="empty-state">No trade history available</div>';
-                    countEl.innerText = '0 trades';
-                    return;
-                }
-
-                countEl.innerText = `${trades.length} trades`;
-                let html = '<table><tr><th>Date</th><th>Time</th><th>Action</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Notional</th><th>P&L</th><th>Reason</th><th>Mode</th></tr>';
-                trades.forEach(t => {
-                    const actionClass = t.action === 'BUY' ? 'badge-buy' : 'badge-sell';
-                    const pnlVal = parseFloat(t.pnl) || 0;
-                    const pnlClass = pnlVal >= 0 ? 'positive' : 'negative';
-                    const pnlDisplay = t.pnl ? formatMoney(pnlVal) : '-';
-                    const modeClass = t.mode === 'live' ? 'color: var(--success);' : 'color: var(--text-muted);';
-                    html += `<tr>
-                        <td>${t.date}</td>
-                        <td>${t.time}</td>
-                        <td><span class="${actionClass}">${t.action}</span></td>
-                        <td><strong>${t.symbol}</strong></td>
-                        <td>${t.quantity}</td>
-                        <td>${formatMoney(t.price)}</td>
-                        <td>${formatMoney(parseFloat(t.notional) || 0)}</td>
-                        <td class="${t.pnl ? pnlClass : ''}">${pnlDisplay}</td>
-                        <td><small>${t.exit_reason || '-'}</small></td>
-                        <td><small style="${modeClass}">${(t.mode || 'paper').toUpperCase()}</small></td>
-                    </tr>`;
-                });
-                html += '</table>';
-                container.innerHTML = html;
-            } catch (err) {
-                console.error('Failed to fetch trade history', err);
-            }
-        }
-
-        // Initial fetch and poll every 5 seconds
-        async function start() {
-            await initMarketConfig();
-            fetchDashboardData();
-            fetchTradesAudit();
-            fetchTradeHistory();
-            setInterval(() => {
-                fetchDashboardData();
-                fetchTradesAudit();
-            }, 5000);
-            // Refresh history less frequently (every 30s)
-            setInterval(fetchTradeHistory, 30000);
-        }
-        start();
-
-        // Modal Logic
-        let trendChartInstance = null;
-
-        function closeStockModal() {
-            document.getElementById('stock-modal').style.display = 'none';
-        }
-
-        async function openStockModal(symbol) {
-            document.getElementById('stock-modal').style.display = 'flex';
-            document.getElementById('modal-title').innerText = `${symbol}`;
-            document.getElementById('modal-chart-loader').style.display = 'block';
-            
-            // Reset contents
-            document.getElementById('modal-bought').innerText = '...';
-            document.getElementById('modal-sold').innerText = '...';
-            document.getElementById('modal-pnl').innerText = '...';
-            document.getElementById('modal-pnl').className = 'metric';
-            document.getElementById('modal-trades-container').innerHTML = '<div class="empty-state">Loading...</div>';
-            
-            // Clear chart
-            if (trendChartInstance) {
-                trendChartInstance.destroy();
-                trendChartInstance = null;
-            }
-
-            try {
-                const res = await fetch(`/api/stock/${symbol}`);
-                if (!res.ok) throw new Error('Failed to fetch stock data');
-                const data = await res.json();
-                
-                // Draw Chart
-                const ctx = document.getElementById('trendChart').getContext('2d');
-                const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-                const gridColor = isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)';
-                const textColor = isLight ? '#475569' : '#94a3b8';
-                
-                trendChartInstance = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: data.chartData.map(d => d.date),
-                        datasets: [{
-                            label: 'Closing Price',
-                            data: data.chartData.map(d => d.price),
-                            borderColor: '#3b82f6',
-                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                            borderWidth: 2,
-                            pointRadius: 0,
-                            pointHoverRadius: 4,
-                            fill: true,
-                            tension: 0.1
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        interaction: {
-                            intersect: false,
-                            mode: 'index',
-                        },
-                        plugins: {
-                            legend: { display: false },
-                            tooltip: {
-                                backgroundColor: isLight ? 'rgba(255,255,255,0.9)' : 'rgba(24,24,24,0.9)',
-                                titleColor: isLight ? '#000' : '#fff',
-                                bodyColor: isLight ? '#000' : '#fff',
-                                borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)',
-                                borderWidth: 1
-                            }
-                        },
-                        scales: {
-                            x: {
-                                grid: { display: false },
-                                ticks: { maxTicksLimit: 6, color: textColor }
-                            },
-                            y: {
-                                grid: { color: gridColor },
-                                ticks: { color: textColor }
-                            }
-                        }
-                    }
-                });
-
-                // Update Summary
-                document.getElementById('modal-bought').innerText = formatMoney(data.summary.totalBought);
-                document.getElementById('modal-sold').innerText = formatMoney(data.summary.totalSold);
-                
-                const pnlEl = document.getElementById('modal-pnl');
-                pnlEl.innerText = formatMoney(data.summary.totalPnl);
-                pnlEl.className = 'metric ' + (data.summary.totalPnl >= 0 ? 'positive' : 'negative');
-
-                // Update Trades List
-                const tradesContainer = document.getElementById('modal-trades-container');
-                if (!data.trades || data.trades.length === 0) {
-                    tradesContainer.innerHTML = '<div class="empty-state">No trades in the last 6 months.</div>';
-                } else {
-                    let html = '<table><tr><th>Date</th><th>Action</th><th>Qty</th><th>Price</th><th>P&L</th></tr>';
-                    data.trades.forEach(t => {
-                        const actionClass = t.action === 'BUY' ? 'badge-buy' : 'badge-sell';
-                        const pnlVal = parseFloat(t.pnl) || 0;
-                        const pnlClass = pnlVal >= 0 ? 'positive' : 'negative';
-                        const pnlDisplay = t.pnl ? formatMoney(pnlVal) : '-';
-                        html += `<tr>
-                            <td>${t.date}</td>
-                            <td><span class="${actionClass}">${t.action}</span></td>
-                            <td>${t.quantity}</td>
-                            <td>${formatMoney(t.price)}</td>
-                            <td class="${t.pnl ? pnlClass : ''}">${pnlDisplay}</td>
-                        </tr>`;
-                    });
-                    html += '</table>';
-                    tradesContainer.innerHTML = html;
-                }
-
-            } catch (err) {
-                console.error(err);
-                document.getElementById('modal-trades-container').innerHTML = '<div class="empty-state" style="color: var(--danger)">Error loading data.</div>';
-            } finally {
-                document.getElementById('modal-chart-loader').style.display = 'none';
-            }
-        }
-    </script>
+  <script src="app.js"></script>
 </body>
 </html>
