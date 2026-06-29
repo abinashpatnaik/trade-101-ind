@@ -15,6 +15,8 @@
   --signal-red: #FF4757;
   --signal-orange: #FFA502;
   --signal-blue: #3742FA;
+  
+  --header-bg: rgba(11, 11, 14, 0.9);
 }
 
 [data-theme="light"] {
@@ -29,6 +31,8 @@
   
   --signal-green: #00BA88;
   --signal-red: #ED2E42;
+  
+  --header-bg: rgba(244, 245, 247, 0.9);
 }
 
 body {
@@ -93,11 +97,12 @@ header {
   align-items: center;
   position: sticky;
   top: 0;
-  background-color: rgba(11, 11, 14, 0.9);
+  background-color: var(--header-bg);
   backdrop-filter: blur(8px);
   z-index: 100;
   border-bottom: 1px solid var(--card-border);
   margin-bottom: 16px;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
 .header-badges {
