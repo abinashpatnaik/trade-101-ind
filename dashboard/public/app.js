@@ -140,10 +140,10 @@ function renderSignals() {
     if (isGated && s.holdReason) {
       if (s.holdReason.includes("ADX=")) {
         const m = s.holdReason.match(/ADX=([\d.]+)/);
-        shortReason = m ? `Low ADX: ${m[1]}` : "Low ADX";
+        shortReason = m ? `ADX: ${m[1]} < 25` : "Low ADX < 25";
       } else if (s.holdReason.includes("volume is only")) {
         const m = s.holdReason.match(/([\d.]+)x average/);
-        shortReason = m ? `Low Volume: ${m[1]}x` : "Low Volume";
+        shortReason = m ? `Vol: ${m[1]}x < 1.5x` : "Low Vol < 1.5x";
       } else if (s.holdReason.includes("cooldown")) {
         const m = s.holdReason.match(/cooldown for ([\d.]+) more minutes/);
         shortReason = m ? `Cooldown: ${m[1]}m` : "Cooldown";
