@@ -444,7 +444,7 @@ class TradingAgent:
             summary = self.portfolio.get_summary()
             performance = self.portfolio.get_performance()
 
-            trades = self._trading_db.get_trades(session_date=session_date)
+            trades = self._trading_db.get_trades(date=session_date)
 
             report = self.report_gen.generate(
                 session_date=session_date,
