@@ -172,17 +172,18 @@ function renderSignals() {
     // ML Confidence progress bar
     let mlHtml = '-';
     if (s.mlConfidence) {
-      const conf = s.mlConfidence * 100;
-      const isUp = conf >= 50;
-      const color = isUp ? 'var(--signal-green)' : 'var(--signal-red)';
-      const displayConf = isUp ? conf : 100 - conf;
+      const upConf = s.mlConfidence * 100;
+      const downConf = 100 - upConf;
       mlHtml = `
-        <div style="width: 80px;">
-          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px;">
-            <span style="color: ${color}; font-weight: 600;">${displayConf.toFixed(0)}%</span>
-            <span style="color: ${color};">${isUp ? '▲' : '▼'}</span>
+        <div style="width: 100px;">
+          <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px;">
+            <span style="color: var(--signal-green); font-weight: 600;">▲ ${upConf.toFixed(0)}%</span>
+            <span style="color: var(--signal-red); font-weight: 600;">${downConf.toFixed(0)}% ▼</span>
           </div>
-          <div class="progress-wrap"><div class="progress-bar" style="width: ${displayConf}%; background-color: ${color};"></div></div>
+          <div class="progress-wrap" style="display: flex;">
+            <div class="progress-bar" style="width: ${upConf}%; background-color: var(--signal-green); border-radius: 0;"></div>
+            <div class="progress-bar" style="width: ${downConf}%; background-color: var(--signal-red); border-radius: 0;"></div>
+          </div>
         </div>
       `;
     }
