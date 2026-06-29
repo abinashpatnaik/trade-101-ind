@@ -17,6 +17,20 @@
   --signal-blue: #3742FA;
 }
 
+[data-theme="light"] {
+  --bg-color: #F4F5F7;
+  --card-bg: #FFFFFF;
+  --card-border: #E5E7EB;
+  --primary-accent: #00BA88; /* Darker green for contrast */
+  --secondary-accent: #ED2E42;
+  --text-primary: #1A1A24;
+  --text-secondary: #6B7280;
+  --text-tertiary: #9CA3AF;
+  
+  --signal-green: #00BA88;
+  --signal-red: #ED2E42;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -26,6 +40,7 @@ body {
   font-size: 14px;
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 .mono {
@@ -201,6 +216,7 @@ header {
   padding: 24px;
   display: flex;
   flex-direction: column;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
 /* Summary Cards */

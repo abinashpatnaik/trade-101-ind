@@ -9,6 +9,50 @@ let state = {
   sigFilter: 'ALL', // ALL, BUY, SELL, HOLD, GATED
 };
 
+function applyThemeToCharts(theme) {
+  const gridColor = theme === 'light' ? '#E5E7EB' : '#1F1F2E';
+  const textColor = theme === 'light' ? '#6B7280' : '#8B8B9E';
+  
+  Chart.defaults.color = textColor;
+  
+  if (charts.nav) {
+    if (charts.nav.options.scales.x) charts.nav.options.scales.x.grid.color = gridColor;
+    if (charts.nav.options.scales.y) charts.nav.options.scales.y.grid.color = gridColor;
+    charts.nav.update();
+  }
+  if (charts.sector) {
+    charts.sector.update();
+  }
+  if (charts.stockDetail) {
+    if (charts.stockDetail.options.scales.x) charts.stockDetail.options.scales.x.grid.color = gridColor;
+    if (charts.stockDetail.options.scales.y) charts.stockDetail.options.scales.y.grid.color = gridColor;
+    charts.stockDetail.update();
+  }
+}
+
+function initTheme() {
+  const savedTheme = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  document.getElementById('theme-icon-sun').style.display = savedTheme === 'light' ? 'none' : 'block';
+  document.getElementById('theme-icon-moon').style.display = savedTheme === 'light' ? 'block' : 'none';
+  // Charts are initialized later, so applyThemeToCharts won't error, but won't do anything yet.
+}
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme');
+  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+  
+  document.getElementById('theme-icon-sun').style.display = newTheme === 'light' ? 'none' : 'block';
+  document.getElementById('theme-icon-moon').style.display = newTheme === 'light' ? 'block' : 'none';
+  
+  applyThemeToCharts(newTheme);
+}
+
+// Initialize theme immediately
+initTheme();
+
 async function fetchDashboardData() {
   const syncIcon = document.getElementById('sync-icon');
   if (syncIcon) syncIcon.classList.add('spinning');
@@ -300,6 +344,9 @@ function initCharts() {
       }
     });
   }
+
+  // Apply theme to charts
+  applyThemeToCharts(document.documentElement.getAttribute('data-theme') || 'dark');
 
   // Load initial NAV history
   fetchNavHistory('1mo');
