@@ -688,41 +688,121 @@ app.get("/api/stock/:symbol", async (req, res) => {
 
 /**
  * GET /api/nav-history
- * Returns historical NAV data, approximated using SPY benchmark for demonstration if no historical DB exists.
+ * Returns historical NAV data reconstructed from realized PNL in the trades database.
  */
 app.get("/api/nav-history", async (req, res) => {
   try {
     const range = req.query.range || '1mo'; // 1d, 5d, 1mo, 3mo, 1y
-    const interval = range === '1d' || range === '5d' ? '15m' : '1d';
     
-    // Fetch benchmark to simulate NAV curve
-    const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/SPY?range=${range}&interval=${interval}`, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    // 1. Get Current NAV
+    const localSummary = readLocalSummary();
+    let currentNav = localSummary && localSummary.portfolio_value ? localSummary.portfolio_value : 100000;
+    
+    try {
+      const accounts = await ibkrGet("/portfolio/accounts");
+      const paperEnabled = String(process.env.PAPER_TRADING_ENABLED || "true").toLowerCase() !== "false";
+      let accountId = null;
+      if (Array.isArray(accounts)) {
+        const targetAcc = accounts.find(acc => {
+          const id = acc.id || acc.accountId || "";
+          return paperEnabled ? id.startsWith("D") : !id.startsWith("D");
+        });
+        accountId = targetAcc?.id || targetAcc?.accountId || accounts[0]?.id || accounts[0]?.accountId || null;
+      }
+      if (accountId) {
+        const summary = await ibkrGet(`/portfolio/${accountId}/summary`);
+        if (summary && summary.netliquidation) {
+          currentNav = summary.netliquidation.amount;
+        }
+      }
+    } catch (err) {
+      console.log("Could not fetch IBKR NAV for history, using local summary or default.");
+    }
+
+    // 2. Read all historical trades
+    const tradingMode = process.env.TRADING_MODE || "paper";
+    const trades = readTrades(null, tradingMode, null, 10000);
+    
+    if (trades.length === 0) {
+      // No trades = flat line at current NAV for the last 7 days
+      const history = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        history.push({ date: d.toISOString().split('T')[0], nav: currentNav });
+      }
+      return res.json(history);
+    }
+
+    // Sort trades oldest to newest
+    trades.sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    // 3. Group PNL by date
+    const pnlByDate = {};
+    let lifetimePnl = 0;
+    trades.forEach(t => {
+      if (t.action === 'SELL' && t.pnl) {
+        const val = parseFloat(t.pnl);
+        pnlByDate[t.date] = (pnlByDate[t.date] || 0) + val;
+        lifetimePnl += val;
       }
     });
+
+    // 4. Determine starting balance
+    const startingBalance = currentNav - lifetimePnl;
+
+    // 5. Build daily equity curve from first trade to today
+    const firstTradeDate = new Date(trades[0].date);
+    const todayDate = new Date();
     
-    if (!response.ok) throw new Error("YF API failed");
+    // Determine start date based on range
+    let startDate = new Date(todayDate);
+    if (range === '1d') startDate.setDate(startDate.getDate() - 1);
+    else if (range === '5d') startDate.setDate(startDate.getDate() - 5);
+    else if (range === '1mo') startDate.setMonth(startDate.getMonth() - 1);
+    else if (range === '3mo') startDate.setMonth(startDate.getMonth() - 3);
+    else if (range === '1y') startDate.setFullYear(startDate.getFullYear() - 1);
     
-    const yfData = await response.json();
-    const result = yfData.chart.result[0];
-    const timestamps = result.timestamp || [];
-    const closes = result.indicators.quote[0].close || [];
+    // If the user's trading history is shorter than the requested range, start from their first trade
+    if (firstTradeDate > startDate) {
+      startDate = new Date(firstTradeDate);
+    }
+
+    const history = [];
+    let runningNav = startingBalance;
+    let currDate = new Date(firstTradeDate);
     
-    // Get current NAV to scale the curve
-    const localSummary = readLocalSummary();
-    const currentNav = localSummary && localSummary.portfolio_value ? localSummary.portfolio_value : 100000;
+    // Fast forward runningNav to the startDate
+    while (currDate < startDate) {
+      const dStr = currDate.toISOString().split('T')[0];
+      if (pnlByDate[dStr]) runningNav += pnlByDate[dStr];
+      currDate.setDate(currDate.getDate() + 1);
+    }
+
+    currDate = new Date(startDate);
+    while (currDate <= todayDate) {
+      const dStr = currDate.toISOString().split('T')[0];
+      // Skip weekends for charting
+      const day = currDate.getDay();
+      if (day !== 0 && day !== 6) {
+        if (pnlByDate[dStr]) {
+          runningNav += pnlByDate[dStr];
+        }
+        history.push({
+          date: dStr,
+          nav: runningNav
+        });
+      }
+      currDate.setDate(currDate.getDate() + 1);
+    }
     
-    const currentSpy = closes[closes.length - 1];
-    const ratio = currentSpy > 0 ? currentNav / currentSpy : 1;
-    
-    const history = timestamps.map((ts, i) => {
-      const dateObj = new Date(ts * 1000);
-      return {
-        date: range === '1d' || range === '5d' ? dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : dateObj.toISOString().split('T')[0],
-        nav: closes[i] ? closes[i] * ratio : currentNav
-      };
-    });
+    // Ensure today is included
+    const todayStr = todayDate.toISOString().split('T')[0];
+    if (history.length === 0 || history[history.length - 1].date !== todayStr) {
+       history.push({ date: todayStr, nav: currentNav });
+    } else {
+       history[history.length - 1].nav = currentNav;
+    }
 
     res.json(history);
   } catch (e) {
