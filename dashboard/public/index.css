@@ -455,3 +455,54 @@ tr:last-child td {
   padding: 32px 0;
   font-style: italic;
 }
+
+/* Modal */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  align-items: center;
+  justify-content: center;
+}
+.modal.open {
+  display: flex;
+}
+.modal-content {
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 900px;
+  padding: 24px;
+  position: relative;
+  box-shadow: 0 16px 32px rgba(0,0,0,0.5);
+}
+.modal-close {
+  color: var(--text-secondary);
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  font-size: 24px;
+  font-weight: bold;
+  cursor: pointer;
+  line-height: 1;
+}
+.modal-close:hover {
+  color: var(--text-primary);
+}
+.clickable-symbol {
+  color: var(--primary-accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: all 0.2s;
+}
+.clickable-symbol:hover {
+  text-decoration-color: var(--primary-accent);
+}

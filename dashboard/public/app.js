@@ -134,8 +134,11 @@ function renderSignals() {
   let html = '';
   pageSignals.forEach(s => {
     const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
-    const displaySignal = isGated ? 'GATED' : s.signal;
-    const badgeClass = displaySignal.toLowerCase();
+    let displaySignal = isGated ? 'GATED' : s.signal;
+    if (isGated && s.holdReason) {
+      displaySignal += ` (${s.holdReason})`;
+    }
+    const badgeClass = isGated ? 'gated' : s.signal.toLowerCase();
     
     // Engine Score Color
     let scoreClass = '';
