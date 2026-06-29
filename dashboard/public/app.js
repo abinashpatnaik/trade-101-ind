@@ -135,9 +135,34 @@ function renderSignals() {
   pageSignals.forEach(s => {
     const rawSignal = s.signal || 'HOLD';
     const isGated = rawSignal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
-    let displaySignal = isGated ? 'GATED' : rawSignal;
+    
+    let shortReason = s.holdReason;
     if (isGated && s.holdReason) {
-      displaySignal += ` (${s.holdReason})`;
+      if (s.holdReason.includes("ADX=")) {
+        const m = s.holdReason.match(/ADX=([\d.]+)/);
+        shortReason = m ? `Low ADX: ${m[1]}` : "Low ADX";
+      } else if (s.holdReason.includes("volume is only")) {
+        const m = s.holdReason.match(/([\d.]+)x average/);
+        shortReason = m ? `Low Volume: ${m[1]}x` : "Low Volume";
+      } else if (s.holdReason.includes("cooldown")) {
+        const m = s.holdReason.match(/cooldown for ([\d.]+) more minutes/);
+        shortReason = m ? `Cooldown: ${m[1]}m` : "Cooldown";
+      } else if (s.holdReason.includes("Max deployment")) {
+        const m = s.holdReason.match(/deployment (\d+)% reached/);
+        shortReason = m ? `Max Deployment: ${m[1]}%` : "Max Deployment";
+      } else if (s.holdReason.includes("spend cap")) {
+        const m = s.holdReason.match(/cap [£$€₹]?([\d.]+)/);
+        shortReason = m ? `Daily Cap: ${m[1]}` : "Daily Cap";
+      } else if (s.holdReason.includes("already held")) {
+        shortReason = "Already Held";
+      } else if (s.holdReason.includes("max open positions")) {
+        shortReason = "Max Positions";
+      }
+    }
+
+    let displaySignal = isGated ? 'GATED' : rawSignal;
+    if (isGated && shortReason) {
+      displaySignal += ` (${shortReason})`;
     }
     const badgeClass = isGated ? 'gated' : rawSignal.toLowerCase();
     
