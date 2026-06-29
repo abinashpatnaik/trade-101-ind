@@ -210,6 +210,54 @@
 
   </div>
 
+  <!-- Stock Details Modal -->
+  <div id="stockModal" class="modal">
+    <div class="modal-content">
+      <span class="modal-close" onclick="closeStockModal()">&times;</span>
+      <h2 id="modal-title" style="margin-top: 0; font-family: 'Inter', sans-serif; font-size: 20px;">Symbol</h2>
+      <div class="grid-row-2-split" style="margin-top: 16px; align-items: start;">
+        <div class="card" style="padding: 0; background: transparent; border: none; box-shadow: none;">
+          <div style="height: 300px; position: relative;">
+            <canvas id="stockDetailChart"></canvas>
+          </div>
+        </div>
+        <div class="card" style="padding: 0; background: transparent; border: none; box-shadow: none;">
+          <h3 style="margin-top:0;">6M Performance</h3>
+          <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+            <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+              <div class="micro-label">Total Bought</div>
+              <div class="mono" id="modal-bought" style="font-size: 14px; margin-top:4px;">$0.00</div>
+            </div>
+            <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+              <div class="micro-label">Total Sold</div>
+              <div class="mono" id="modal-sold" style="font-size: 14px; margin-top:4px;">$0.00</div>
+            </div>
+            <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+              <div class="micro-label">Total P&L</div>
+              <div class="mono" id="modal-pnl" style="font-size: 14px; margin-top:4px;">$0.00</div>
+            </div>
+          </div>
+          <h3>Recent Transactions</h3>
+          <div style="overflow-y: auto; max-height: 180px;">
+            <table style="margin-top:8px;">
+              <thead>
+                <tr>
+                  <th style="padding: 8px; text-align: left;">Date</th>
+                  <th style="padding: 8px; text-align: left;">Action</th>
+                  <th class="th-right" style="padding: 8px;">Price</th>
+                  <th class="th-right" style="padding: 8px;">Qty</th>
+                </tr>
+              </thead>
+              <tbody id="modal-trades-body">
+                <tr><td colspan="4" class="empty-state">No transactions</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

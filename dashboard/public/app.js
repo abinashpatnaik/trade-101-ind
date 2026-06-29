@@ -97,7 +97,7 @@ function renderPositions(positions) {
     const colorClass = isUp ? 'status-buy' : 'status-sell';
     html += `
       <tr>
-        <td style="font-weight: 600;">${p.symbol}</td>
+        <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${p.symbol}')">${p.symbol}</span></td>
         <td class="mono td-right">${p.quantity}</td>
         <td class="mono td-right">${formatMoney(p.currentPrice)}</td>
         <td class="mono td-right ${colorClass}">${formatMoney(p.pnl)}<br><span style="font-size: 11px;">${p.pnlPct.toFixed(2)}%</span></td>
@@ -157,7 +157,7 @@ function renderSignals() {
 
     html += `
       <tr>
-        <td style="font-weight: 600;">${s.symbol}</td>
+        <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${s.symbol}')">${s.symbol}</span></td>
         <td class="mono">${s.combinedScore ? s.combinedScore.toFixed(3) : '-'}</td>
         <td><span class="badge-outline ${badgeClass}">${displaySignal}</span></td>
         <td>${mlHtml}</td>
@@ -190,7 +190,7 @@ function renderTrades(trades) {
     html += `
       <tr>
         <td style="color: var(--text-secondary); font-size: 11px;">${t.time}</td>
-        <td style="font-weight: 600;">${t.symbol}</td>
+        <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${t.symbol}')">${t.symbol}</span></td>
         <td><span class="${actionClass}">${t.action}</span></td>
         <td class="mono td-right">${formatMoney(t.price)}</td>
       </tr>
@@ -357,6 +357,84 @@ function renderTicker(data) {
   // Duplicate for seamless scroll
   container.innerHTML = html + html;
 }
+
+// Modal Logic
+function closeStockModal() {
+  document.getElementById('stockModal').classList.remove('open');
+}
+
+async function showStockDetails(symbol) {
+  try {
+    const res = await fetch(`/api/stock/${symbol}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    
+    document.getElementById('modal-title').textContent = symbol;
+    document.getElementById('modal-bought').textContent = formatMoney(data.summary.totalBought);
+    document.getElementById('modal-sold').textContent = formatMoney(data.summary.totalSold);
+    
+    const pnlEl = document.getElementById('modal-pnl');
+    pnlEl.textContent = formatMoney(data.summary.totalPnl);
+    pnlEl.style.color = data.summary.totalPnl >= 0 ? 'var(--signal-green)' : 'var(--signal-red)';
+    
+    // Render Trades
+    const tbody = document.getElementById('modal-trades-body');
+    if (!data.trades || data.trades.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No transactions</td></tr>';
+    } else {
+      let thtml = '';
+      data.trades.forEach(t => {
+        const actionClass = t.action === 'BUY' ? 'status-buy' : 'status-sell';
+        thtml += `
+          <tr>
+            <td style="color: var(--text-secondary); font-size: 12px;">${t.date} ${t.time}</td>
+            <td><span class="${actionClass}">${t.action}</span></td>
+            <td class="mono td-right">${formatMoney(t.price)}</td>
+            <td class="mono td-right">${t.quantity}</td>
+          </tr>
+        `;
+      });
+      tbody.innerHTML = thtml;
+    }
+    
+    // Render Chart
+    const ctx = document.getElementById('stockDetailChart');
+    if (charts.stockDetail) charts.stockDetail.destroy();
+    
+    if (data.chartData && data.chartData.length > 0) {
+      charts.stockDetail = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: data.chartData.map(d => d.date),
+          datasets: [{
+            label: 'Price',
+            data: data.chartData.map(d => d.price),
+            borderColor: '#3742FA',
+            backgroundColor: 'rgba(55, 66, 250, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.1,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false, color: '#1F1F2E' } },
+            y: { grid: { color: '#1F1F2E' } }
+          }
+        }
+      });
+    }
+    
+    document.getElementById('stockModal').classList.add('open');
+  } catch (e) {
+    console.error("Failed to load stock details", e);
+  }
+}
+
 
 document.addEventListener('DOMContentLoaded', () => {
   initCharts();
