@@ -139,19 +139,35 @@
       </div>
       <div style="overflow-x: auto;">
         <table>
-          <thead>
-            <tr>
-              <th style="width: 15%;">Ticker</th>
-              <th style="width: 15%;">Engine Score</th>
-              <th style="width: 20%;">Recommendation</th>
-              <th style="width: 30%;">ML Confidence</th>
-              <th class="th-right" style="width: 20%;">Current Price</th>
-            </tr>
-          </thead>
+              <thead>
+                <tr>
+                  <th style="padding-bottom: 16px; width: 15%;">TICKER</th>
+                  <th style="padding-bottom: 16px; width: 25%;">ENGINE SCORE</th>
+                  <th style="padding-bottom: 16px; width: 25%;">RECOMMENDATION</th>
+                  <th style="padding-bottom: 16px; width: 20%;">ML CONFIDENCE</th>
+                  <th class="th-right" style="padding-bottom: 16px; width: 15%;">CURRENT PRICE</th>
+                </tr>
+              </thead>
           <tbody id="table-signals">
             <tr><td colspan="5" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
+      </div>
+      
+      <!-- Legends -->
+      <div style="margin-top: 24px; display: flex; gap: 24px; font-size: 11px; color: var(--text-secondary); border-top: 1px solid var(--card-border); padding-top: 16px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="display:inline-block; width:8px; height:8px; background:var(--signal-green); border-radius:50%;"></span> High Confidence / Positive Engine Score
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="display:inline-block; width:8px; height:8px; background:var(--signal-red); border-radius:50%;"></span> High Confidence Down / Negative Engine Score
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="display:inline-block; width:8px; height:8px; background:var(--signal-orange); border-radius:50%;"></span> Gated (Buy Threshold Not Met)
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="display:inline-block; width:8px; height:8px; background:var(--text-tertiary); border-radius:50%;"></span> Neutral
+        </div>
       </div>
     </div>
 

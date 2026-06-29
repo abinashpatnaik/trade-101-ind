@@ -137,6 +137,11 @@ function renderSignals() {
     const displaySignal = isGated ? 'GATED' : s.signal;
     const badgeClass = displaySignal.toLowerCase();
     
+    // Engine Score Color
+    let scoreClass = '';
+    if (s.combinedScore > 0.1) scoreClass = 'status-buy';
+    else if (s.combinedScore < -0.1) scoreClass = 'status-sell';
+    
     // ML Confidence progress bar
     let mlHtml = '-';
     if (s.mlConfidence) {
@@ -148,9 +153,9 @@ function renderSignals() {
         <div style="width: 80px;">
           <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px;">
             <span style="color: ${color}; font-weight: 600;">${displayConf.toFixed(0)}%</span>
-            <span style="color: var(--text-tertiary)">${isUp ? 'UP' : 'DN'}</span>
+            <span style="color: ${color};">${isUp ? '▲' : '▼'}</span>
           </div>
-          <div class="progress-wrap"><div class="progress-bar" style="width: ${conf}%; background-color: var(--signal-green);"></div></div>
+          <div class="progress-wrap"><div class="progress-bar" style="width: ${displayConf}%; background-color: ${color};"></div></div>
         </div>
       `;
     }
@@ -158,7 +163,7 @@ function renderSignals() {
     html += `
       <tr>
         <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${s.symbol}')">${s.symbol}</span></td>
-        <td class="mono">${s.combinedScore ? s.combinedScore.toFixed(3) : '-'}</td>
+        <td class="mono ${scoreClass}">${s.combinedScore ? s.combinedScore.toFixed(3) : '-'}</td>
         <td><span class="badge-outline ${badgeClass}">${displaySignal}</span></td>
         <td>${mlHtml}</td>
         <td class="mono td-right">${formatMoney(s.price)}</td>
