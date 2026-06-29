@@ -506,3 +506,10 @@ tr:last-child td {
 .clickable-symbol:hover {
   text-decoration-color: var(--primary-accent);
 }
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+.spinning {
+  animation: spin 1s linear infinite;
+}

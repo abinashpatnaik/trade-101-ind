@@ -10,6 +10,9 @@ let state = {
 };
 
 async function fetchDashboardData() {
+  const syncIcon = document.getElementById('sync-icon');
+  if (syncIcon) syncIcon.classList.add('spinning');
+
   try {
     const [portRes, posRes, sigRes, tradesRes, analyticsRes, tickerRes, healthRes] = await Promise.all([
       fetch('/api/portfolio').catch(() => null),
@@ -34,8 +37,16 @@ async function fetchDashboardData() {
     if (analyticsRes && analyticsRes.ok) renderAnalytics(await analyticsRes.json());
     if (tickerRes && tickerRes.ok) renderTicker(await tickerRes.json());
 
+    const lastUpdated = document.getElementById('last-updated');
+    if (lastUpdated) {
+      lastUpdated.textContent = 'Live • ' + new Date().toLocaleTimeString();
+    }
   } catch (e) {
     console.error("Dashboard data fetch error", e);
+  } finally {
+    if (syncIcon) {
+      setTimeout(() => syncIcon.classList.remove('spinning'), 500);
+    }
   }
 }
 
