@@ -10,3 +10,4 @@ data/*.json
 data/*.csv
 
 trading-app/
+*.db
