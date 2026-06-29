@@ -140,10 +140,8 @@ function renderSignals() {
     }
     const badgeClass = isGated ? 'gated' : s.signal.toLowerCase();
     
-    // Engine Score Color
-    let scoreClass = '';
-    if (s.combinedScore > 0.1) scoreClass = 'status-buy';
-    else if (s.combinedScore < -0.1) scoreClass = 'status-sell';
+    // Agent Score Color matches Recommendation
+    let scoreClass = 'status-' + (isGated ? 'gated' : s.signal.toLowerCase());
     
     // ML Confidence progress bar
     let mlHtml = '-';
