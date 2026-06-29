@@ -686,124 +686,115 @@ app.get("/api/stock/:symbol", async (req, res) => {
   }
 });
 
+async function getNavHistory(range = '1mo') {
+  // 1. Get Current NAV
+  const localSummary = readLocalSummary();
+  let currentNav = localSummary && localSummary.portfolio_value ? localSummary.portfolio_value : 100000;
+  
+  try {
+    const accounts = await ibkrGet("/portfolio/accounts");
+    const paperEnabled = String(process.env.PAPER_TRADING_ENABLED || "true").toLowerCase() !== "false";
+    let accountId = null;
+    if (Array.isArray(accounts)) {
+      const targetAcc = accounts.find(acc => {
+        const id = acc.id || acc.accountId || "";
+        return paperEnabled ? id.startsWith("D") : !id.startsWith("D");
+      });
+      accountId = targetAcc?.id || targetAcc?.accountId || accounts[0]?.id || accounts[0]?.accountId || null;
+    }
+    if (accountId) {
+      const summary = await ibkrGet(`/portfolio/${accountId}/summary`);
+      if (summary && summary.netliquidation) {
+        currentNav = summary.netliquidation.amount;
+      }
+    }
+  } catch (err) {
+    console.log("Could not fetch IBKR NAV for history, using local summary or default.");
+  }
+
+  // 2. Read all historical trades
+  const tradingMode = process.env.TRADING_MODE || "paper";
+  const trades = readTrades(null, tradingMode, null, 10000);
+  
+  if (trades.length === 0) {
+    const history = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      history.push({ date: d.toISOString().split('T')[0], nav: currentNav });
+    }
+    return history;
+  }
+
+  trades.sort((a, b) => new Date(a.date) - new Date(b.date));
+  
+  const pnlByDate = {};
+  let lifetimePnl = 0;
+  trades.forEach(t => {
+    if (t.action === 'SELL' && t.pnl) {
+      const val = parseFloat(t.pnl);
+      pnlByDate[t.date] = (pnlByDate[t.date] || 0) + val;
+      lifetimePnl += val;
+    }
+  });
+
+  const startingBalance = currentNav - lifetimePnl;
+  const firstTradeDate = new Date(trades[0].date);
+  const todayDate = new Date();
+  
+  let startDate = new Date(todayDate);
+  if (range === '1d') startDate.setDate(startDate.getDate() - 1);
+  else if (range === '5d') startDate.setDate(startDate.getDate() - 5);
+  else if (range === '1mo') startDate.setMonth(startDate.getMonth() - 1);
+  else if (range === '3mo') startDate.setMonth(startDate.getMonth() - 3);
+  else if (range === '1y') startDate.setFullYear(startDate.getFullYear() - 1);
+  
+  if (firstTradeDate > startDate) {
+    startDate = new Date(firstTradeDate);
+  }
+
+  const history = [];
+  let runningNav = startingBalance;
+  let currDate = new Date(firstTradeDate);
+  
+  while (currDate < startDate) {
+    const dStr = currDate.toISOString().split('T')[0];
+    if (pnlByDate[dStr]) runningNav += pnlByDate[dStr];
+    currDate.setDate(currDate.getDate() + 1);
+  }
+
+  currDate = new Date(startDate);
+  while (currDate <= todayDate) {
+    const dStr = currDate.toISOString().split('T')[0];
+    const day = currDate.getDay();
+    if (day !== 0 && day !== 6) {
+      if (pnlByDate[dStr]) {
+        runningNav += pnlByDate[dStr];
+      }
+      history.push({
+        date: dStr,
+        nav: runningNav
+      });
+    }
+    currDate.setDate(currDate.getDate() + 1);
+  }
+  
+  const todayStr = todayDate.toISOString().split('T')[0];
+  if (!history.find(h => h.date === todayStr) && todayDate.getDay() !== 0 && todayDate.getDay() !== 6) {
+    history.push({ date: todayStr, nav: currentNav });
+  }
+
+  return history;
+}
+
 /**
  * GET /api/nav-history
  * Returns historical NAV data reconstructed from realized PNL in the trades database.
  */
 app.get("/api/nav-history", async (req, res) => {
   try {
-    const range = req.query.range || '1mo'; // 1d, 5d, 1mo, 3mo, 1y
-    
-    // 1. Get Current NAV
-    const localSummary = readLocalSummary();
-    let currentNav = localSummary && localSummary.portfolio_value ? localSummary.portfolio_value : 100000;
-    
-    try {
-      const accounts = await ibkrGet("/portfolio/accounts");
-      const paperEnabled = String(process.env.PAPER_TRADING_ENABLED || "true").toLowerCase() !== "false";
-      let accountId = null;
-      if (Array.isArray(accounts)) {
-        const targetAcc = accounts.find(acc => {
-          const id = acc.id || acc.accountId || "";
-          return paperEnabled ? id.startsWith("D") : !id.startsWith("D");
-        });
-        accountId = targetAcc?.id || targetAcc?.accountId || accounts[0]?.id || accounts[0]?.accountId || null;
-      }
-      if (accountId) {
-        const summary = await ibkrGet(`/portfolio/${accountId}/summary`);
-        if (summary && summary.netliquidation) {
-          currentNav = summary.netliquidation.amount;
-        }
-      }
-    } catch (err) {
-      console.log("Could not fetch IBKR NAV for history, using local summary or default.");
-    }
-
-    // 2. Read all historical trades
-    const tradingMode = process.env.TRADING_MODE || "paper";
-    const trades = readTrades(null, tradingMode, null, 10000);
-    
-    if (trades.length === 0) {
-      // No trades = flat line at current NAV for the last 7 days
-      const history = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        history.push({ date: d.toISOString().split('T')[0], nav: currentNav });
-      }
-      return res.json(history);
-    }
-
-    // Sort trades oldest to newest
-    trades.sort((a, b) => new Date(a.date) - new Date(b.date));
-    
-    // 3. Group PNL by date
-    const pnlByDate = {};
-    let lifetimePnl = 0;
-    trades.forEach(t => {
-      if (t.action === 'SELL' && t.pnl) {
-        const val = parseFloat(t.pnl);
-        pnlByDate[t.date] = (pnlByDate[t.date] || 0) + val;
-        lifetimePnl += val;
-      }
-    });
-
-    // 4. Determine starting balance
-    const startingBalance = currentNav - lifetimePnl;
-
-    // 5. Build daily equity curve from first trade to today
-    const firstTradeDate = new Date(trades[0].date);
-    const todayDate = new Date();
-    
-    // Determine start date based on range
-    let startDate = new Date(todayDate);
-    if (range === '1d') startDate.setDate(startDate.getDate() - 1);
-    else if (range === '5d') startDate.setDate(startDate.getDate() - 5);
-    else if (range === '1mo') startDate.setMonth(startDate.getMonth() - 1);
-    else if (range === '3mo') startDate.setMonth(startDate.getMonth() - 3);
-    else if (range === '1y') startDate.setFullYear(startDate.getFullYear() - 1);
-    
-    // If the user's trading history is shorter than the requested range, start from their first trade
-    if (firstTradeDate > startDate) {
-      startDate = new Date(firstTradeDate);
-    }
-
-    const history = [];
-    let runningNav = startingBalance;
-    let currDate = new Date(firstTradeDate);
-    
-    // Fast forward runningNav to the startDate
-    while (currDate < startDate) {
-      const dStr = currDate.toISOString().split('T')[0];
-      if (pnlByDate[dStr]) runningNav += pnlByDate[dStr];
-      currDate.setDate(currDate.getDate() + 1);
-    }
-
-    currDate = new Date(startDate);
-    while (currDate <= todayDate) {
-      const dStr = currDate.toISOString().split('T')[0];
-      // Skip weekends for charting
-      const day = currDate.getDay();
-      if (day !== 0 && day !== 6) {
-        if (pnlByDate[dStr]) {
-          runningNav += pnlByDate[dStr];
-        }
-        history.push({
-          date: dStr,
-          nav: runningNav
-        });
-      }
-      currDate.setDate(currDate.getDate() + 1);
-    }
-    
-    // Ensure today is included
-    const todayStr = todayDate.toISOString().split('T')[0];
-    if (history.length === 0 || history[history.length - 1].date !== todayStr) {
-       history.push({ date: todayStr, nav: currentNav });
-    } else {
-       history[history.length - 1].nav = currentNav;
-    }
-
+    const range = req.query.range || '1mo';
+    const history = await getNavHistory(range);
     res.json(history);
   } catch (e) {
     console.error("Failed to fetch nav-history", e.message);
@@ -1031,10 +1022,43 @@ app.get("/api/analytics", async (_req, res) => {
     })).sort((a, b) => b.allocation - a.allocation);
     
     if (sectorExposure.length === 0) {
-      sectorExposure.push({ sector: "Technology", allocation: 45 });
-      sectorExposure.push({ sector: "Financials", allocation: 25 });
-      sectorExposure.push({ sector: "Healthcare", allocation: 15 });
-      sectorExposure.push({ sector: "Consumer Cyclical", allocation: 15 });
+      sectorExposure.push({ sector: "Cash / No Positions", allocation: 100 });
+    }
+
+    // Real Risk metrics based on 1y NAV history
+    const history = await getNavHistory('1y');
+    let maxDrawdown = 0;
+    let peak = history.length > 0 ? history[0].nav : 100000;
+    let var95 = 0;
+    let volatility = 0;
+    let beta = 1.0; // Benchmark approx
+
+    if (history && history.length > 1) {
+      let dailyReturns = [];
+      for (let i = 1; i < history.length; i++) {
+        let prev = history[i-1].nav;
+        let curr = history[i].nav;
+        if (prev > 0) {
+          dailyReturns.push((curr - prev) / prev);
+        }
+        
+        if (curr > peak) peak = curr;
+        let drawdown = peak > 0 ? ((curr - peak) / peak * 100) : 0;
+        if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+      }
+      
+      if (dailyReturns.length > 0) {
+        // Volatility = stdev of daily returns * sqrt(252)
+        const mean = dailyReturns.reduce((a,b) => a+b, 0) / dailyReturns.length;
+        const variance = dailyReturns.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / dailyReturns.length;
+        const stdev = Math.sqrt(variance);
+        volatility = stdev * Math.sqrt(252) * 100;
+        
+        // Historical VaR 95% = 5th percentile of daily returns
+        const sortedReturns = [...dailyReturns].sort((a,b) => a-b);
+        const idx95 = Math.max(0, Math.floor(sortedReturns.length * 0.05));
+        var95 = Math.abs(sortedReturns[idx95] * 100);
+      }
     }
 
     res.json({
@@ -1050,10 +1074,10 @@ app.get("/api/analytics", async (_req, res) => {
         }
       },
       risk: {
-        var95: 1.2, 
-        beta: 1.15,
-        maxDrawdown: -4.5, 
-        volatility: 18.2 
+        var95: var95, 
+        beta: beta,
+        maxDrawdown: maxDrawdown, 
+        volatility: volatility 
       },
       sectorExposure
     });

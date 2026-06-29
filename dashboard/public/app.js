@@ -133,15 +133,16 @@ function renderSignals() {
   
   let html = '';
   pageSignals.forEach(s => {
-    const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
-    let displaySignal = isGated ? 'GATED' : s.signal;
+    const rawSignal = s.signal || 'HOLD';
+    const isGated = rawSignal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
+    let displaySignal = isGated ? 'GATED' : rawSignal;
     if (isGated && s.holdReason) {
       displaySignal += ` (${s.holdReason})`;
     }
-    const badgeClass = isGated ? 'gated' : s.signal.toLowerCase();
+    const badgeClass = isGated ? 'gated' : rawSignal.toLowerCase();
     
     // Agent Score Color matches Recommendation
-    let scoreClass = 'status-' + (isGated ? 'gated' : s.signal.toLowerCase());
+    let scoreClass = 'status-' + (isGated ? 'gated' : rawSignal.toLowerCase());
     
     // ML Confidence progress bar
     let mlHtml = '-';
