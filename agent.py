@@ -474,6 +474,32 @@ class TradingAgent:
     # EOD close-all
     # ------------------------------------------------------------------
 
+    def _evaluate_ml_hold(self, symbol: str) -> bool:
+        """Returns True if the ML model predicts a strong hold (high confidence of upward swing)."""
+        if not config.ai.enabled or not getattr(self, 'ai_validator', None) or not self.ai_validator.enabled:
+            return False
+            
+        try:
+            hist_df = self.price_feed.get_historical_data(symbol, days=30)
+            if hist_df is None or hist_df.empty:
+                return False
+                
+            trend_signal = self.trend_engine.analyze(hist_df)
+            headlines = self.sentiment_engine.get_last_headlines(symbol)
+            sentiment_score = self.sentiment_engine.analyze_sentiment(symbol, headlines)
+            
+            # Create a dummy HOLD decision to evaluate
+            decision = Decision(symbol=symbol, action="HOLD", confidence=0.5, reason="Evaluate overnight hold")
+            validated_decision = self.ai_validator.validate_decision(symbol, trend_signal, sentiment_score, decision)
+            
+            # If ml_confidence is high (>= 0.65), we hold.
+            if getattr(validated_decision, 'ml_confidence', None) is not None and validated_decision.ml_confidence >= 0.65:
+                return True
+        except Exception as e:
+            logger.warning("Failed to evaluate ML hold for %s: %s", symbol, e)
+            
+        return False
+
     def close_all_positions(self, reason: str = "EOD") -> None:
         """
         Market-sell all open positions.
@@ -500,6 +526,12 @@ class TradingAgent:
             qty = float(position.get("quantity", 0))
             if qty <= 0:
                 continue
+
+            # --- OVERNIGHT HOLD LOGIC ---
+            if reason == "EOD" and self._evaluate_ml_hold(symbol):
+                logger.info("ML model predicts overnight swing. Holding %s overnight.", symbol)
+                continue
+
 
             try:
                 current_price = self.price_feed.get_current_price(symbol) or 0.0
