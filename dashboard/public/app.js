@@ -113,8 +113,8 @@ function renderPositions(positions) {
         <td class="mono td-right">${formatMoney(p.currentPrice)}</td>
         <td class="mono td-right ${colorClass}">${formatMoney(p.pnl)}<br><span style="font-size: 11px;">${p.pnlPct.toFixed(2)}%</span></td>
         <td class="td-right">
-          <div style="font-size: 11px; color: var(--text-secondary);">TP: ${p.takeProfit || '-'}</div>
-          <div style="font-size: 11px; color: var(--text-secondary);">SL: ${p.stopLoss || '-'}</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">TP: $${p.takeProfit || '-'}</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">Trail: $${p.trailingStop || '-'}</div>
         </td>
       </tr>
     `;
@@ -310,7 +310,12 @@ async function fetchNavHistory(range) {
     const res = await fetch(`/api/nav-history?range=${range}`);
     if (res.ok && charts.nav) {
       const data = await res.json();
-      charts.nav.data.labels = data.map(d => d.date);
+      charts.nav.data.labels = data.map(d => {
+        if (range === '1d' && d.date.includes('T')) {
+          return d.date.split('T')[1].substring(0, 5);
+        }
+        return d.date;
+      });
       charts.nav.data.datasets[0].data = data.map(d => d.nav);
       charts.nav.update();
       

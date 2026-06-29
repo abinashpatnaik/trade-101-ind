@@ -55,6 +55,13 @@ CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
 CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(date);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
 
+CREATE TABLE IF NOT EXISTS nav_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    nav REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nav_history_ts ON nav_history(timestamp);
+
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol TEXT NOT NULL UNIQUE,
@@ -313,20 +320,38 @@ class TradingDB:
     # ML Validations
     # ------------------------------------------------------------------
 
-    def insert_ml_validation(
+    def log_ml_validation(
         self,
-        timestamp: str,
         symbol: str,
-        action: str,
-        approved: bool,
-        reason: str,
-    ) -> int:
-        """Insert an ML validation log entry. Returns the row ID."""
+        ml_prediction: str,
+        ml_confidence: float,
+        model_name: str,
+        is_approved: bool,
+        reasoning: str,
+    ) -> None:
+        """Log a validation decision made by the ML layer."""
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO ml_validations
+                (symbol, ml_prediction, ml_confidence, model_name, is_approved, reasoning)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (symbol, ml_prediction, ml_confidence, model_name, int(is_approved), reasoning),
+            )
+            
+    # ------------------------------------------------------------------
+    # NAV History
+    # ------------------------------------------------------------------
+
+    def insert_nav_record(self, nav: float) -> None:
+        """Insert a snapshot of the portfolio's Net Asset Value."""
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat() + "Z"
         with self._conn() as conn:
             cursor = conn.execute(
-                """INSERT INTO ml_validations (timestamp, symbol, action, approved, reason)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (timestamp, symbol, action, 1 if approved else 0, reason),
+                "INSERT INTO nav_history (timestamp, nav) VALUES (?, ?)",
+                (now_iso, nav)
             )
             return cursor.lastrowid
 

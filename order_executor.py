@@ -320,6 +320,14 @@ class OrderExecutor:
 
         trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - self._trailing_stop_pct)
 
+        # Smart Trailing Stop (Breakeven Protection)
+        # If the stock has gained more than 1.0% since entry, we ensure the 
+        # trailing stop does not fall below a 0.2% profit margin to guarantee +ve PNL.
+        if self._trailing_high[symbol] > order.entry_price * 1.01:
+            breakeven_floor = order.entry_price * 1.002
+            if trailing_stop_trigger < breakeven_floor:
+                trailing_stop_trigger = breakeven_floor
+
         if current_price <= trailing_stop_trigger:
             logger.warning(
                 "SOFTWARE TRAILING STOP triggered for %s: price=%.4f <= trigger=%.4f "

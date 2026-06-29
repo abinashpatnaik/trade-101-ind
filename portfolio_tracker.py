@@ -194,6 +194,7 @@ class PortfolioTracker:
                 "open_positions=%d daily_pnl=%s%.2f",
                 CUR_SYM, self.portfolio_value, CUR_SYM, self.cash, len(self.open_positions), CUR_SYM, self.daily_pnl,
             )
+            self._db.insert_nav_record(self.portfolio_value)
             
             self._dump_local_positions()
             self._dump_local_summary()

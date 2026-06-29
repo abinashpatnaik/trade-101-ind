@@ -523,18 +523,23 @@ app.get("/api/positions", async (_req, res) => {
           else strategy = "Trend Follow";
       }
 
-      return {
-        symbol,
-        quantity: qty,
-        entryPrice: avgCost,
-        currentPrice: mktPrice,
-        marketValue: mktValue,
-        pnl: Math.round(pnl * 100) / 100,
-        pnlPct: Math.round(pnlPct * 100) / 100,
-        stopLoss: sig && sig.sellThreshold ? Math.round(sig.sellThreshold * 100) / 100 : Math.round(avgCost * 0.98 * 100) / 100,
-        takeProfit: sig && sig.buyThreshold ? Math.round(sig.buyThreshold * 1.05 * 100) / 100 : Math.round(avgCost * 1.04 * 100) / 100,
-        trailingStop: Math.round(mktPrice * 0.985 * 100) / 100,
-        allocation: nav > 0 ? Math.round((mktValue / nav) * 1000) / 10 : 0,
+        let trailingTrigger = mktPrice * 0.985;
+        if (mktPrice > avgCost * 1.01) {
+            trailingTrigger = Math.max(trailingTrigger, avgCost * 1.002);
+        }
+
+        return {
+          symbol,
+          quantity: qty,
+          entryPrice: avgCost,
+          currentPrice: mktPrice,
+          marketValue: mktValue,
+          pnl: Math.round(pnl * 100) / 100,
+          pnlPct: Math.round(pnlPct * 100) / 100,
+          stopLoss: Math.round(avgCost * 0.985 * 100) / 100,
+          takeProfit: Math.round(avgCost * 1.015 * 100) / 100,
+          trailingStop: Math.round(trailingTrigger * 100) / 100,
+          allocation: nav > 0 ? Math.round((mktValue / nav) * 1000) / 10 : 0,
         strategy: strategy
       };
     });
@@ -711,8 +716,27 @@ async function getNavHistory(range = '1mo') {
   } catch (err) {
     console.log("Could not fetch IBKR NAV for history, using local summary or default.");
   }
+  // 2. Intraday graph for 1d
+  if (range === '1d') {
+    const db = getDB();
+    if (db) {
+      try {
+        const todayIso = new Date().toISOString().split('T')[0];
+        const rows = db.prepare(`SELECT timestamp, nav FROM nav_history WHERE timestamp LIKE ? ORDER BY timestamp ASC`)
+          .all(todayIso + '%');
+        
+        if (rows && rows.length > 0) {
+          const history = rows.map(r => ({ date: r.timestamp, nav: r.nav }));
+          history.push({ date: new Date().toISOString(), nav: currentNav });
+          return history;
+        }
+      } catch (err) {
+        console.error("nav_history query error:", err.message);
+      }
+    }
+  }
 
-  // 2. Read all historical trades
+  // 3. Read all historical trades
   const tradingMode = process.env.TRADING_MODE || "paper";
   const trades = readTrades(null, tradingMode, null, 10000);
   
