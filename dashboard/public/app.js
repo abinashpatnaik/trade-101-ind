@@ -343,7 +343,9 @@ function renderTicker(data) {
   
   let html = '';
   data.ticker.forEach(t => {
-    let changePct = parseFloat(t.changePercent);
+    // The Python backend writes 'change', but SPY/QQQ might use 'changePercent'
+    const rawChange = t.change !== undefined ? t.change : t.changePercent;
+    let changePct = parseFloat(rawChange);
     if (isNaN(changePct)) changePct = 0;
     
     const isUp = changePct >= 0;
