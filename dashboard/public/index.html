@@ -155,18 +155,21 @@
       </div>
       
       <!-- Legends -->
-      <div style="margin-top: 24px; display: flex; gap: 24px; font-size: 11px; color: var(--text-secondary); border-top: 1px solid var(--card-border); padding-top: 16px;">
-        <div style="display:flex; align-items:center; gap:6px;">
-          <span style="display:inline-block; width:8px; height:8px; background:var(--signal-green); border-radius:50%;"></span> High Confidence / Positive Agent Score
-        </div>
-        <div style="display:flex; align-items:center; gap:6px;">
-          <span style="display:inline-block; width:8px; height:8px; background:var(--signal-red); border-radius:50%;"></span> High Confidence Down / Negative Agent Score
-        </div>
-        <div style="display:flex; align-items:center; gap:6px;">
-          <span style="display:inline-block; width:8px; height:8px; background:var(--signal-orange); border-radius:50%;"></span> Gated (Buy Threshold Not Met)
-        </div>
-        <div style="display:flex; align-items:center; gap:6px;">
-          <span style="display:inline-block; width:8px; height:8px; background:var(--text-tertiary); border-radius:50%;"></span> Neutral
+      <div style="margin-top: 16px; font-size: 11px; color: var(--text-secondary); border-top: 1px solid var(--card-border); padding-top: 16px;">
+        <div style="margin-bottom: 8px; font-weight: 600; color: var(--text-primary);">RECOMMENDATION THRESHOLDS:</div>
+        <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="display:inline-block; width:8px; height:8px; background:var(--signal-green); border-radius:50%;"></span> <strong>BUY</strong> (Score &ge; +0.48)
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="display:inline-block; width:8px; height:8px; background:var(--signal-red); border-radius:50%;"></span> <strong>SELL</strong> (Score &le; -0.35)
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="display:inline-block; width:8px; height:8px; background:var(--text-tertiary); border-radius:50%;"></span> <strong>HOLD</strong> (-0.35 &lt; Score &lt; +0.48)
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="display:inline-block; width:8px; height:8px; background:var(--signal-orange); border-radius:50%;"></span> <strong>GATED</strong> (Buy Score Met, but Risk Controls Blocked)
+          </div>
         </div>
       </div>
     </div>
