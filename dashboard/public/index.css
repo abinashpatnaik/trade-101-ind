@@ -534,3 +534,82 @@ tr:last-child td {
 .spinning {
   animation: spin 1s linear infinite;
 }
+
+/* Responsive Mobile Layout */
+@media screen and (max-width: 900px) {
+  /* Grids to single column */
+  .grid-row-3,
+  .grid-row-2-split,
+  .grid-row-2-half {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  /* Header scaling */
+  header {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 12px 0;
+  }
+  
+  header h1 {
+    font-size: 18px;
+  }
+
+  .header-badges {
+    padding-right: 16px !important;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin-top: 8px;
+    padding-left: 32px;
+  }
+
+  /* Card padding reduction */
+  .card {
+    padding: 16px;
+  }
+
+  /* Time toggles (nav history buttons) */
+  .time-toggles {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    white-space: nowrap;
+  }
+  
+  .time-toggles button {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+
+  /* Filter bar (Market Signals buttons) */
+  .filter-bar {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    white-space: nowrap;
+  }
+  
+  /* Tables */
+  th, td {
+    padding: 10px 8px;
+    font-size: 12px;
+  }
+  
+  /* Modal inner layout */
+  .modal-content .grid-row-2-split {
+    grid-template-columns: 1fr;
+  }
+  
+  .modal-content {
+    margin: 5% auto;
+    width: 95%;
+    padding: 16px;
+  }
+  
+  /* AI card inner metric flexbox to wrap */
+  .card > div[style*="display: flex; gap: 16px"] {
+    flex-direction: column;
+    gap: 8px !important;
+  }
+}
