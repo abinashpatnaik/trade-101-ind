@@ -349,7 +349,7 @@ function initCharts() {
   applyThemeToCharts(document.documentElement.getAttribute('data-theme') || 'dark');
 
   // Load initial NAV history
-  fetchNavHistory('1mo');
+  fetchNavHistory('1d');
 }
 
 async function fetchNavHistory(range) {
