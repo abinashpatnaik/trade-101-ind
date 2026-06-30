@@ -699,7 +699,6 @@ class TradingAgent:
                     # --- PRE-MARKET OVERNIGHT PROTECTION ---
                     # If we hold positions overnight, wake up and monitor them in the pre-market
                     if self.session.is_pre_market() and getattr(self.portfolio, 'open_positions', None):
-                        import time
                         last_pm_check = getattr(self, "_last_pm_check", 0)
                         # Check once every 2 minutes so we don't spam the price feed API
                         if time.monotonic() - last_pm_check > 120:
