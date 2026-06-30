@@ -627,6 +627,7 @@ class IBKRConnector:
         symbol: str,
         action: str,
         quantity: int,
+        outsideRth: bool = False,
     ) -> Optional[str]:
         """
         Place a market (MKT) order.
@@ -639,6 +640,8 @@ class IBKRConnector:
             ``'BUY'`` or ``'SELL'``.
         quantity:
             Number of shares.
+        outsideRth:
+            Allow order to fill outside regular trading hours.
 
         Returns
         -------
@@ -682,6 +685,7 @@ class IBKRConnector:
                     "side": action.upper(),
                     "quantity": quantity,
                     "tif": "DAY",
+                    "outsideRth": outsideRth,
                 }
             ]
         }

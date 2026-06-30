@@ -492,11 +492,20 @@ class TradingAgent:
             sentiment_score = self.sentiment_engine.analyze_sentiment(symbol, headlines)
             
             # Create a dummy HOLD decision to evaluate
-            decision = Decision(symbol=symbol, action="HOLD", confidence=0.5, reason="Evaluate overnight hold")
+            decision = Decision(symbol=symbol, action="HOLD", confidence=0.5, reason="Evaluate overnight hold", quantity=0, stop_loss_price=0.0, take_profit_price=0.0, combined_score=0.0)
             validated_decision = self.ai_validator.validate_decision(symbol, trend_signal, sentiment_score, decision)
             
-            # If ml_confidence is high (>= 0.65), we hold.
-            if getattr(validated_decision, 'ml_confidence', None) is not None and validated_decision.ml_confidence >= 0.65:
+            # --- SENTIMENT WEIGHTING LOGIC ---
+            # Base threshold is 0.65. If sentiment is positive (> 0.0), we lower the threshold 
+            # to give "more weight" to the positive news. Max reduction is 0.15.
+            threshold = 0.65
+            if sentiment_score > 0:
+                discount = min(0.15, sentiment_score * 0.15)
+                threshold -= discount
+                logger.info("Positive sentiment (%.2f) reduced ML hold threshold to %.2f for %s", sentiment_score, threshold, symbol)
+
+            # If ml_confidence is high enough, we hold.
+            if getattr(validated_decision, 'ml_confidence', None) is not None and validated_decision.ml_confidence >= threshold:
                 return True
         except Exception as e:
             logger.warning("Failed to evaluate ML hold for %s: %s", symbol, e)
@@ -686,6 +695,46 @@ class TradingAgent:
                             self._scanner_run_today = True
                         except Exception as e:
                             logger.error("Sector scanner failed: %s", e)
+
+                    # --- PRE-MARKET OVERNIGHT PROTECTION ---
+                    # If we hold positions overnight, wake up and monitor them in the pre-market
+                    if self.session.is_pre_market() and getattr(self.portfolio, 'open_positions', None):
+                        import time
+                        last_pm_check = getattr(self, "_last_pm_check", 0)
+                        # Check once every 2 minutes so we don't spam the price feed API
+                        if time.monotonic() - last_pm_check > 120:
+                            self._last_pm_check = time.monotonic()
+                            try:
+                                for symbol, position in list(self.portfolio.open_positions.items()):
+                                    qty = float(position.get("quantity", 0))
+                                    if qty <= 0:
+                                        continue
+                                    
+                                    current_price = self.price_feed.get_current_price(symbol) or 0.0
+                                    avg_cost = float(position.get("avg_cost", current_price))
+                                    
+                                    if current_price > 0 and avg_cost > 0:
+                                        drop_pct = (current_price - avg_cost) / avg_cost
+                                        
+                                        # If the stock is dumping more than 2% in the pre-market, check sentiment
+                                        if drop_pct <= -0.02:
+                                            # If news is negative, DUMP IT immediately before regular open!
+                                            sent_score = self.sentiment_engine.get_sentiment(symbol)
+                                            if sent_score < 0:
+                                                logger.warning("PRE-MARKET DUMP TRIGGERED: %s dropped %.2f%% and news is negative (%.2f). Selling!", symbol, drop_pct * 100, sent_score)
+                                                if getattr(self, "executor", None):
+                                                    # Make sure broker is connected
+                                                    if not self._broker_connected:
+                                                        self._connect_broker()
+                                                    success = self.executor.close_position(symbol, qty, outsideRth=True)
+                                                    if success:
+                                                        pnl = (current_price - avg_cost) * qty
+                                                        self.portfolio.record_trade(
+                                                            symbol=symbol, action="SELL", quantity=qty, price=current_price,
+                                                            pnl=pnl, exit_reason="PRE_MARKET_DUMP"
+                                                        )
+                            except Exception as e:
+                                logger.error("Pre-market protection loop encountered error: %s", e)
 
                     chunk = min(30.0, secs - slept)
                     time.sleep(chunk)

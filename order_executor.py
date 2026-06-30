@@ -365,7 +365,7 @@ class OrderExecutor:
 
         return None
 
-    def close_position(self, symbol: str, quantity: float) -> bool:
+    def close_position(self, symbol: str, quantity: float, outsideRth: bool = False) -> bool:
         """
         Convenience method to immediately close an open position via a market
         SELL order without consulting the Decision engine.
@@ -387,6 +387,7 @@ class OrderExecutor:
                 symbol=symbol,
                 action="SELL",
                 quantity=quantity,
+                outsideRth=outsideRth,
             )
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
