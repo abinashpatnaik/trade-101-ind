@@ -49,6 +49,13 @@ class AIValidator:
             logger.error("Failed to load ML Validator model: %s", e)
             self.enabled = False
 
+    def reload_model(self):
+        """Reloads the ML model from disk (e.g., after automated retraining)."""
+        logger.info("Reloading ML Validator model from %s...", self.model_path)
+        self.enabled = config.ai.enabled
+        if self.enabled:
+            self._load_model()
+
     def _save_log(self, symbol: str, action: str, approved: bool, reason: str):
         try:
             self._db.insert_ml_validation(

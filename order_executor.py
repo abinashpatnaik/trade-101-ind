@@ -318,6 +318,27 @@ class OrderExecutor:
                 "Software trailing high updated for %s: %.4f", symbol, current_price
             )
 
+        # 1. Check Hard Stop Loss
+        if order.stop_loss_price > 0 and current_price <= order.stop_loss_price:
+            logger.warning(
+                "SOFTWARE STOP LOSS triggered for %s: price=%.4f <= trigger=%.4f",
+                symbol, current_price, order.stop_loss_price
+            )
+            self._open_orders.pop(symbol, None)
+            self._trailing_high.pop(symbol, None)
+            return "STOP_LOSS"
+
+        # 2. Check Take Profit
+        if order.take_profit_price > 0 and current_price >= order.take_profit_price:
+            logger.warning(
+                "SOFTWARE TAKE PROFIT triggered for %s: price=%.4f >= trigger=%.4f",
+                symbol, current_price, order.take_profit_price
+            )
+            self._open_orders.pop(symbol, None)
+            self._trailing_high.pop(symbol, None)
+            return "TAKE_PROFIT"
+
+        # 3. Check Trailing Stop
         trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - self._trailing_stop_pct)
 
         # Smart Trailing Stop (Breakeven Protection)

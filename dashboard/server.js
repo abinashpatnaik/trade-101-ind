@@ -234,7 +234,7 @@ function readHistoricalWinRate() {
         SUM(CASE WHEN CAST(pnl AS REAL) > 0 THEN 1 ELSE 0 END) as winners,
         COUNT(id) as total
       FROM trades 
-      WHERE action = 'SELL' AND pnl IS NOT NULL
+      WHERE action = 'SELL' AND pnl IS NOT NULL AND pnl != ''
     `).get();
     
     if (row && row.total > 0) {
@@ -587,15 +587,10 @@ app.get("/api/signals", async (_req, res) => {
     let signals = readSignals();
 
     signals = signals.map((s) => {
-      // Calculate a live downside risk metric: if buy_threshold and price exist, calculate distance
-      const downsideRisk = s.price && s.sellThreshold 
-         ? Math.round(((s.price - s.sellThreshold) / s.price) * -1000) / 10 
-         : -3.5;
-         
       return {
         ...s,
         ibkrLive: isAuth,
-        downsideRisk: downsideRisk
+        downsideRisk: -3.5 // Fallback since actual stop-loss is managed by the executor
       };
     }).sort((a, b) => Math.abs(b.trendScore) - Math.abs(a.trendScore));
 

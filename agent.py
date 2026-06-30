@@ -28,11 +28,12 @@ closes all open positions before exiting.
 """
 
 import json
-import os
-import sys
-import time
-import signal
 import logging
+import os
+import signal
+import sys
+import threading
+import time
 import logging.handlers
 from typing import Optional
 
@@ -153,6 +154,8 @@ class TradingAgent:
         # Agent state flags
         self._running = False
         self._shutdown_requested = False
+        self._last_intraday_scan = time.monotonic()
+        self._intraday_scan_thread = None
 
         # ML Validator, Continuous Learning, and Ticker Fetcher Subsystems
         self.ai_validator = AIValidator()
@@ -580,6 +583,48 @@ class TradingAgent:
                 )
 
     # ------------------------------------------------------------------
+    # Automated Retraining
+    # ------------------------------------------------------------------
+    def _check_and_run_automated_training(self):
+        """
+        Runs ml_trainer.py daily when the market is closed to ensure the
+        model stays up-to-date with the latest daily candles.
+        """
+        import os
+        from datetime import datetime, timedelta
+
+        # Ensure we only run this once per day post-market
+        tracker_file = "data/last_ml_training.txt"
+        
+        # If in docker, it maps to /app/data
+        if os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv"):
+            tracker_file = "/app/data/last_ml_training.txt"
+            
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # Check if already trained today
+        if os.path.exists(tracker_file):
+            with open(tracker_file, "r") as f:
+                last_train = f.read().strip()
+                if last_train == today_str:
+                    return # Already trained today
+                    
+        logger.info("Executing daily automated ML model retraining...")
+        try:
+            from ml_trainer import train_model
+            success = train_model()
+            if success:
+                logger.info("Automated ML retraining completed successfully.")
+                with open(tracker_file, "w") as f:
+                    f.write(today_str)
+                # Reload the newly trained model
+                self.ai_validator.reload_model()
+            else:
+                logger.error("Automated ML retraining failed or aborted.")
+        except Exception as e:
+            logger.error("Error during automated ML retraining: %s", e)
+
+    # ------------------------------------------------------------------
     # Main run loop
     # ------------------------------------------------------------------
 
@@ -629,6 +674,9 @@ class TradingAgent:
                 # Sleep in chunks so SIGINT is handled promptly.
                 slept = 0.0
                 while slept < secs and not self._shutdown_requested:
+                    # Run automated ML retraining if needed
+                    self._check_and_run_automated_training()
+
                     # Check if we should run the pre-market scanner
                     if self.session.is_pre_market() and not getattr(self, "_scanner_run_today", False):
                         logger.info("Pre-market window detected. Running sector scanner...")
@@ -666,6 +714,21 @@ class TradingAgent:
                 if not self.session.is_market_open():
                     logger.info("Market session has ended — exiting scan loop.")
                     break
+
+                # Launch intra-day background scan if interval elapsed
+                if time.monotonic() - self._last_intraday_scan > config.agent.intraday_scan_interval_minutes * 60:
+                    self._last_intraday_scan = time.monotonic()
+                    if self._intraday_scan_thread is None or not self._intraday_scan_thread.is_alive():
+                        logger.info("Triggering background Intraday Sector Scan...")
+                        def run_intraday_scan():
+                            try:
+                                import sector_scanner
+                                sector_scanner.run_scanner()
+                            except Exception as e:
+                                logger.error("Intraday sector scanner failed: %s", e)
+                        
+                        self._intraday_scan_thread = threading.Thread(target=run_intraday_scan, daemon=True)
+                        self._intraday_scan_thread.start()
 
                 # a. Sync portfolio from broker
                 try:

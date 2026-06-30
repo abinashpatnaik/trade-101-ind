@@ -125,7 +125,7 @@ def train_model():
             
     if not all_data:
         logger.error("No data fetched. Aborting training.")
-        return
+        return False
         
     full_df = pd.concat(all_data, ignore_index=True)
     
@@ -158,6 +158,8 @@ def train_model():
     importances = clf.feature_importances_
     for feat, imp in zip(features, importances):
         logger.info(f"Feature Importance - {feat}: {imp:.4f}")
+        
+    return True
 
 if __name__ == "__main__":
     train_model()

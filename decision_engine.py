@@ -152,13 +152,7 @@ class DecisionEngine:
         if current_price <= 0:
             return 0.01
 
-        # Hard cap: never spend more than max_position_size_pct of portfolio
-        # OR the full portfolio for very small accounts
-        if portfolio_value < 100:
-            # Small account: use up to 95% of available funds on one position
-            max_notional = portfolio_value * 0.95
-        else:
-            max_notional = portfolio_value * self._risk.max_position_size_pct
+        max_notional = portfolio_value * self._risk.max_position_size_pct
 
         # Can't even afford $1 worth — skip
         if max_notional < 1.0:
