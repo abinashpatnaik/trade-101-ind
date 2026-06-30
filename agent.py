@@ -480,7 +480,7 @@ class TradingAgent:
             return False
             
         try:
-            hist_df = self.price_feed.get_historical_data(symbol, days=30)
+            hist_df = self.price_feed.get_daily_ohlcv(symbol, period="3mo")
             if hist_df is None or hist_df.empty:
                 return False
                 

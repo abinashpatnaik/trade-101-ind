@@ -83,7 +83,7 @@ def run_scanner():
         yf_tickers = [f"{t.replace('.', '-')}.NS" for t in tickers]
     df_all = yf.download(
         " ".join(yf_tickers), 
-        period="1mo", 
+        period="3mo", 
         interval="1d", 
         group_by="ticker", 
         progress=False,
