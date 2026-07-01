@@ -456,7 +456,7 @@ class SentimentEngine:
 
         try:
             ticker = yf.Ticker(yf_sym)
-            hist = ticker.history(period="1d", interval="5m")
+            hist = ticker.history(period="5d", interval="5m")
 
             if hist is None or hist.empty or len(hist) < 6:
                 logger.debug(
