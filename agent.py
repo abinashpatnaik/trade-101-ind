@@ -359,10 +359,13 @@ class TradingAgent:
 
             # --- 5. Execute ---
             if decision.action != "HOLD" and self.executor is not None:
-                success = self.executor.execute(decision, symbol, current_price)
-                if success and decision.action in ("BUY", "SELL"):
-                    pnl: Optional[float] = None
-                    exit_reason: Optional[str] = None
+                if config.agent.observe_only:
+                    logger.info("[OBSERVE MODE] Would execute %s for %s, skipping.", decision.action, symbol)
+                else:
+                    success = self.executor.execute(decision, symbol, current_price)
+                    if success and decision.action in ("BUY", "SELL"):
+                        pnl: Optional[float] = None
+                        exit_reason: Optional[str] = None
 
                     if decision.action == "SELL":
                         position = self.portfolio.open_positions.get(symbol, {})
@@ -412,8 +415,11 @@ class TradingAgent:
                     )
                     qty = float(position.get("quantity", 0))
                     if qty > 0:
-                        self.executor.close_position(symbol, qty)
-                        avg_cost = float(position.get("avg_cost", current_price))
+                        if config.agent.observe_only:
+                            logger.info("[OBSERVE MODE] Would close position for %s (reason: %s), skipping.", symbol, exit_trigger)
+                        else:
+                            self.executor.close_position(symbol, qty)
+                            avg_cost = float(position.get("avg_cost", current_price))
                         pnl = (current_price - avg_cost) * qty
                         self.portfolio.record_trade(
                             symbol=symbol,
@@ -547,6 +553,10 @@ class TradingAgent:
 
             try:
                 current_price = self.price_feed.get_current_price(symbol) or 0.0
+                if config.agent.observe_only:
+                    logger.info("[OBSERVE MODE] Would close %s for EOD/shutdown (reason=%s), skipping.", symbol, reason)
+                    continue
+
                 if self.executor is not None:
                     success = self.executor.close_position(symbol, qty)
                 else:

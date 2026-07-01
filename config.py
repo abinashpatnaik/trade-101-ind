@@ -126,6 +126,9 @@ class AgentConfig:
     liquidate_on_shutdown: bool = field(
         default_factory=lambda: str(os.getenv("LIQUIDATE_ON_SHUTDOWN", "true")).lower() == "true"
     )
+    observe_only: bool = field(
+        default_factory=lambda: str(os.getenv("OBSERVE_ONLY", "false")).lower() == "true"
+    )
 
 
 @dataclass
