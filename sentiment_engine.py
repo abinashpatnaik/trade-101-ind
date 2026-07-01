@@ -530,15 +530,16 @@ class SentimentEngine:
         """
         self._trade_history_loaded = True  # Set early to prevent re-entry on error
 
-        trades_csv = config.agent.trades_csv
-        if not os.path.exists(trades_csv):
-            logger.debug("trades.csv not found at %s — history sentiment unavailable.", trades_csv)
-            return
-
         try:
-            df = pd.read_csv(trades_csv)
+            from db import TradingDB
+            db = TradingDB()
+            trades = db.get_trades(limit=5000)
+            if not trades:
+                logger.debug("No trades found in database — history sentiment unavailable.")
+                return
+            df = pd.DataFrame(trades)
         except Exception as exc:
-            logger.warning("Failed to read trades.csv: %s", exc)
+            logger.warning("Failed to fetch trades from DB: %s", exc)
             return
 
         # Normalise column names to lowercase
@@ -560,7 +561,7 @@ class SentimentEngine:
         )
 
         if symbol_col is None:
-            logger.debug("trades.csv has no recognisable symbol column — columns: %s", list(df.columns))
+            logger.debug("Database trades table has no recognisable symbol column — columns: %s", list(df.columns))
             return
 
         # Filter to closed trades (SELL side)
@@ -571,14 +572,14 @@ class SentimentEngine:
             sells = df.copy()
 
         if sells.empty:
-            logger.debug("No SELL trades found in trades.csv.")
+            logger.debug("No SELL trades found in database.")
             return
 
         # Determine win/loss per trade
         if pnl_col is not None:
             sells["_win"] = pd.to_numeric(sells[pnl_col], errors="coerce").fillna(0) > 0
         else:
-            logger.debug("No P&L column found in trades.csv — cannot compute win rate.")
+            logger.debug("No P&L column found in database — cannot compute win rate.")
             return
 
         # Half-life = 5 trades → decay factor per trade
