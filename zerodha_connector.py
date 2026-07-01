@@ -155,6 +155,8 @@ class ZerodhaConnector:
             request_token = query_params.get("request_token", [None])[0]
 
             if not request_token:
+                logger.error(f"Failed redirect URL: {redirect_url}")
+                logger.error(f"Response text: {redirect_resp.text[:500]}")
                 raise ConnectionError("Failed to retrieve request_token from final redirect.")
 
             # 5. Generate and Cache Access Token
