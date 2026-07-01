@@ -495,6 +495,7 @@ app.get("/api/portfolio", async (_req, res) => {
       agentStatus: agentStatus,
       marketOpen: isMarketOpen(),
       lastUpdated: new Date().toISOString(),
+      market: MARKET_TYPE
     });
   } catch {
     res.status(500).json({ error: "Failed to fetch portfolio" });
