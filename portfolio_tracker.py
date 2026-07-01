@@ -117,7 +117,8 @@ class PortfolioTracker:
         """Dump the local open_positions to a JSON file for the dashboard."""
         try:
             data_dir = os.path.dirname(config.agent.trades_csv)
-            out_path = os.path.join(data_dir, "local_positions.json")
+            market = os.environ.get("TRADING_MARKET", "IN").upper()
+            out_path = os.path.join(data_dir, f"local_positions_{market}.json")
             with open(out_path, "w") as f:
                 json.dump(self.open_positions, f, indent=2)
         except OSError as exc:
@@ -127,7 +128,8 @@ class PortfolioTracker:
         """Dump the local summary to a JSON file for the dashboard."""
         try:
             data_dir = os.path.dirname(config.agent.trades_csv)
-            out_path = os.path.join(data_dir, "local_summary.json")
+            market = os.environ.get("TRADING_MARKET", "IN").upper()
+            out_path = os.path.join(data_dir, f"local_summary_{market}.json")
             summary_data = self.get_summary()
             with open(out_path, "w") as f:
                 json.dump(summary_data, f, indent=2)

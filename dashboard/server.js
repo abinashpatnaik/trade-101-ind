@@ -340,13 +340,13 @@ app.use((_req, res, next) => {
 
 function readLocalPositions() {
   try {
-    const dataPath = path.join(__dirname, "..", "data", "local_positions.json");
+    const dataPath = path.join(__dirname, "..", "data", `local_positions_${MARKET_TYPE}.json`);
     if (fs.existsSync(dataPath)) {
       const data = fs.readFileSync(dataPath, "utf8");
-      const parsed = JSON.parse(data);
-      return Object.entries(parsed).map(([symbol, pos]) => ({
-        contractDesc: symbol,
-        ticker: symbol,
+      const positions = JSON.parse(data);
+      return Object.values(positions).map(pos => ({
+        account: pos.account || "SIMULATED",
+        symbol: pos.symbol,
         position: pos.quantity,
         mktPrice: pos.quantity > 0 ? pos.market_value / pos.quantity : 0,
         avgPrice: pos.avg_cost,
@@ -363,7 +363,7 @@ function readLocalPositions() {
 
 function readLocalSummary() {
   try {
-    const dataPath = path.join(__dirname, "..", "data", "local_summary.json");
+    const dataPath = path.join(__dirname, "..", "data", `local_summary_${MARKET_TYPE}.json`);
     if (fs.existsSync(dataPath)) {
       const data = fs.readFileSync(dataPath, "utf8");
       return JSON.parse(data);
