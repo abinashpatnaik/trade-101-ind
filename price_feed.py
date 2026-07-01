@@ -299,10 +299,33 @@ class PriceFeed:
         -------
         float or None
         """
+        if ACTIVE_MARKET == "IN":
+            try:
+                # Fast-path: Use the existing Zerodha token for exact real-time prices
+                token_file = "/app/data/kite_access_token.txt" if os.path.exists("/app") else "trading_agent/kite_access_token.txt"
+                if os.path.exists(token_file):
+                    with open(token_file, "r") as f:
+                        token = f.read().strip()
+                    if token:
+                        from kiteconnect import KiteConnect
+                        api_key = os.getenv("KITE_API_KEY", "").strip()
+                        if api_key:
+                            kite = KiteConnect(api_key=api_key)
+                            kite.set_access_token(token)
+                            tradingsymbol = symbol.split(".")[0]
+                            instrument = f"NSE:{tradingsymbol}"
+                            ltp_data = kite.ltp(instrument)
+                            price = float(ltp_data.get(instrument, {}).get("last_price", 0.0))
+                            if price > 0:
+                                logger.debug("Live Zerodha price for %s: %.2f", symbol, price)
+                                return price
+            except Exception as e:
+                logger.debug("Zerodha live price fetch failed for %s, falling back to yfinance: %s", symbol, e)
+
         df = self.get_intraday_data(symbol, days=1)
         if df is not None and not df.empty and "Close" in df.columns:
             price = float(df["Close"].iloc[-1])
-            logger.debug("Current price for %s: %.4f", symbol, price)
+            logger.debug("Current yfinance price for %s: %.4f", symbol, price)
             return price
 
         # Fallback: use 5-minute data.
