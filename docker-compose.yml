@@ -24,6 +24,7 @@ services:
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
       - TZ=Asia/Kolkata
     volumes:
+      - ./:/app
       - ./logs:/app/logs
       - ./data:/app/data
     restart: unless-stopped
@@ -47,6 +48,7 @@ services:
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
       - TZ=America/New_York
     volumes:
+      - ./:/app
       - ./logs:/app/logs
       - ./data:/app/data
     restart: unless-stopped
