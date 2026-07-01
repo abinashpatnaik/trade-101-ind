@@ -428,8 +428,11 @@ app.get("/api/portfolio", async (_req, res) => {
     const trades = readTrades(today(), tradingMode);
     const sells = trades.filter((t) => t.action === "SELL" && t.pnl);
     const winners = sells.filter((t) => parseFloat(t.pnl) > 0);
-    const winRate =
+    let winRate =
       sells.length > 0 ? (winners.length / sells.length) * 100 : 0;
+    if (sells.length === 0) {
+      winRate = readHistoricalWinRate();
+    }
 
     const authStatus = await ibkrGet("/iserver/auth/status");
 
@@ -607,8 +610,8 @@ app.get("/api/signals", async (_req, res) => {
 app.get("/api/trades", async (_req, res) => {
   try {
     const tradingMode = process.env.TRADING_MODE || "paper";
-    const trades = readTrades(today(), tradingMode);
-    res.json(trades.slice(0, 50));
+    const trades = readTrades(null, tradingMode, null, 50);
+    res.json(trades);
   } catch {
     res.json([]);
   }
