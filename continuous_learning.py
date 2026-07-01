@@ -24,11 +24,16 @@ ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
 class ContinuousLearning:
     def __init__(self):
         self._in_docker = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
-        self.features_log_path = "/app/data/training_features.csv" if self._in_docker else "data/training_features.csv"
-        self.model_path = "/app/data/ml_validator_model.pkl" if self._in_docker else "data/ml_validator_model.pkl"
+        active_market = os.getenv("TRADING_MARKET", "IN").upper()
+        
+        features_filename = f"training_features_{active_market}.csv"
+        model_filename = f"ml_validator_model_{active_market}.pkl"
+        
+        self.features_log_path = f"/app/data/{features_filename}" if self._in_docker else f"data/{features_filename}"
+        self.model_path = f"/app/data/{model_filename}" if self._in_docker else f"data/{model_filename}"
         
         # We also look in the current directory if it's not found in data/ (e.g. testing)
-        local_fallback = os.path.join(os.path.dirname(__file__), "data", "training_features.csv")
+        local_fallback = os.path.join(os.path.dirname(__file__), "data", features_filename)
         if not self._in_docker and not os.path.exists(self.features_log_path) and os.path.exists(local_fallback):
             self.features_log_path = local_fallback
             

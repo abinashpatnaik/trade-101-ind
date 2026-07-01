@@ -27,8 +27,11 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _IN_DOCKER = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
-_DEFAULT_DB_PATH = "/app/data/trading.db" if _IN_DOCKER else os.path.join(
-    os.path.dirname(__file__), "data", "trading.db"
+_ACTIVE_MARKET = os.environ.get("TRADING_MARKET", "IN").upper()
+_DB_FILENAME = f"trading_{_ACTIVE_MARKET}.db"
+
+_DEFAULT_DB_PATH = f"/app/data/{_DB_FILENAME}" if _IN_DOCKER else os.path.join(
+    os.path.dirname(__file__), "data", _DB_FILENAME
 )
 
 # ---------------------------------------------------------------------------

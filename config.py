@@ -123,6 +123,9 @@ class AgentConfig:
     intraday_scan_interval_minutes: int = 60
     log_file: str = field(default_factory=lambda: _LOG_FILE)
     trades_csv: str = field(default_factory=lambda: _TRADES_CSV)
+    liquidate_on_shutdown: bool = field(
+        default_factory=lambda: str(os.getenv("LIQUIDATE_ON_SHUTDOWN", "true")).lower() == "true"
+    )
 
 
 @dataclass

@@ -197,6 +197,9 @@ class OrderExecutor:
                     action="BUY",
                     quantity=decision.quantity,
                 )
+                if not entry_order_id:
+                    logger.error("Broker returned None for BUY order of %s", symbol)
+                    return False
             except Exception as exc:
                 logger.error(
                     "Failed to place BUY market order for %s: %s",
@@ -251,6 +254,9 @@ class OrderExecutor:
                     action="SELL",
                     quantity=live_qty,
                 )
+                if not sell_order_id:
+                    logger.error("Broker returned None for SELL order of %s", symbol)
+                    return False
             except Exception as exc:
                 logger.error(
                     "Failed to place SELL market order for %s: %s",

@@ -24,11 +24,13 @@ class AIValidator:
         self.validate_sells = config.ai.validate_sells
         
         self._in_docker = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
-        self.model_path = "/app/data/ml_validator_model.pkl" if self._in_docker else "data/ml_validator_model.pkl"
+        active_market = os.getenv("TRADING_MARKET", "IN").upper()
+        model_filename = f"ml_validator_model_{active_market}.pkl"
+        self.model_path = f"/app/data/{model_filename}" if self._in_docker else f"data/{model_filename}"
         
         # We also look in the current directory if it's not found in data/ (e.g. testing)
         if not os.path.exists(self.model_path):
-            local_fallback = os.path.join(os.path.dirname(__file__), "data", "ml_validator_model.pkl")
+            local_fallback = os.path.join(os.path.dirname(__file__), "data", model_filename)
             if os.path.exists(local_fallback):
                 self.model_path = local_fallback
 

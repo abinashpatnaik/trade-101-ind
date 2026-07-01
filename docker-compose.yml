@@ -2,31 +2,31 @@ version: '3.8'
 
 services:
 
-  # Indian Market Agent (Zerodha) - Commented out for now
-  # agent-in:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   container_name: in-trading-agent
-  #   environment:
-  #     - TRADING_MARKET=IN
-  #     - KITE_API_KEY=${KITE_API_KEY}
-  #     - KITE_API_SECRET=${KITE_API_SECRET}
-  #     - KITE_USER_ID=${KITE_USER_ID}
-  #     - KITE_PASSWORD=${KITE_PASSWORD}
-  #     - KITE_TOTP_SECRET=${KITE_TOTP_SECRET}
-  #     - TRADING_MODE=${TRADING_MODE:-paper}
-  #     - EOD_API_KEY=${EOD_API_KEY}
-  #     - GEMINI_API_KEY=${GEMINI_API_KEY}
-  #     - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-false}
-  #     - GMAIL_ADDRESS=${GMAIL_ADDRESS}
-  #     - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
-  #     - REPORT_RECIPIENT=${REPORT_RECIPIENT}
-  #     - TZ=Asia/Kolkata
-  #   volumes:
-  #     - ./logs:/app/logs
-  #     - ./data:/app/data
-  #   restart: unless-stopped
+  # Indian Market Agent (Zerodha)
+  agent-in:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: in-trading-agent
+    environment:
+      - TRADING_MARKET=IN
+      - KITE_API_KEY=${KITE_API_KEY}
+      - KITE_API_SECRET=${KITE_API_SECRET}
+      - KITE_USER_ID=${KITE_USER_ID}
+      - KITE_PASSWORD=${KITE_PASSWORD}
+      - KITE_TOTP_SECRET=${KITE_TOTP_SECRET}
+      - TRADING_MODE=${TRADING_MODE:-paper}
+      - EOD_API_KEY=${EOD_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-false}
+      - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+      - REPORT_RECIPIENT=${REPORT_RECIPIENT}
+      - TZ=Asia/Kolkata
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    restart: unless-stopped
 
   # US Market Agent (Alpaca)
   agent-us:
@@ -51,12 +51,12 @@ services:
       - ./data:/app/data
     restart: unless-stopped
 
-  # Web Dashboard
-  dashboard:
+  # Web Dashboard (US)
+  dashboard-us:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
-    container_name: trading-dashboard
+    container_name: us-trading-dashboard
     ports:
       - "3001:3000"
     environment:
@@ -66,7 +66,29 @@ services:
       - AGENT_LOG_PATH=/logs/agent_US.log
       - MARKET_TYPE=US
       - TRADING_MODE=${TRADING_MODE:-paper}
-      - TRADING_DB_PATH=/data/trading.db
+      - TRADING_DB_PATH=/data/trading_US.db
+    volumes:
+      - ./logs:/logs
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  # Web Dashboard (IN)
+  dashboard-in:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: in-trading-dashboard
+    ports:
+      - "3002:3000"
+    environment:
+      - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
+      - TRADES_CSV_PATH=/data/trades_IN.csv
+      - AGENT_LOG_PATH=/logs/agent_IN.log
+      - MARKET_TYPE=IN
+      - TRADING_MODE=${TRADING_MODE:-paper}
+      - TRADING_DB_PATH=/data/trading_IN.db
     volumes:
       - ./logs:/logs
       - ./data:/data

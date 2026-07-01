@@ -23,7 +23,7 @@ ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
 
 # Load symbols from config
 SYMBOLS = config.universe.tickers
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", "ml_validator_model.pkl")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", f"ml_validator_model_{ACTIVE_MARKET}.pkl")
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()

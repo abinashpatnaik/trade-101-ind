@@ -299,7 +299,7 @@ class ZerodhaConnector:
     # Order Execution API
     # ------------------------------------------------------------------
 
-    def place_market_order(self, symbol: str, action: str, quantity: int) -> Optional[str]:
+    def place_market_order(self, symbol: str, action: str, quantity: int, **kwargs) -> Optional[str]:
         """Place a market order on NSE."""
         if not self.kite:
             return None

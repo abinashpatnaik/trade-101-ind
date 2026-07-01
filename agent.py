@@ -487,7 +487,7 @@ class TradingAgent:
             if hist_df is None or hist_df.empty:
                 return False
                 
-            trend_signal = self.trend_engine.analyze(hist_df)
+            trend_signal = self.trend_engine.analyse(hist_df)
             headlines = self.sentiment_engine.get_last_headlines(symbol)
             sentiment_score = self.sentiment_engine.analyze_sentiment(symbol, headlines)
             
@@ -884,8 +884,11 @@ class TradingAgent:
         finally:
             # --- Cleanup ---
             if self._shutdown_requested:
-                logger.info("Shutdown signal received — closing all open positions.")
-                self.close_all_positions(reason="SHUTDOWN")
+                if config.agent.liquidate_on_shutdown:
+                    logger.info("Shutdown signal received — liquidating all open positions.")
+                    self.close_all_positions(reason="SHUTDOWN")
+                else:
+                    logger.info("Shutdown signal received — liquidate_on_shutdown is False, keeping positions open.")
 
             # Log final performance stats.
             perf = self.portfolio.get_performance()

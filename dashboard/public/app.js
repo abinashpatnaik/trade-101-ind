@@ -275,12 +275,27 @@ function renderTrades(trades) {
   let html = '';
   trades.slice(0, 10).forEach(t => {
     const actionClass = t.action === 'BUY' ? 'status-buy' : 'status-sell';
+    let detailsHtml = '';
+    if (t.action === 'BUY') {
+      detailsHtml = `<div>Entry: ${formatMoney(t.price)}</div><div style="font-size: 11px; color: var(--text-secondary);">Qty: ${t.quantity}</div>`;
+    } else {
+      const pnl = parseFloat(t.pnl) || 0;
+      const qty = parseFloat(t.quantity) || 1;
+      const entryPrice = parseFloat(t.price) - (pnl / qty);
+      const pnlColor = pnl >= 0 ? 'var(--signal-green)' : 'var(--signal-red)';
+      const pnlSign = pnl >= 0 ? '+' : '';
+      detailsHtml = `
+        <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 2px;">Entry: ${formatMoney(entryPrice)} &rarr; Exit: ${formatMoney(t.price)}</div>
+        <div style="color: ${pnlColor}; font-weight: 600; font-size: 12px;">PnL: ${pnlSign}${formatMoney(pnl)}</div>
+      `;
+    }
+
     html += `
       <tr>
         <td style="color: var(--text-secondary); font-size: 11px;">${t.time}</td>
         <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${t.symbol}')">${t.symbol}</span></td>
         <td><span class="${actionClass}">${t.action}</span></td>
-        <td class="mono td-right">${formatMoney(t.price)}</td>
+        <td class="mono td-right">${detailsHtml}</td>
       </tr>
     `;
   });
@@ -314,7 +329,28 @@ function initCharts() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: true,
+            callbacks: {
+              label: function(context) {
+                let label = context.dataset.label || '';
+                if (label) {
+                  label += ': ';
+                }
+                if (context.parsed.y !== null) {
+                  label += new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.parsed.y);
+                }
+                return label;
+              }
+            }
+          }
+        },
         scales: {
           x: { grid: { display: false, color: '#1F1F2E' } },
           y: { grid: { color: '#1F1F2E' } }

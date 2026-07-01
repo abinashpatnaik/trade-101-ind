@@ -746,8 +746,10 @@ async function getNavHistory(range = '1mo') {
           .all(todayIso + '%');
         
         if (rows && rows.length > 0) {
-          const history = rows.map(r => ({ date: r.timestamp, nav: r.nav }));
-          history.push({ date: new Date().toISOString(), nav: currentNav });
+          const history = rows.filter(r => r.nav > 0).map(r => ({ date: r.timestamp, nav: r.nav }));
+          if (currentNav > 0) {
+            history.push({ date: new Date().toISOString(), nav: currentNav });
+          }
           return history;
         }
       } catch (err) {

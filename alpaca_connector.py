@@ -160,7 +160,7 @@ class AlpacaConnector:
     # Order Execution API
     # ------------------------------------------------------------------
 
-    def place_market_order(self, symbol: str, action: str, quantity: float) -> Optional[str]:
+    def place_market_order(self, symbol: str, action: str, quantity: float, **kwargs) -> Optional[str]:
         if not self.trading_client:
             return None
             
