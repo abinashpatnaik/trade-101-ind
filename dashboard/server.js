@@ -538,7 +538,7 @@ app.get("/api/positions", async (_req, res) => {
       const mktValue = pos.mktValue || qty * mktPrice;
       const pnl = mktValue - qty * avgCost;
       const pnlPct = avgCost > 0 ? (pnl / (qty * avgCost)) * 100 : 0;
-      const symbol = pos.ticker || pos.contractDesc || "UNKNOWN";
+      const symbol = pos.symbol || pos.ticker || pos.contractDesc || "UNKNOWN";
       
       const sig = allSignals.find(s => s.symbol === symbol);
       let strategy = "Unknown";
