@@ -148,8 +148,16 @@ class ZerodhaConnector:
 
             # 4. Visit login URL again with skip_session=true to force the auto-redirect
             login_url_with_skip = login_url + "&skip_session=true"
-            redirect_resp = session.get(login_url_with_skip, allow_redirects=True)
-            redirect_url = redirect_resp.url
+            try:
+                redirect_resp = session.get(login_url_with_skip, allow_redirects=True)
+                redirect_url = redirect_resp.url
+            except requests.exceptions.ConnectionError as e:
+                # The redirect worked, but requests failed to connect to the dummy 127.0.0.1 URL.
+                # We can safely extract the final destination URL from the exception's request object.
+                if e.request:
+                    redirect_url = e.request.url
+                else:
+                    raise
             
             parsed_url = urllib.parse.urlparse(redirect_url)
             query_params = urllib.parse.parse_qs(parsed_url.query)
