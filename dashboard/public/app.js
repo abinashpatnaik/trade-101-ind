@@ -1,4 +1,10 @@
-const formatMoney = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(val);
+let currentMarket = "US"; // Default, gets updated dynamically
+
+const formatMoney = (val) => new Intl.NumberFormat(currentMarket === 'IN' ? 'en-IN' : 'en-US', { 
+  style: 'currency', 
+  currency: currentMarket === 'IN' ? 'INR' : 'USD', 
+  maximumFractionDigits: 2 
+}).format(val);
 const formatPct = (val) => (val > 0 ? '+' : '') + parseFloat(val).toFixed(2) + '%';
 const formatNum = (val) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(val);
 
@@ -71,7 +77,17 @@ async function fetchDashboardData() {
     let healthData = null;
     if (healthRes && healthRes.ok) healthData = await healthRes.json();
     
-    if (portRes && portRes.ok) renderPortfolio(await portRes.json(), healthData);
+    if (portRes && portRes.ok) {
+      const data = await portRes.json();
+      if (data.market) {
+        currentMarket = data.market;
+        const flagEl = document.getElementById('market-flag');
+        if (flagEl) {
+          flagEl.textContent = currentMarket === 'IN' ? '🇮🇳' : '🇺🇸';
+        }
+      }
+      renderPortfolio(data, healthData);
+    }
     if (posRes && posRes.ok) renderPositions(await posRes.json());
     if (sigRes && sigRes.ok) {
       state.signals = await sigRes.json();
