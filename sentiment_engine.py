@@ -189,7 +189,7 @@ class SentimentEngine:
             "M&M.NS": ["Mahindra & Mahindra", "M&M", "Mahindra"],
             "ULTRACEMCO.NS": ["UltraTech Cement", "UltraTech"],
             "HCLTECH.NS": ["HCL Technologies", "HCL Tech", "HCL"],
-            "LTIM.NS": ["LTIMindtree", "LTIM"],
+            "TITAN.NS": ["Titan Company", "Titan"],
             "ASIANPAINT.NS": ["Asian Paints"],
             "BAJFINANCE.NS": ["Bajaj Finance"],
             "MARUTI.NS": ["Maruti Suzuki", "Maruti"],

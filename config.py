@@ -185,7 +185,7 @@ def get_india_config() -> Config:
             tickers=["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
                      "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "AXISBANK.NS", 
                      "LT.NS", "KOTAKBANK.NS", "SUNPHARMA.NS", "M&M.NS", "ULTRACEMCO.NS", 
-                     "HCLTECH.NS", "LTIM.NS", "ASIANPAINT.NS", "BAJFINANCE.NS", "MARUTI.NS"]
+                     "HCLTECH.NS", "TITAN.NS", "ASIANPAINT.NS", "BAJFINANCE.NS", "MARUTI.NS"]
         ),
         risk=RiskConfig(),
         wallet=WalletConfig(min_trade_value=1000.0),
