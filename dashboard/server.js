@@ -344,9 +344,9 @@ function readLocalPositions() {
     if (fs.existsSync(dataPath)) {
       const data = fs.readFileSync(dataPath, "utf8");
       const positions = JSON.parse(data);
-      return Object.values(positions).map(pos => ({
+      return Object.entries(positions).map(([symbol, pos]) => ({
         account: pos.account || "SIMULATED",
-        symbol: pos.symbol,
+        symbol: symbol,
         position: pos.quantity,
         mktPrice: pos.quantity > 0 ? pos.market_value / pos.quantity : 0,
         avgPrice: pos.avg_cost,
