@@ -320,24 +320,23 @@ class TradingDB:
     # ML Validations
     # ------------------------------------------------------------------
 
-    def log_ml_validation(
+    def insert_ml_validation(
         self,
+        timestamp: str,
         symbol: str,
-        ml_prediction: str,
-        ml_confidence: float,
-        model_name: str,
-        is_approved: bool,
-        reasoning: str,
+        action: str,
+        approved: bool,
+        reason: str
     ) -> None:
         """Log a validation decision made by the ML layer."""
         with self._conn() as conn:
             conn.execute(
                 """
                 INSERT INTO ml_validations
-                (symbol, ml_prediction, ml_confidence, model_name, is_approved, reasoning)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (timestamp, symbol, action, approved, reason)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (symbol, ml_prediction, ml_confidence, model_name, int(is_approved), reasoning),
+                (timestamp, symbol, action, int(approved), reason),
             )
             
     # ------------------------------------------------------------------
