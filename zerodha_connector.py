@@ -146,8 +146,9 @@ class ZerodhaConnector:
             if twofa_data.get("status") != "success":
                 raise ConnectionError(f"Zerodha 2FA failed: {twofa_data.get('message')}")
 
-            # 4. Visit login URL again to capture redirect and request_token
-            redirect_resp = session.get(login_url, allow_redirects=True)
+            # 4. Visit login URL again with skip_session=true to force the auto-redirect
+            login_url_with_skip = login_url + "&skip_session=true"
+            redirect_resp = session.get(login_url_with_skip, allow_redirects=True)
             redirect_url = redirect_resp.url
             
             parsed_url = urllib.parse.urlparse(redirect_url)
