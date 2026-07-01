@@ -603,11 +603,11 @@ class TradingAgent:
         from datetime import datetime, timedelta
 
         # Ensure we only run this once per day post-market
-        tracker_file = "data/last_ml_training.txt"
+        tracker_file = f"data/last_ml_training_{ACTIVE_MARKET}.txt"
         
         # If in docker, it maps to /app/data
         if os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv"):
-            tracker_file = "/app/data/last_ml_training.txt"
+            tracker_file = f"/app/data/last_ml_training_{ACTIVE_MARKET}.txt"
             
         today_str = datetime.now().strftime("%Y-%m-%d")
         
