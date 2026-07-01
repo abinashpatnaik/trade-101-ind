@@ -100,7 +100,9 @@ class TickerFetcher:
                     
                     if ticker_data:
                         data_dir = os.path.dirname(config.agent.trades_csv)
-                        ticker_file = os.path.join(data_dir, "ticker.json") if data_dir else "ticker.json"
+                        market = os.environ.get("TRADING_MARKET", "IN")
+                        ticker_filename = f"ticker_{market}.json"
+                        ticker_file = os.path.join(data_dir, ticker_filename) if data_dir else ticker_filename
                         with open(ticker_file, "w") as f:
                             json.dump({"ticker": ticker_data}, f)
             except Exception as e:

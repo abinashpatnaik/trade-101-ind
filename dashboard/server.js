@@ -649,7 +649,7 @@ app.get("/api/logs", (_req, res) => {
  */
 app.get("/api/ticker", async (_req, res) => {
   try {
-    const tickerFile = path.join("/data", "ticker.json");
+    const tickerFile = path.join(__dirname, "..", "data", `ticker_${MARKET_TYPE}.json`);
     if (fs.existsSync(tickerFile)) {
       const fileData = fs.readFileSync(tickerFile, "utf8");
       const parsedData = JSON.parse(fileData);
