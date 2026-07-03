@@ -118,6 +118,7 @@ function ibkrGet(apiPath) {
  * @param {number} [limit] - Max rows (default 200).
  */
 function readTrades(dateFilter, mode, symbol, limit = 200) {
+  let trades = [];
   const db = getDB();
   if (db) {
     try {
@@ -128,51 +129,59 @@ function readTrades(dateFilter, mode, symbol, limit = 200) {
       if (symbol) { clauses.push("symbol = ?"); params.push(symbol); }
       const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
       params.push(limit);
-      return db.prepare(`SELECT * FROM trades ${where} ORDER BY date DESC, time DESC LIMIT ?`)
+      trades = db.prepare(`SELECT * FROM trades ${where} ORDER BY date DESC, time DESC LIMIT ?`)
         .all(...params);
     } catch (err) {
       console.error("SQLite readTrades error:", err.message);
     }
   }
-  // Fallback to CSV
+
+  // Merge with CSV (for legacy data prior to SQLite migration)
   try {
-    if (!fs.existsSync(TRADES_CSV)) return [];
-    const content = fs.readFileSync(TRADES_CSV, "utf8");
-    const records = parse(content, { columns: true, skip_empty_lines: true, relax_column_count: true });
-    let filtered = records;
-    if (dateFilter) filtered = filtered.filter(r => r.date === dateFilter);
-    if (mode) filtered = filtered.filter(r => r.mode === mode);
-    if (symbol) filtered = filtered.filter(r => r.symbol === symbol);
-    return filtered.slice(0, limit);
-  } catch {
-    return [];
+    if (fs.existsSync(TRADES_CSV)) {
+      const content = fs.readFileSync(TRADES_CSV, "utf8");
+      const records = parse(content, { columns: true, skip_empty_lines: true, relax_column_count: true });
+      let filtered = records;
+      if (dateFilter) filtered = filtered.filter(r => r.date === dateFilter);
+      if (mode) filtered = filtered.filter(r => r.mode === mode);
+      if (symbol) filtered = filtered.filter(r => r.symbol === symbol);
+      
+      trades = trades.concat(filtered);
+      trades.sort((a, b) => {
+        if (a.date !== b.date) return a.date > b.date ? -1 : 1;
+        return a.time > b.time ? -1 : 1;
+      });
+      trades = trades.slice(0, limit);
+    }
+  } catch (err) {
+    console.error("CSV readTrades error:", err.message);
   }
+  return trades;
 }
 
 /**
- * Get trade summary aggregates from SQLite.
+ * Get trade summary aggregates from merged SQLite and CSV trades.
  */
 function getTradeSummary(symbol, sinceDate, mode) {
-  const db = getDB();
-  if (!db) return { totalBought: 0, totalSold: 0, totalPnl: 0 };
-  try {
-    const clauses = ["symbol = ?"];
-    const params = [symbol];
-    if (sinceDate) { clauses.push("date >= ?"); params.push(sinceDate); }
-    if (mode) { clauses.push("mode = ?"); params.push(mode); }
-    const where = `WHERE ${clauses.join(" AND ")}`;
-    const row = db.prepare(`
-      SELECT
-        COALESCE(SUM(CASE WHEN action='BUY' THEN notional ELSE 0 END), 0) as totalBought,
-        COALESCE(SUM(CASE WHEN action='SELL' THEN notional ELSE 0 END), 0) as totalSold,
-        COALESCE(SUM(CASE WHEN action='SELL' THEN pnl ELSE 0 END), 0) as totalPnl
-      FROM trades ${where}
-    `).get(...params);
-    return row || { totalBought: 0, totalSold: 0, totalPnl: 0 };
-  } catch (err) {
-    console.error("getTradeSummary error:", err.message);
-    return { totalBought: 0, totalSold: 0, totalPnl: 0 };
+  const trades = readTrades(null, mode, symbol, 10000);
+  const filtered = sinceDate ? trades.filter(t => t.date >= sinceDate) : trades;
+  
+  let totalBought = 0;
+  let totalSold = 0;
+  let totalPnl = 0;
+
+  for (const t of filtered) {
+    const notional = parseFloat(t.notional) || 0;
+    const pnl = parseFloat(t.pnl) || 0;
+    if (t.action === 'BUY') {
+      totalBought += notional;
+    } else if (t.action === 'SELL') {
+      totalSold += notional;
+      totalPnl += pnl;
+    }
   }
+
+  return { totalBought, totalSold, totalPnl };
 }
 
 /**
