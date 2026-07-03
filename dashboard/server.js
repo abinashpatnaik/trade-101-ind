@@ -291,6 +291,29 @@ function isMarketOpen() {
   }
 }
 
+/** Read system status from the JSON file written by the Python agent. */
+function getSystemStatus() {
+  let systemMarketOpen = isMarketOpen();
+  let agentStatus = "offline";
+  let nextOpen = "";
+  const statusPath = path.join(__dirname, "..", "data", `system_status_${MARKET_TYPE}.json`);
+  if (fs.existsSync(statusPath)) {
+    try {
+      const stats = fs.statSync(statusPath);
+      const now = Date.now();
+      if (now - stats.mtime.getTime() < 300000) { // 5 minutes
+        const statusData = JSON.parse(fs.readFileSync(statusPath, "utf8"));
+        systemMarketOpen = statusData.market_open;
+        agentStatus = statusData.agent_status;
+        nextOpen = statusData.next_open || "";
+      }
+    } catch (err) {
+      console.error("Failed to read system status:", err.message);
+    }
+  }
+  return { systemMarketOpen, agentStatus, nextOpen };
+}
+
 // ---------------------------------------------------------------------------
 // Market Configuration Route
 // ---------------------------------------------------------------------------
@@ -436,18 +459,14 @@ app.get("/api/portfolio", async (_req, res) => {
 
     const authStatus = await ibkrGet("/iserver/auth/status");
 
-    // Dynamic agent status checking from local summary write time
-    let agentStatus = (accountId || authStatus?.authenticated) ? "running" : "offline";
-    if (agentStatus === "offline") {
-      const dataPath = path.join(__dirname, "..", "data", "local_summary.json");
-      if (fs.existsSync(dataPath)) {
-        const stats = fs.statSync(dataPath);
-        const mtime = stats.mtime.getTime();
-        const now = Date.now();
-        if (now - mtime < 120000) { // 2 minutes
-          agentStatus = "running";
-        }
-      }
+    const sysStatus = getSystemStatus();
+    let agentStatus = sysStatus.agentStatus;
+    let systemMarketOpen = sysStatus.systemMarketOpen;
+    let nextOpen = sysStatus.nextOpen;
+    
+    // Fallback if no status file written yet but broker connected
+    if (agentStatus === "offline" && (accountId || authStatus?.authenticated)) {
+      agentStatus = "running";
     }
 
     // Lifetime Realized PNL
@@ -493,7 +512,8 @@ app.get("/api/portfolio", async (_req, res) => {
       lifetimeRealizedPnl: Math.round(lifetimeRealizedPnl * 100) / 100,
       marketPulse: marketPulse,
       agentStatus: agentStatus,
-      marketOpen: isMarketOpen(),
+      marketOpen: systemMarketOpen,
+      nextOpen: nextOpen,
       lastUpdated: new Date().toISOString(),
       market: MARKET_TYPE
     });
@@ -925,10 +945,12 @@ app.get("/api/apps-health", async (_req, res) => {
   };
 
   const agentContainerName = MARKET_TYPE === "US" ? "us-trading-agent" : "in-trading-agent";
-  let agentStatus = await getDockerStatus(agentContainerName);
+  let dockerStatus = await getDockerStatus(agentContainerName);
   
-  if (agentStatus === "running" && !isMarketOpen()) {
-    agentStatus = "sleeping";
+  let agentStatus = dockerStatus;
+  const sysStatus = getSystemStatus();
+  if (dockerStatus === "running") {
+    agentStatus = sysStatus.agentStatus;
   }
 
   res.json({

@@ -643,6 +643,25 @@ class TradingAgent:
         except Exception as e:
             logger.error("Error during automated ML retraining: %s", e)
 
+    def _write_system_status(self, is_market_open: bool, agent_status: str, next_open: str = "") -> None:
+        """Write the current market and agent status to a JSON file for the dashboard."""
+        try:
+            data_dir = os.path.dirname(config.agent.trades_csv)
+            if data_dir and not os.path.exists(data_dir):
+                os.makedirs(data_dir, exist_ok=True)
+            market = os.environ.get("TRADING_MARKET", "IN").upper()
+            out_path = os.path.join(data_dir, f"system_status_{market}.json")
+            status_data = {
+                "market_open": is_market_open,
+                "agent_status": agent_status,
+                "next_open": next_open,
+                "timestamp": time.time()
+            }
+            with open(out_path, "w") as f:
+                json.dump(status_data, f, indent=2)
+        except Exception as e:
+            logger.error("Failed to write system status: %s", e)
+
     # ------------------------------------------------------------------
     # Main run loop
     # ------------------------------------------------------------------
@@ -683,6 +702,7 @@ class TradingAgent:
 
         # --- Step 1: Wait for market open ---
         if not self.session.is_market_open():
+            self._write_system_status(False, "sleeping", self.session.next_open_time())
             secs = self.session.seconds_to_open()
             if secs > 0:
                 logger.info(
@@ -693,6 +713,7 @@ class TradingAgent:
                 # Sleep in chunks so SIGINT is handled promptly.
                 slept = 0.0
                 while slept < secs and not self._shutdown_requested:
+                    self._write_system_status(False, "sleeping", self.session.next_open_time())
                     # Run automated ML retraining if needed
                     self._check_and_run_automated_training()
 
@@ -771,7 +792,10 @@ class TradingAgent:
                 # Check market status; exit loop if session ended.
                 if not self.session.is_market_open():
                     logger.info("Market session has ended — exiting scan loop.")
+                    self._write_system_status(False, "sleeping", self.session.next_open_time())
                     break
+
+                self._write_system_status(True, "running")
 
                 # Launch intra-day background scan if interval elapsed
                 if time.monotonic() - self._last_intraday_scan > config.agent.intraday_scan_interval_minutes * 60:
@@ -892,6 +916,7 @@ class TradingAgent:
             )
 
         finally:
+            self._write_system_status(False, "offline")
             # --- Cleanup ---
             if self._shutdown_requested:
                 if config.agent.liquidate_on_shutdown:

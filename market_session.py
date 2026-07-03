@@ -151,6 +151,15 @@ class MarketSession:
         delta = (next_open - now).total_seconds()
         return max(0.0, delta)
 
+    def next_open_time(self) -> str:
+        """
+        Return the next market open time as an ISO-8601 string in the local timezone.
+        Returns an empty string if the market is currently open.
+        """
+        if self.is_market_open():
+            return ""
+        return self._next_trading_day_open().isoformat()
+
     def minutes_remaining(self) -> float:
         """
         Return the number of minutes remaining in the current trading session.

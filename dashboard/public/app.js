@@ -132,7 +132,13 @@ function renderPortfolio(data, healthData) {
       marketBadge.textContent = 'Market Open';
     } else {
       marketBadge.className = 'pill-badge offline';
-      marketBadge.textContent = 'Market Closed';
+      if (data.nextOpen) {
+        const d = new Date(data.nextOpen);
+        const options = { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        marketBadge.textContent = `Market Closed (Opens: ${d.toLocaleString(undefined, options)})`;
+      } else {
+        marketBadge.textContent = 'Market Closed';
+      }
     }
   }
 
