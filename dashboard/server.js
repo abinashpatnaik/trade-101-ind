@@ -143,7 +143,7 @@ function readTrades(dateFilter, mode, symbol, limit = 200) {
       const records = parse(content, { columns: true, skip_empty_lines: true, relax_column_count: true });
       let filtered = records;
       if (dateFilter) filtered = filtered.filter(r => r.date === dateFilter);
-      if (mode) filtered = filtered.filter(r => r.mode === mode);
+      if (mode) filtered = filtered.filter(r => r.mode === mode || !r.mode);
       if (symbol) filtered = filtered.filter(r => r.symbol === symbol);
       
       trades = trades.concat(filtered);
