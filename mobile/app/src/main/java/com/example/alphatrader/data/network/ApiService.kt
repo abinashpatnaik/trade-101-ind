@@ -1,6 +1,7 @@
 package com.example.alphatrader.data.network
 
 import retrofit2.http.GET
+import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -19,7 +20,8 @@ data class PortfolioResponse(
     val tradesToday: Int,
     val lifetimeRealizedPnl: Double,
     val agentStatus: String,
-    val marketOpen: Boolean
+    val marketOpen: Boolean,
+    val nextOpen: String?
 )
 
 data class SignalResponse(
@@ -38,7 +40,25 @@ data class TradeResponse(
     val symbol: String,
     val action: String,
     val price: Double,
-    val pnl: String?
+    val pnl: String?,
+    val quantity: Double?
+)
+
+data class ChartDataPoint(
+    val date: String,
+    val price: Double
+)
+
+data class StockSummary(
+    val totalBought: Double,
+    val totalSold: Double,
+    val totalPnl: Double
+)
+
+data class StockDetailsResponse(
+    val chartData: List<ChartDataPoint>,
+    val summary: StockSummary,
+    val trades: List<TradeResponse>
 )
 
 data class TickerWrapper(val ticker: List<TickerNetworkItem>)
@@ -77,6 +97,12 @@ interface ApiService {
     
     @GET("/api/logs")
     suspend fun getLogs(): List<String>
+
+    @GET("api/ticker")
+    suspend fun getTicker(): List<TickerNetworkItem>
+
+    @GET("api/stock/{symbol}")
+    suspend fun getStockDetails(@Path("symbol") symbol: String): StockDetailsResponse
     
     @GET("/api/ticker")
     suspend fun getTickers(): TickerWrapper
@@ -89,9 +115,56 @@ interface ApiService {
 }
 
 object RetrofitClient {
+    private var sessionManager: com.example.alphatrader.data.SessionManager? = null
+
+    fun initialize(manager: com.example.alphatrader.data.SessionManager) {
+        sessionManager = manager
+    }
+
+    private val okHttpClient: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder().apply {
+            addInterceptor { chain ->
+                var request = chain.request()
+
+                val username = sessionManager?.username ?: ""
+                val password = sessionManager?.password ?: ""
+                if (username.isNotBlank() && password.isNotBlank()) {
+                    val credentials = okhttp3.Credentials.basic(username, password)
+                    request = request.newBuilder()
+                        .header("Authorization", credentials)
+                        .build()
+                }
+
+                val customUrl = sessionManager?.serverUrl
+                if (!customUrl.isNullOrBlank()) {
+                    try {
+                        val uri = java.net.URI(customUrl)
+                        val newUrl = request.url.newBuilder()
+                            .scheme(uri.scheme)
+                            .host(uri.host)
+                            // We intentionally keep the original port (3001 vs 3002)
+                            .build()
+                        request = request.newBuilder()
+                            .url(newUrl)
+                            .build()
+                    } catch (e: Exception) {
+                        // ignore malformed URLs
+                    }
+                }
+
+                chain.proceed(request)
+            }
+            val logging = okhttp3.logging.HttpLoggingInterceptor().apply {
+                level = okhttp3.logging.HttpLoggingInterceptor.Level.BODY
+            }
+            addInterceptor(logging)
+        }.build()
+    }
+
     private val usInstance: ApiService by lazy {
         Retrofit.Builder()
             .baseUrl(BuildConfig.US_API_BASE_URL)
+            .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
@@ -100,6 +173,7 @@ object RetrofitClient {
     private val inInstance: ApiService by lazy {
         Retrofit.Builder()
             .baseUrl(BuildConfig.IN_API_BASE_URL)
+            .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)

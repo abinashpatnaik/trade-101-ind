@@ -34,7 +34,7 @@ fun MetricCard(
             .fillMaxWidth()
             .height(100.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(BgSurface)
+            .background(MaterialTheme.colorScheme.surface)
             .drawBehind {
                 drawLine(
                     color = variant.topColor,
@@ -43,7 +43,7 @@ fun MetricCard(
                     strokeWidth = 2.dp.toPx()
                 )
             }
-            .border(1.dp, BorderSubtle, RoundedCornerShape(16.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
             .padding(16.dp)
     ) {
         Column(
@@ -52,20 +52,20 @@ fun MetricCard(
         ) {
             Text(
                 text = label.uppercase(),
-                color = TextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
             
             Text(
                 text = value,
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.displayLarge
             )
             
             val subLabelColor = when (isPositiveDelta) {
                 true -> BrandGreen
                 false -> BrandRed
-                null -> TextSecondary
+                null -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             val icon = when (isPositiveDelta) {
                 true -> "▲"

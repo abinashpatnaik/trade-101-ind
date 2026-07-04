@@ -3,8 +3,10 @@ package com.example.alphatrader.ui.components
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,7 +21,7 @@ data class TickerItem(
 )
 
 @Composable
-fun TickerTape(tickers: List<TickerItem>, currencySymbol: String = "$") {
+fun TickerTape(tickers: List<TickerItem>, currencySymbol: String = "$", onTickerClick: (String) -> Unit = {}) {
     // Basic auto-scroll implementation
     val scrollState = rememberScrollState()
     
@@ -43,7 +45,7 @@ fun TickerTape(tickers: List<TickerItem>, currencySymbol: String = "$") {
         modifier = Modifier
             .fillMaxWidth()
             .height(36.dp)
-            .background(BgSurface)
+            .background(MaterialTheme.colorScheme.surface)
             .horizontalScroll(scrollState),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -54,25 +56,26 @@ fun TickerTape(tickers: List<TickerItem>, currencySymbol: String = "$") {
             val isUp = ticker.changePct >= 0
             val color = if (isUp) BrandGreen else BrandRed
             val icon = if (isUp) "▲" else "▼"
-            
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = "${ticker.symbol} $currencySymbol${String.format("%.2f", ticker.price)}",
-                color = TextPrimary,
-                style = MonoTextStyle
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "$icon ${String.format("%.2f", Math.abs(ticker.changePct))}%",
-                color = color,
-                style = MonoTextStyle
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = "|",
-                color = TextDisabled,
-                style = MonoTextStyle
-            )
+            Row(modifier = Modifier.clickable { onTickerClick(ticker.symbol) }) {
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = "${ticker.symbol} $currencySymbol${String.format("%.2f", ticker.price)}",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MonoTextStyle
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "$icon ${String.format("%.2f", Math.abs(ticker.changePct))}%",
+                    color = color,
+                    style = MonoTextStyle
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = "|",
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    style = MonoTextStyle
+                )
+            }
         }
     }
 }

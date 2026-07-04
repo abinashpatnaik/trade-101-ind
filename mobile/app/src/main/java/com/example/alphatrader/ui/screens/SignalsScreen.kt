@@ -27,7 +27,7 @@ fun SignalsScreen(viewModel: DashboardViewModel = viewModel()) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BgPrimary)
+            .background(MaterialTheme.colorScheme.background)
     ) {
         if (state.isLoading) {
             CircularProgressIndicator(
@@ -45,7 +45,7 @@ fun SignalsScreen(viewModel: DashboardViewModel = viewModel()) {
             
             val winRate = state.portfolio?.winRate ?: 50.0
             val tradesToday = state.portfolio?.tradesToday ?: state.signals.size
-            val avgConf = if (state.signals.isNotEmpty()) state.signals.map { it.confidence }.average() * 100 else 0.0
+            val avgConf = if (state.signals.isNotEmpty()) state.signals.map { it.confidence }.average() else 0.0
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -56,7 +56,7 @@ fun SignalsScreen(viewModel: DashboardViewModel = viewModel()) {
                     Text(
                         text = "AGENT INTELLIGENCE",
                         style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 4.dp)
                     )
                     IntelligenceMetricsRow(
@@ -90,9 +90,14 @@ fun SignalsScreen(viewModel: DashboardViewModel = viewModel()) {
                         SignalAction.HOLD
                     }
                     
-                    val conf = (signalResponse.confidence * 100).toInt()
-                    val bullPct = if (actionEnum == SignalAction.BUY) conf else if (actionEnum == SignalAction.SELL) 100 - conf else 50
-                    val bearPct = if (actionEnum == SignalAction.SELL) conf else if (actionEnum == SignalAction.BUY) 100 - conf else 50
+                    val conf = signalResponse.confidence.toInt()
+                    val bullPct = when (actionEnum) {
+                        SignalAction.BUY -> conf
+                        SignalAction.SELL -> 100 - conf
+                        SignalAction.HOLD -> (50 + (signalResponse.trendScore * 15)).toInt().coerceIn(0, 100)
+                        else -> 50
+                    }
+                    val bearPct = 100 - bullPct
                     val reasonStr = signalResponse.aiReason ?: signalResponse.holdReason ?: "Algo"
 
                     SignalRow(
@@ -105,6 +110,7 @@ fun SignalsScreen(viewModel: DashboardViewModel = viewModel()) {
                             bullPct = bullPct,
                             bearPct = bearPct
                         ),
+                        onClick = { viewModel.openStockDetails(signalResponse.symbol) },
                         currencySymbol = currencySymbol
                     )
                 }

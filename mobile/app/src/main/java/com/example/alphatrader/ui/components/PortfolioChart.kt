@@ -16,11 +16,35 @@ import androidx.compose.ui.unit.dp
 import com.example.alphatrader.theme.*
 
 import com.example.alphatrader.data.network.NavHistoryItem
+import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStart
+import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
+import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
+import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
+import com.patrykandpatrick.vico.core.cartesian.data.lineSeries
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModelProducer
+import com.patrykandpatrick.vico.core.cartesian.Zoom
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
 
 @Composable
 fun PortfolioChartCard(history: List<NavHistoryItem> = emptyList()) {
     var selectedTimeRange by remember { mutableStateOf("1D") }
     val timeRanges = listOf("1D", "1W", "1M", "3M", "1Y")
+    
+    val modelProducer = remember { CartesianChartModelProducer() }
+
+    LaunchedEffect(history) {
+        if (history.isNotEmpty()) {
+            modelProducer.runTransaction {
+                lineSeries {
+                    series(history.map { it.nav })
+                }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -28,7 +52,7 @@ fun PortfolioChartCard(history: List<NavHistoryItem> = emptyList()) {
             .height(260.dp)
             .padding(horizontal = 16.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(BgSurface)
+            .background(MaterialTheme.colorScheme.surface)
             .padding(16.dp)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -36,7 +60,7 @@ fun PortfolioChartCard(history: List<NavHistoryItem> = emptyList()) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = "PORTFOLIO PERFORMANCE",
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.titleMedium
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -56,12 +80,35 @@ fun PortfolioChartCard(history: List<NavHistoryItem> = emptyList()) {
             
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Chart Placeholder due to API differences in Vico 2.x
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Chart Placeholder", color = TextSecondary)
+            if (history.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No data available", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                val myRangeProvider = remember {
+                    object : com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider {
+                        override fun getMinX(minX: Double, maxX: Double, extraStore: com.patrykandpatrick.vico.core.common.data.ExtraStore) = minX
+                        override fun getMaxX(minX: Double, maxX: Double, extraStore: com.patrykandpatrick.vico.core.common.data.ExtraStore) = maxX
+                        override fun getMinY(minY: Double, maxY: Double, extraStore: com.patrykandpatrick.vico.core.common.data.ExtraStore) = minY * 0.95
+                        override fun getMaxY(minY: Double, maxY: Double, extraStore: com.patrykandpatrick.vico.core.common.data.ExtraStore) = maxY * 1.05
+                    }
+                }
+                CartesianChartHost(
+                    chart = rememberCartesianChart(
+                        rememberLineCartesianLayer(
+                            rangeProvider = myRangeProvider
+                        ),
+                        startAxis = VerticalAxis.rememberStart(),
+                        bottomAxis = HorizontalAxis.rememberBottom(),
+                    ),
+                    modelProducer = modelProducer,
+                    zoomState = rememberVicoZoomState(zoomEnabled = false, initialZoom = Zoom.Content, maxZoom = Zoom.Content),
+                    scrollState = rememberVicoScrollState(scrollEnabled = false),
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
     }
@@ -69,8 +116,8 @@ fun PortfolioChartCard(history: List<NavHistoryItem> = emptyList()) {
 
 @Composable
 fun TimeRangeChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
-    val bgColor = if (isSelected) BrandGreen else BgSurfaceRaised
-    val textColor = if (isSelected) Color.Black else TextSecondary
+    val bgColor = if (isSelected) BrandGreen else MaterialTheme.colorScheme.surfaceVariant
+    val textColor = if (isSelected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
 
     Box(
         modifier = Modifier

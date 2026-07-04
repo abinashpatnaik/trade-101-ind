@@ -29,7 +29,7 @@ fun ExecutionHistoryRow(
         Text(
             text = timestamp,
             style = MonoTextStyle,
-            color = TextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(64.dp)
         )
         
@@ -53,13 +53,13 @@ fun ExecutionHistoryRow(
             Text(
                 text = "Entry: $currencySymbol${String.format("%.2f", entry)}",
                 style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = "Exit:  $currencySymbol${String.format("%.2f", exit)}",
                 style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(2.dp))
             
@@ -72,5 +72,5 @@ fun ExecutionHistoryRow(
             )
         }
     }
-    androidx.compose.material3.HorizontalDivider(color = BorderSubtle, thickness = 1.dp)
+    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
 }

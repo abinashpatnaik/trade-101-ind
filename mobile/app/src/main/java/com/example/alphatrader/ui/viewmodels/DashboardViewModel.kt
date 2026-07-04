@@ -7,6 +7,7 @@ import com.example.alphatrader.data.network.RetrofitClient
 import com.example.alphatrader.data.network.SignalResponse
 import com.example.alphatrader.data.network.AnalyticsResponse
 import com.example.alphatrader.data.network.NavHistoryItem
+import com.example.alphatrader.data.network.StockDetailsResponse
 import com.example.alphatrader.ui.components.AgentStatus
 import com.example.alphatrader.ui.components.MarketRegion
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,7 +45,10 @@ data class DashboardState(
     val tickers: List<TickerItem> = emptyList(),
     val executionLogs: List<ExecutionHistoryItem> = emptyList(),
     val decisionLogs: List<DecisionLogItem> = emptyList(),
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val selectedStockSymbol: String? = null,
+    val stockDetails: StockDetailsResponse? = null,
+    val isStockDetailsLoading: Boolean = false
 )
 
 class DashboardViewModel : ViewModel() {
@@ -88,23 +92,39 @@ class DashboardViewModel : ViewModel() {
                         "SELL" -> SignalAction.SELL
                         else -> SignalAction.HOLD
                     }
+                    val parsedPnl = it.pnl?.toDoubleOrNull() ?: 0.0
+                    val qty = it.quantity ?: 1.0
+                    val computedEntry = if (actionEnum == SignalAction.SELL) it.price - (parsedPnl / qty) else it.price
+                    val computedExit = if (actionEnum == SignalAction.BUY) it.price + (parsedPnl / qty) else it.price
                     ExecutionHistoryItem(
                         timestamp = it.time,
                         ticker = it.symbol,
                         action = actionEnum,
-                        entry = it.price,
-                        exit = it.price,
-                        pnl = it.pnl?.toDoubleOrNull() ?: 0.0
+                        entry = computedEntry,
+                        exit = computedExit,
+                        pnl = parsedPnl
                     )
                 }
                 
-                val mappedDecisionLogs = logsNet.map { logString ->
-                    DecisionLogItem(
-                        icon = "ℹ️",
-                        title = "System Log",
-                        subtitle = logString,
-                        timestamp = ""
-                    )
+                val mappedDecisionLogs = logsNet.mapNotNull { logString ->
+                    if (logString.contains("| ERROR |") || logString.contains("| CRITICAL |") || logString.contains("ERROR") || logString.contains("CRITICAL")) {
+                        val lowerLog = logString.lowercase()
+                        val isIgnorable = listOf("timeout", "retry", "connection", "network").any { lowerLog.contains(it) }
+                        
+                        // Try to extract timestamp if it starts with one, else leave blank
+                        val timestampRegex = Regex("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
+                        val match = timestampRegex.find(logString)
+                        val timestamp = match?.value ?: ""
+                        
+                        DecisionLogItem(
+                            icon = if (isIgnorable) "⚠️" else "🚨",
+                            title = if (isIgnorable) "Ignorable Error" else "Severe Error",
+                            subtitle = logString,
+                            timestamp = timestamp
+                        )
+                    } else {
+                        null
+                    }
                 }.takeLast(20).reversed()
                 
                 _uiState.value = _uiState.value.copy(
@@ -125,5 +145,36 @@ class DashboardViewModel : ViewModel() {
                 )
             }
         }
+    }
+
+    fun openStockDetails(symbol: String) {
+        val cleanSymbol = symbol.removeSuffix(".NS").removeSuffix(".L")
+        _uiState.value = _uiState.value.copy(
+            selectedStockSymbol = cleanSymbol,
+            isStockDetailsLoading = true,
+            stockDetails = null
+        )
+        viewModelScope.launch {
+            try {
+                val api = RetrofitClient.getInstance(if (_uiState.value.marketRegion == MarketRegion.US) "US" else "IN")
+                val details = api.getStockDetails(cleanSymbol)
+                _uiState.value = _uiState.value.copy(
+                    isStockDetailsLoading = false,
+                    stockDetails = details
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isStockDetailsLoading = false,
+                    errorMessage = "Failed to load details for $symbol"
+                )
+            }
+        }
+    }
+
+    fun closeStockDetails() {
+        _uiState.value = _uiState.value.copy(
+            selectedStockSymbol = null,
+            stockDetails = null
+        )
     }
 }

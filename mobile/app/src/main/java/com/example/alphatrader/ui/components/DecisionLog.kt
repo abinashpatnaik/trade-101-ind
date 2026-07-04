@@ -39,12 +39,12 @@ fun DecisionLogEntry(icon: String, title: String, subtitle: String, timestamp: S
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = TextPrimary
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 text = subtitle,
                 style = MonoTextStyle,
-                color = TextSecondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         
@@ -52,7 +52,7 @@ fun DecisionLogEntry(icon: String, title: String, subtitle: String, timestamp: S
         Text(
             text = timestamp,
             style = MaterialTheme.typography.bodySmall,
-            color = TextDisabled
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
         )
     }
 }

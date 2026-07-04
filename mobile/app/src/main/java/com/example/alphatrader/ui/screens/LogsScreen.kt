@@ -27,28 +27,39 @@ fun LogsScreen(viewModel: DashboardViewModel = viewModel()) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BgPrimary)
+            .background(MaterialTheme.colorScheme.background)
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 80.dp)
         ) {
-            // 1. Decision Log
+            // 1. System Alerts
             item {
                 Text(
-                    text = "DECISION LOG",
+                    text = "SYSTEM ALERTS",
                     style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 4.dp)
                 )
             }
-            items(state.decisionLogs) { log ->
-                DecisionLogEntry(
-                    icon = log.icon,
-                    title = log.title,
-                    subtitle = log.subtitle,
-                    timestamp = log.timestamp
-                )
+            if (state.decisionLogs.isEmpty()) {
+                item {
+                    Text(
+                        text = "✅ System Healthy - No severe alerts",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 16.dp)
+                    )
+                }
+            } else {
+                items(state.decisionLogs) { log ->
+                    DecisionLogEntry(
+                        icon = log.icon,
+                        title = log.title,
+                        subtitle = log.subtitle,
+                        timestamp = log.timestamp
+                    )
+                }
             }
 
             // 2. Execution History
@@ -56,7 +67,7 @@ fun LogsScreen(viewModel: DashboardViewModel = viewModel()) {
                 Text(
                     text = "EXECUTION HISTORY",
                     style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, top = 32.dp, bottom = 4.dp)
                 )
             }

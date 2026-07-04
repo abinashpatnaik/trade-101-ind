@@ -25,7 +25,7 @@ import com.example.alphatrader.ui.viewmodels.DashboardViewModel
 fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
 
-    Box(modifier = Modifier.fillMaxSize().background(BgPrimary)) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         if (state.isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = BrandGreen)
@@ -43,7 +43,11 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
                 item {
-                    TickerTape(tickers = state.tickers, currencySymbol = currencySymbol)
+                    TickerTape(
+                        tickers = state.tickers,
+                        currencySymbol = currencySymbol,
+                        onTickerClick = { viewModel.openStockDetails(it) }
+                    )
                 }
 
                 // 2. Metrics Grid
@@ -82,11 +86,13 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                 // 4. Analytics Panel
                 item {
                     val risk = state.analytics?.risk
+                    val winRate = state.portfolio?.winRate ?: 0.0
                     AnalyticsPanel(
                         maxDrawdown = risk?.maxDrawdown?.let { "${String.format("%.2f", it)}%" } ?: "N/A",
                         portfolioVar = risk?.var95?.let { "${String.format("%.2f", it)}%" } ?: "N/A",
                         portfolioBeta = risk?.beta?.let { String.format("%.2f", it) } ?: "N/A",
-                        volAnn = risk?.volatility?.let { "${String.format("%.1f", it)}%" } ?: "N/A"
+                        volAnn = risk?.volatility?.let { "${String.format("%.1f", it)}%" } ?: "N/A",
+                        winRate = winRate
                     )
                 }
 

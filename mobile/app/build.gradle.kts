@@ -15,8 +15,12 @@ android {
         versionName = "1.0"
         
         val apiIp = project.findProperty("API_IP") as? String ?: "localhost"
+        val apiUsername = project.findProperty("API_USERNAME") as? String ?: ""
+        val apiPassword = project.findProperty("API_PASSWORD") as? String ?: ""
         buildConfigField("String", "US_API_BASE_URL", "\"http://$apiIp:3001\"")
         buildConfigField("String", "IN_API_BASE_URL", "\"http://$apiIp:3002\"")
+        buildConfigField("String", "API_USERNAME", "\"$apiUsername\"")
+        buildConfigField("String", "API_PASSWORD", "\"$apiPassword\"")
     }
 
     buildTypes {
@@ -93,4 +97,7 @@ dependencies {
   // Charting
   implementation(libs.vico.compose)
   implementation(libs.vico.compose.m3)
+
+  // Biometric Auth
+  implementation(libs.androidx.biometric)
 }

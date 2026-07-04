@@ -39,19 +39,19 @@ fun IntelligenceMetricCard(label: String, value: String) {
             .width(110.dp)
             .height(80.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(BgSurfaceRaised)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(12.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = TextSecondary
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyLarge,
-            color = TextPrimary
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }

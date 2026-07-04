@@ -1,6 +1,7 @@
 package com.example.alphatrader.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Divider
@@ -27,12 +28,14 @@ data class SignalItem(
 )
 
 @Composable
-fun SignalRow(signal: SignalItem, currencySymbol: String = "$") {
+fun SignalRow(signal: SignalItem, currencySymbol: String = "$", onClick: () -> Unit = {}) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(88.dp)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+            .padding(16.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         // Top Row: Ticker & Price
@@ -48,7 +51,7 @@ fun SignalRow(signal: SignalItem, currencySymbol: String = "$") {
             )
             Text(
                 text = "$currencySymbol${String.format("%.2f", signal.price)}",
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.titleMedium
             )
         }
@@ -60,7 +63,7 @@ fun SignalRow(signal: SignalItem, currencySymbol: String = "$") {
         ) {
             Text(
                 text = "Score: ${String.format("%.3f", signal.score)}",
-                color = TextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
             Spacer(modifier = Modifier.width(16.dp))
@@ -81,7 +84,7 @@ fun SignalRow(signal: SignalItem, currencySymbol: String = "$") {
                     .weight(1f)
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp))
-                    .background(BgSurfaceRaised)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Box(
                     modifier = Modifier
@@ -101,7 +104,7 @@ fun SignalRow(signal: SignalItem, currencySymbol: String = "$") {
             Text("${signal.bearPct}% ▼", color = BrandRed, style = MaterialTheme.typography.bodyMedium)
         }
     }
-    androidx.compose.material3.HorizontalDivider(color = BorderSubtle, thickness = 1.dp)
+    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
 }
 
 @Composable
@@ -109,7 +112,7 @@ fun SignalBadge(action: SignalAction, text: String) {
     val (bgColor, textColor) = when (action) {
         SignalAction.BUY -> Pair(BrandGreenDim, BrandGreen)
         SignalAction.SELL -> Pair(BrandRedDim, BrandRed)
-        SignalAction.HOLD -> Pair(BgSurfaceRaised, TextSecondary)
+        SignalAction.HOLD -> Pair(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
         SignalAction.GATED -> Pair(BrandAmberDim, BrandAmber)
     }
 

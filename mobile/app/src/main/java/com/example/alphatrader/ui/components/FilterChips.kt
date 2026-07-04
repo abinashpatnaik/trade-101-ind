@@ -32,12 +32,12 @@ fun FilterChipRow() {
         chips.forEach { chipName ->
             val isSelected = chipName.contains(selectedChip) || selectedChip.contains(chipName.replace("● ", ""))
             
-            val bgColor = if (isSelected) BrandGreen else BgSurfaceRaised
-            val textColor = if (isSelected) Color.Black else TextSecondary
+            val bgColor = if (isSelected) BrandGreen else MaterialTheme.colorScheme.surfaceVariant
+            val textColor = if (isSelected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
             val modifier = if (isSelected) {
                 Modifier
             } else {
-                Modifier.border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
+                Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
             }
 
             Box(

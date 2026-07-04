@@ -1,5 +1,7 @@
 package com.example.alphatrader.ui.components
 
+import com.example.alphatrader.data.network.PortfolioResponse
+
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,6 +23,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.alphatrader.theme.*
 
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.SettingsBrightness
+import androidx.compose.material3.IconButton
+import com.example.alphatrader.data.ThemeMode
+
 enum class AgentStatus {
     LIVE, CLOSED, SLEEPING
 }
@@ -29,18 +36,20 @@ enum class MarketRegion {
     US, IN
 }
 
+
 @Composable
 fun AlphaTopAppBar(
     marketRegion: MarketRegion,
     onMarketToggle: () -> Unit,
-    status: AgentStatus,
-    statusText: String
+    portfolio: PortfolioResponse?,
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    onThemeToggle: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp)
-            .background(BgPrimary)
+            .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -48,36 +57,73 @@ fun AlphaTopAppBar(
         // Logo and Title
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.clickable { onMarketToggle() }
         ) {
-            Text(
-                text = "⚡",
-                color = BrandGreen,
-                style = MaterialTheme.typography.headlineLarge
-            )
+            Row(modifier = Modifier.clickable { onMarketToggle() }, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "⚡",
+                    color = BrandGreen,
+                    style = MaterialTheme.typography.headlineLarge
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Alpha",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = if (marketRegion == MarketRegion.US) "🇺🇸" else "🇮🇳",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
+            
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "Alpha Trader",
-                color = TextPrimary,
-                style = MaterialTheme.typography.headlineLarge
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (marketRegion == MarketRegion.US) "🇺🇸" else "🇮🇳",
-                style = MaterialTheme.typography.headlineLarge
-            )
+            
+            IconButton(onClick = onThemeToggle) {
+                Icon(
+                    imageVector = when (themeMode) {
+                        ThemeMode.SYSTEM -> Icons.Filled.SettingsBrightness
+                        ThemeMode.LIGHT -> Icons.Filled.LightMode
+                        ThemeMode.DARK -> Icons.Filled.DarkMode
+                    },
+                    contentDescription = "Toggle Theme",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         // Status Row
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Default.LightMode,
-                contentDescription = "Theme Toggle",
-                tint = TextSecondary,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            StatusBadge(status = status, text = statusText)
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.Center
+        ) {
+            if (portfolio != null) {
+                // Market Status Badge
+                val marketText = if (portfolio.marketOpen) {
+                    "Market Open"
+                } else {
+                    val nextOpenFormatted = if (!portfolio.nextOpen.isNullOrEmpty()) {
+                        try {
+                            val zdt = java.time.ZonedDateTime.parse(portfolio.nextOpen)
+                            val formatter = java.time.format.DateTimeFormatter.ofPattern("EEE HH:mm")
+                            " (Opens ${zdt.format(formatter)})"
+                        } catch (e: Exception) {
+                            ""
+                        }
+                    } else ""
+                    "Closed$nextOpenFormatted"
+                }
+                StatusBadge(status = if (portfolio.marketOpen) AgentStatus.LIVE else AgentStatus.CLOSED, text = marketText)
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                // Agent Status Badge
+                val agentStatusEnum = if (portfolio.agentStatus == "running") AgentStatus.LIVE else AgentStatus.SLEEPING
+                val agentText = if (portfolio.agentStatus == "running") "Agent Running" else "Agent Sleeping"
+                StatusBadge(status = agentStatusEnum, text = agentText)
+            } else {
+                StatusBadge(status = AgentStatus.SLEEPING, text = "Connecting...")
+            }
         }
     }
 }
@@ -87,12 +133,12 @@ fun StatusBadge(status: AgentStatus, text: String) {
     val bgColor = when (status) {
         AgentStatus.LIVE -> BrandGreenDim
         AgentStatus.CLOSED -> BrandRedDim
-        AgentStatus.SLEEPING -> BgSurfaceRaised
+        AgentStatus.SLEEPING -> MaterialTheme.colorScheme.surfaceVariant
     }
     val textColor = when (status) {
         AgentStatus.LIVE -> BrandGreen
         AgentStatus.CLOSED -> BrandRed
-        AgentStatus.SLEEPING -> TextSecondary
+        AgentStatus.SLEEPING -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -108,10 +154,10 @@ fun StatusBadge(status: AgentStatus, text: String) {
 
     Row(
         modifier = Modifier
-            .height(28.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .height(22.dp)
+            .clip(RoundedCornerShape(11.dp))
             .background(bgColor)
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (status == AgentStatus.LIVE || status == AgentStatus.CLOSED) {
@@ -122,12 +168,12 @@ fun StatusBadge(status: AgentStatus, text: String) {
                     .background(textColor)
                     .alpha(if (status == AgentStatus.LIVE) alpha else 1f)
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(4.dp))
         }
         Text(
             text = text,
             color = textColor,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold
         )
     }
