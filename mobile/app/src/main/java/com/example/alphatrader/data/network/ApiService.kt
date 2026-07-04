@@ -4,6 +4,7 @@ import retrofit2.http.GET
 import retrofit2.http.Query
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import com.example.alphatrader.BuildConfig
 
 // Mock response models based on the Node.js Express endpoints structure
 data class PortfolioResponse(
@@ -90,7 +91,7 @@ interface ApiService {
 object RetrofitClient {
     private val usInstance: ApiService by lazy {
         Retrofit.Builder()
-            .baseUrl("http://56.228.3.36:3001") // US EC2 Dashboard Port
+            .baseUrl(BuildConfig.US_API_BASE_URL)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
@@ -98,13 +99,13 @@ object RetrofitClient {
 
     private val inInstance: ApiService by lazy {
         Retrofit.Builder()
-            .baseUrl("http://56.228.3.36:3002") // IN EC2 Dashboard Port
+            .baseUrl(BuildConfig.IN_API_BASE_URL)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
     }
 
-    fun getInstance(market: String): ApiService {
+    fun getInstance(market: String = "US"): ApiService {
         return if (market == "IN") inInstance else usInstance
     }
 }
