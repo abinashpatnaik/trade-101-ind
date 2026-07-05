@@ -774,9 +774,9 @@ async function getNavHistory(range = '1mo') {
     const db = getDB();
     if (db) {
       try {
-        const todayIso = new Date().toISOString().split('T')[0];
-        const rows = db.prepare(`SELECT timestamp, nav FROM nav_history WHERE timestamp LIKE ? ORDER BY timestamp ASC`)
-          .all(todayIso + '%');
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const rows = db.prepare(`SELECT timestamp, nav FROM nav_history WHERE timestamp >= ? ORDER BY timestamp ASC`)
+          .all(oneDayAgo);
         
         if (rows && rows.length > 0) {
           const history = rows.filter(r => r.nav > 0).map(r => ({ date: r.timestamp, nav: r.nav }));
@@ -795,12 +795,21 @@ async function getNavHistory(range = '1mo') {
   const tradingMode = process.env.TRADING_MODE || "paper";
   const trades = readTrades(null, tradingMode, null, 10000);
   
+  const todayDate = new Date();
+  
+  let startDate = new Date(todayDate);
+  if (range === '1d') startDate.setDate(startDate.getDate() - 1);
+  else if (range === '5d') startDate.setDate(startDate.getDate() - 5);
+  else if (range === '1mo') startDate.setMonth(startDate.getMonth() - 1);
+  else if (range === '3mo') startDate.setMonth(startDate.getMonth() - 3);
+  else if (range === '1y') startDate.setFullYear(startDate.getFullYear() - 1);
+
   if (trades.length === 0) {
     const history = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      history.push({ date: d.toISOString().split('T')[0], nav: currentNav });
+    let cd = new Date(startDate);
+    while (cd <= todayDate) {
+      history.push({ date: cd.toISOString().split('T')[0], nav: currentNav });
+      cd.setDate(cd.getDate() + 1);
     }
     return history;
   }
@@ -819,23 +828,12 @@ async function getNavHistory(range = '1mo') {
 
   const startingBalance = currentNav - lifetimePnl;
   const firstTradeDate = new Date(trades[0].date);
-  const todayDate = new Date();
   
-  let startDate = new Date(todayDate);
-  if (range === '1d') startDate.setDate(startDate.getDate() - 1);
-  else if (range === '5d') startDate.setDate(startDate.getDate() - 5);
-  else if (range === '1mo') startDate.setMonth(startDate.getMonth() - 1);
-  else if (range === '3mo') startDate.setMonth(startDate.getMonth() - 3);
-  else if (range === '1y') startDate.setFullYear(startDate.getFullYear() - 1);
-  
-  if (firstTradeDate > startDate) {
-    startDate = new Date(firstTradeDate);
-  }
-
   const history = [];
   let runningNav = startingBalance;
   let currDate = new Date(firstTradeDate);
   
+  // Advance runningNav to startDate if needed
   while (currDate < startDate) {
     const dStr = currDate.toISOString().split('T')[0];
     if (pnlByDate[dStr]) runningNav += pnlByDate[dStr];
@@ -845,21 +843,18 @@ async function getNavHistory(range = '1mo') {
   currDate = new Date(startDate);
   while (currDate <= todayDate) {
     const dStr = currDate.toISOString().split('T')[0];
-    const day = currDate.getDay();
-    if (day !== 0 && day !== 6) {
-      if (pnlByDate[dStr]) {
-        runningNav += pnlByDate[dStr];
-      }
-      history.push({
-        date: dStr,
-        nav: runningNav
-      });
+    if (pnlByDate[dStr]) {
+      runningNav += pnlByDate[dStr];
     }
+    history.push({
+      date: dStr,
+      nav: runningNav
+    });
     currDate.setDate(currDate.getDate() + 1);
   }
-  
+
   const todayStr = todayDate.toISOString().split('T')[0];
-  if (!history.find(h => h.date === todayStr) && todayDate.getDay() !== 0 && todayDate.getDay() !== 6) {
+  if (!history.find(h => h.date === todayStr)) {
     history.push({ date: todayStr, nav: currentNav });
   }
 
