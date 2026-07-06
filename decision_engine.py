@@ -312,18 +312,20 @@ class DecisionEngine:
         open_positions: Dict = portfolio.get("open_positions", {})
         already_held = symbol in open_positions
 
-        active_ml_confidence = ml_confidence_swing if already_held else ml_confidence_day
+        # Always use the DAY model for intraday decisions (whether entering or holding).
+        # The SWING model is only explicitly used by agent.py at 15:45 to determine overnight holds.
+        active_ml_confidence = ml_confidence_day
         is_ai_driver = config.ai.primary_driver and config.ai.enabled and active_ml_confidence > 0.0
 
         if is_ai_driver:
             combined_score = active_ml_confidence  # Keep as 0.0 - 1.0 for UI clarity
             confidence = active_ml_confidence
-            active_buy_threshold = self.get_ml_buy_threshold(symbol, already_held)
+            active_buy_threshold = self.get_ml_buy_threshold(symbol, is_swing=False)
             buy_condition = active_ml_confidence >= active_buy_threshold
             sell_condition = active_ml_confidence <= 0.40
             logger.debug(
-                "AI DRIVER Active — %s: day_prob=%.4f swing_prob=%.4f mapped_score=%.4f ml_buy_thr=%.2f",
-                symbol, ml_confidence_day, ml_confidence_swing, combined_score, active_buy_threshold
+                "AI DRIVER Active — %s: day_prob=%.4f mapped_score=%.4f ml_buy_thr=%.2f",
+                symbol, ml_confidence_day, combined_score, active_buy_threshold
             )
         else:
             combined_score = self._compute_combined_score(
