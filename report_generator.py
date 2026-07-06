@@ -15,6 +15,7 @@ from typing import Dict, List, Optional
 from config import CUR_SYM
 
 logger = logging.getLogger(__name__)
+MARKET_NAME = "US" if os.getenv("TRADING_MARKET", "IN").upper() == "US" else "Indian"
 
 
 class EODReportGenerator:
@@ -225,7 +226,7 @@ class EODReportGenerator:
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-        <title>US Market Trading Report — {session_date}</title>
+        <title>{MARKET_NAME} Market Trading Report — {session_date}</title>
 </head>
 <body style='margin:0;padding:0;background:#f4f6f9;font-family:Arial,sans-serif;'>
 
@@ -244,7 +245,7 @@ class EODReportGenerator:
       </p>
       <h1 style='margin:6px 0 0;font-size:22px;color:#ecf0f1;font-family:Arial,sans-serif;
                  font-weight:700;'>
-        US Market Automated Trading Report
+        {MARKET_NAME} Market Automated Trading Report
       </h1>
       <p style='margin:8px 0 0;font-size:13px;color:#bdc3c7;font-family:Arial,sans-serif;'>
         Session date: <strong style='color:#ecf0f1;'>{session_date}</strong>
@@ -368,7 +369,7 @@ class EODReportGenerator:
 
         lines: List[str] = [
             SEP,
-            "  US MARKET AUTOMATED TRADING REPORT",
+            f"  {MARKET_NAME.upper()} MARKET AUTOMATED TRADING REPORT",
             f"  Session date : {session_date}",
             SEP,
             "",
@@ -486,7 +487,7 @@ class EODReportGenerator:
         )
 
         subject = (
-            f"US Market Trading Report \u2014 {session_date} | "
+            f"{MARKET_NAME} Market Trading Report \u2014 {session_date} | "
             f"P&L: {CUR_SYM}{total_pnl:+.2f}"
         )
 
