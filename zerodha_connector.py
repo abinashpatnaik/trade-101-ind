@@ -351,20 +351,16 @@ class ZerodhaConnector:
             return result
         except Exception as exc:
             logger.error("Failed to get account summary: %s", exc)
-            return {
-                "NetLiquidation": 0.0,
-                "AvailableFunds": 0.0,
-                "DailyPnL": 0.0,
-            }
+            return {}
 
-    def get_positions(self) -> Dict[str, Dict]:
+    def get_positions(self) -> Optional[Dict[str, Dict]]:
         """
         Fetch open positions.
         Returns:
             dict mapping symbol (with .NS) -> {quantity, avg_cost, market_value, conid}
         """
         if not self.kite:
-            return {}
+            return None
         try:
             pos_data = self.kite.positions()
             net_positions = pos_data.get("net", [])
@@ -386,8 +382,8 @@ class ZerodhaConnector:
             logger.debug("Zerodha positions synced: %d active.", len(positions))
             return positions
         except Exception as exc:
-            logger.error("Failed to get Zerodha positions: %s", exc)
-            return {}
+            logger.error("Failed to fetch positions: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Market Data

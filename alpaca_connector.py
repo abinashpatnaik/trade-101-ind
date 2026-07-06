@@ -173,11 +173,11 @@ class AlpacaConnector:
             return result
         except Exception as exc:
             logger.error("Failed to get Alpaca account summary: %s", exc)
-            return {"NetLiquidation": 0.0, "AvailableFunds": 0.0, "DailyPnL": 0.0}
-
-    def get_positions(self) -> Dict[str, Dict]:
-        if not self.trading_client:
             return {}
+
+    def get_positions(self) -> Optional[Dict[str, Dict]]:
+        if not self.trading_client:
+            return None
         try:
             alpaca_positions = self.trading_client.get_all_positions()
             positions = {}
@@ -196,7 +196,7 @@ class AlpacaConnector:
             return positions
         except Exception as exc:
             logger.error("Failed to get Alpaca positions: %s", exc)
-            return {}
+            return None
 
     # ------------------------------------------------------------------
     # Market Data
