@@ -24,39 +24,49 @@ class AIValidator:
         self.validate_sells = config.ai.validate_sells
         
         self._in_docker = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
-        active_market = os.getenv("TRADING_MARKET", "IN").upper()
-        model_filename = f"ml_validator_model_{active_market}.pkl"
-        self.model_path = f"/app/data/{model_filename}" if self._in_docker else f"data/{model_filename}"
+        self.active_market = os.getenv("TRADING_MARKET", "IN").upper()
         
-        # We also look in the current directory if it's not found in data/ (e.g. testing)
-        if not os.path.exists(self.model_path):
-            local_fallback = os.path.join(os.path.dirname(__file__), "data", model_filename)
-            if os.path.exists(local_fallback):
-                self.model_path = local_fallback
-
-        self.model = None
+        self.model_day = None
+        self.model_swing = None
         self._db = TradingDB()
         if self.enabled:
-            self._load_model()
+            self._load_models()
             
-    def _load_model(self):
-        try:
-            if os.path.exists(self.model_path):
-                self.model = joblib.load(self.model_path)
-                logger.info("Successfully loaded local ML Validator model from %s", self.model_path)
-            else:
-                logger.warning("ML Validator model not found at %s. Please run ml_trainer.py first. Validation will be bypassed.", self.model_path)
-                self.enabled = False
-        except Exception as e:
-            logger.error("Failed to load ML Validator model: %s", e)
+    def _get_model_path(self, mode: str) -> str:
+        model_filename = f"ml_validator_model_{self.active_market}_{mode}.pkl"
+        model_path = f"/app/data/{model_filename}" if self._in_docker else f"data/{model_filename}"
+        if not os.path.exists(model_path):
+            local_fallback = os.path.join(os.path.dirname(__file__), "data", model_filename)
+            if os.path.exists(local_fallback):
+                model_path = local_fallback
+        return model_path
+
+    def _load_models(self):
+        self.model_day = self._load_single_model("day")
+        self.model_swing = self._load_single_model("swing")
+        if self.model_day is None and self.model_swing is None:
             self.enabled = False
 
+    def _load_single_model(self, mode: str):
+        path = self._get_model_path(mode)
+        try:
+            if os.path.exists(path):
+                model = joblib.load(path)
+                logger.info(f"Successfully loaded {mode.upper()} ML Validator model from {path}")
+                return model
+            else:
+                logger.warning(f"{mode.upper()} ML Validator model not found at {path}. Please run ml_trainer.py first.")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to load {mode.upper()} ML Validator model: {e}")
+            return None
+
     def reload_model(self):
-        """Reloads the ML model from disk (e.g., after automated retraining)."""
-        logger.info("Reloading ML Validator model from %s...", self.model_path)
+        """Reloads the ML models from disk (e.g., after automated retraining)."""
+        logger.info("Reloading ML Validator models...")
         self.enabled = config.ai.enabled
         if self.enabled:
-            self._load_model()
+            self._load_models()
 
     def _save_log(self, symbol: str, action: str, approved: bool, reason: str):
         try:
@@ -70,21 +80,19 @@ class AIValidator:
         except Exception as e:
             logger.error("Failed to write ML validation log to DB: %s", e)
 
-    def get_ml_confidence(self, trend_signal: TrendSignal, sentiment_score: float) -> float:
+    def get_ml_confidence(self, trend_signal: TrendSignal, sentiment_score: float, mode: str = "day") -> float:
         """
-        Returns the raw probability of success (0.0 to 1.0) from the ML model
-        based on the current trend and sentiment features. Returns 0.0 if disabled.
+        Returns the raw probability of success (0.0 to 1.0) from the specified ML model (day or swing).
         """
-        if not self.enabled or self.model is None:
+        model = self.model_day if mode == "day" else self.model_swing
+        if not self.enabled or model is None:
             return 0.0
 
         try:
-            # Convert string signals to numeric values matching training data
             macd_val = 1 if trend_signal.macd_signal == "bullish" else (-1 if trend_signal.macd_signal == "bearish" else 0)
             ema_val = 1 if trend_signal.ema_signal == "bullish" else (-1 if trend_signal.ema_signal == "bearish" else 0)
             vwap_val = 1 if trend_signal.vwap_signal == "above" else -1
 
-            # Construct feature vector exactly as trained
             features = pd.DataFrame([{
                 'rsi': trend_signal.rsi,
                 'macd_signal': macd_val,
@@ -96,54 +104,51 @@ class AIValidator:
                 'volume_ratio': trend_signal.volume_ratio
             }])
             
-            # Ensure backward compatibility with older models trained on fewer features
-            if hasattr(self.model, 'feature_names_in_'):
-                expected_features = list(self.model.feature_names_in_)
+            if hasattr(model, 'feature_names_in_'):
+                expected_features = list(model.feature_names_in_)
                 features = features[expected_features]
             
-            # Predict Probability of Success (Class 1)
-            prob_success = self.model.predict_proba(features)[0][1]
+            prob_success = model.predict_proba(features)[0][1]
             return float(prob_success)
         except Exception as e:
-            logger.error("Failed to calculate ML confidence: %s", e)
+            logger.error(f"Failed to calculate {mode} ML confidence: {e}")
             return 0.0
 
     def validate_decision(
         self,
         symbol: str,
-        trend_signal: TrendSignal,
+        trend_signal_day: TrendSignal,
+        trend_signal_swing: TrendSignal,
         sentiment_score: float,
         decision: Decision
     ) -> Decision:
         """
-        Validates a trading decision using the local XGBoost model.
-        Returns the original decision if approved, or a modified HOLD decision if rejected.
+        Validates a trading decision. Uses 'day' model for BUYs, 'swing' model for SELLs.
         """
-        if not self.enabled or self.model is None:
+        mode = "day" if decision.action == "BUY" else "swing"
+        model = self.model_day if mode == "day" else self.model_swing
+        trend_signal = trend_signal_day if mode == "day" else trend_signal_swing
+        
+        if not self.enabled or model is None:
             return decision
 
-        logger.info("Requesting ML validation for %s %s decision...", symbol, decision.action)
+        logger.info("Requesting %s ML validation for %s %s decision...", mode.upper(), symbol, decision.action)
 
         try:
-            prob_success = self.get_ml_confidence(trend_signal, sentiment_score)
-            decision.ml_confidence = prob_success
+            prob_success = self.get_ml_confidence(trend_signal, sentiment_score, mode=mode)
             
-            # Risk Management Thresholds
-            # For BUY: we want high confidence of success (e.g., > 60%)
-            # For SELL: a successful BUY is unlikely, so prob_success should be low (e.g., < 40%)
             if decision.action == "BUY":
                 approved = prob_success >= 0.60
-                reason = f"ML Validator {'APPROVED' if approved else 'REJECTED'} BUY (Confidence: {prob_success*100:.1f}%)"
+                reason = f"ML Validator ({mode.upper()}) {'APPROVED' if approved else 'REJECTED'} BUY (Confidence: {prob_success*100:.1f}%)"
             elif decision.action == "SELL":
                 approved = prob_success <= 0.40
-                reason = f"ML Validator {'APPROVED' if approved else 'REJECTED'} SELL (Confidence of upward trend: {prob_success*100:.1f}%)"
+                reason = f"ML Validator ({mode.upper()}) {'APPROVED' if approved else 'REJECTED'} SELL (Confidence of upward trend: {prob_success*100:.1f}%)"
             else:
                 approved = True
-                reason = f"ML Validator EVALUATED {decision.action} (Confidence: {prob_success*100:.1f}%)"
+                reason = f"ML Validator ({mode.upper()}) EVALUATED {decision.action} (Confidence: {prob_success*100:.1f}%)"
 
             self._save_log(symbol, decision.action, bool(approved), reason)
             
-            # GHOST MODE: Always let the trade pass, but log the ai_decision
             if decision.action in ("BUY", "SELL"):
                 logger.info(f"Ghost Mode: {reason}")
             decision.ai_decision = "GHOST_APPROVED" if approved else "GHOST_REJECTED"

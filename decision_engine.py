@@ -262,45 +262,28 @@ class DecisionEngine:
         sentiment_score: float,
         current_price: float,
         portfolio: Dict,
-        ml_confidence: float = 0.0,
+        ml_confidence_day: float = 0.0,
+        ml_confidence_swing: float = 0.0,
     ) -> Decision:
         """
         Produce a trading decision for *symbol*.
-
-        Parameters
-        ----------
-        symbol:
-            Bare LSE ticker.
-        trend_signal:
-            ``TrendSignal`` dataclass from TrendEngine.analyse().
-        sentiment_score:
-            Float in [-1.0, 1.0] from SentimentEngine.get_sentiment().
-        current_price:
-            Latest traded price in GBP.
-        portfolio:
-            Dict with keys:
-              - ``portfolio_value`` (float) — total NAV in GBP.
-              - ``available_funds`` (float) — free cash in GBP.
-              - ``open_positions`` (dict) — mapping {symbol: position_dict}.
-
-        Returns
-        -------
-        Decision
         """
         portfolio_value: float = float(portfolio.get("portfolio_value", 0.0))
         available_funds: float = float(portfolio.get("available_funds", 0.0))
         open_positions: Dict = portfolio.get("open_positions", {})
+        already_held = symbol in open_positions
 
-        is_ai_driver = config.ai.primary_driver and config.ai.enabled and ml_confidence > 0.0
+        active_ml_confidence = ml_confidence_swing if already_held else ml_confidence_day
+        is_ai_driver = config.ai.primary_driver and config.ai.enabled and active_ml_confidence > 0.0
 
         if is_ai_driver:
-            combined_score = (ml_confidence * 2) - 1.0  # Map to [-1, 1] for logs
-            confidence = ml_confidence
-            buy_condition = ml_confidence >= self._sig.ml_buy_threshold
-            sell_condition = ml_confidence <= 0.40
+            combined_score = (active_ml_confidence * 2) - 1.0  # Map to [-1, 1] for logs
+            confidence = active_ml_confidence
+            buy_condition = ml_confidence_day >= self._sig.ml_buy_threshold
+            sell_condition = ml_confidence_swing <= 0.40
             logger.debug(
-                "AI DRIVER Active — %s: ml_prob=%.4f mapped_score=%.4f ml_buy_thr=%.2f",
-                symbol, ml_confidence, combined_score, self._sig.ml_buy_threshold
+                "AI DRIVER Active — %s: day_prob=%.4f swing_prob=%.4f mapped_score=%.4f ml_buy_thr=%.2f",
+                symbol, ml_confidence_day, ml_confidence_swing, combined_score, self._sig.ml_buy_threshold
             )
         else:
             combined_score = self._compute_combined_score(

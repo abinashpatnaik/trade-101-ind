@@ -88,19 +88,32 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     avg_vol = df['Volume'].rolling(window=20, min_periods=1).mean()
     df['volume_ratio'] = (df['Volume'] / avg_vol.replace(0, 1)).fillna(1.0)
     
-    # Target: 5-day forward return > 1%
-    df['future_5d_return'] = df['Close'].shift(-5) / df['Close'] - 1
-    df['target'] = np.where(df['future_5d_return'] > 0.01, 1, 0)
+    return df
     
-    # Drop NaNs created by shifts/rolling
-    return df.dropna()
-
 def train_model():
-    logger.info("Fetching historical data and engineering features for Nifty 50...")
+    logger.info("Starting Dual-Model Training Process...")
+    # Train SWING model (Daily bars, 5 years, >1% in 5 days)
+    _train_single_model(
+        mode="swing",
+        period="5y",
+        interval="1d",
+        future_periods=5,
+        target_return=0.01
+    )
+    # Train DAY model (5m bars, 60 days, >0.2% in 12 periods)
+    _train_single_model(
+        mode="day",
+        period="60d",
+        interval="5m",
+        future_periods=12,
+        target_return=0.002
+    )
+
+def _train_single_model(mode: str, period: str, interval: str, future_periods: int, target_return: float):
+    logger.info(f"[{mode.upper()}] Fetching historical data ({period}, {interval})...")
+    model_path_local = os.path.join(os.path.dirname(__file__), "data", f"ml_validator_model_{ACTIVE_MARKET}_{mode}.pkl")
     
     all_data = []
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=365 * 5) # 5 years
     
     for sym in SYMBOLS:
         try:
@@ -110,21 +123,36 @@ def train_model():
                 yf_sym = yf_sym.replace(".", "-")
             elif not yf_sym.endswith(".NS"):
                 yf_sym = yf_sym.replace(".", "-") + ".NS"
+            
+            end_date = datetime.now()
+            if mode == "swing":
+                start_date = end_date - timedelta(days=365 * 5)
+                df = yf.download(yf_sym, start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'), interval=interval, progress=False)
+            else:
+                start_date = end_date - timedelta(days=59)
+                df = yf.download(yf_sym, start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'), interval=interval, progress=False)
                 
-            ticker = yf.Ticker(yf_sym)
-            df = ticker.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
-            if df.empty:
-                logger.warning(f"No historical data found for {yf_sym}")
+            if df is None or df.empty:
+                logger.warning(f"[{mode.upper()}] No historical data found for {yf_sym}")
                 continue
                 
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+                
             df_features = build_features(df)
+            
+            # Target generation
+            df_features['future_return'] = df_features['Close'].shift(-future_periods) / df_features['Close'] - 1
+            df_features['target'] = np.where(df_features['future_return'] > target_return, 1, 0)
+            df_features = df_features.dropna()
+            
             all_data.append(df_features)
-            logger.info(f"Fetched and processed {len(df_features)} rows for {yf_sym}")
+            logger.info(f"[{mode.upper()}] Fetched and processed {len(df_features)} rows for {yf_sym}")
         except Exception as e:
-            logger.warning(f"Failed to fetch data for {sym}: {e}")
+            logger.warning(f"[{mode.upper()}] Failed to fetch data for {sym}: {e}")
             
     if not all_data:
-        logger.error("No data fetched. Aborting training.")
+        logger.error(f"[{mode.upper()}] No data fetched. Aborting training.")
         return False
         
     full_df = pd.concat(all_data, ignore_index=True)
@@ -133,9 +161,8 @@ def train_model():
     X = full_df[features]
     y = full_df['target']
     
-    logger.info(f"Training XGBoost on {len(X)} samples...")
+    logger.info(f"[{mode.upper()}] Training XGBoost on {len(X)} samples...")
     
-    # XGBoost setup for aggressive risk management
     clf = xgb.XGBClassifier(
         n_estimators=100,
         max_depth=4,
@@ -148,17 +175,10 @@ def train_model():
     
     clf.fit(X, y)
     
-    # Ensure data directory exists
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(model_path_local), exist_ok=True)
+    joblib.dump(clf, model_path_local)
+    logger.info(f"[{mode.upper()}] Model successfully saved to {model_path_local}")
     
-    joblib.dump(clf, MODEL_PATH)
-    logger.info(f"Model successfully saved to {MODEL_PATH}")
-    
-    # Log Feature Importances
-    importances = clf.feature_importances_
-    for feat, imp in zip(features, importances):
-        logger.info(f"Feature Importance - {feat}: {imp:.4f}")
-        
     return True
 
 if __name__ == "__main__":

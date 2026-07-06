@@ -285,10 +285,15 @@ class TradingAgent:
         """
         try:
             # --- 1. Price data ---
-            df = self.price_feed.get_ohlcv(symbol, period="5d", interval="5m")
-            if df is None or df.empty:
-                logger.warning("No OHLCV data for %s — skipping.", symbol)
+            df_day = self.price_feed.get_ohlcv(symbol, period="5d", interval="5m")
+            if df_day is None or df_day.empty:
+                logger.warning("No intraday OHLCV data for %s — skipping.", symbol)
                 return
+                
+            df_swing = self.price_feed.get_ohlcv(symbol, period="1mo", interval="1d")
+            if df_swing is None or df_swing.empty:
+                logger.warning("No daily OHLCV data for %s — falling back to intraday.", symbol)
+                df_swing = df_day
 
             current_price = self.price_feed.get_current_price(symbol)
             if (current_price is None or current_price <= 0) and self.broker is not None:
@@ -299,8 +304,10 @@ class TradingAgent:
                 return
 
             # --- 2. Trend analysis ---
-            trend_signal = self.trend_engine.analyse(symbol, df)
-            if trend_signal is None:
+            trend_signal_day = self.trend_engine.analyse(symbol, df_day)
+            trend_signal_swing = self.trend_engine.analyse(symbol, df_swing)
+            
+            if trend_signal_day is None or trend_signal_swing is None:
                 logger.warning("Trend analysis failed for %s — skipping.", symbol)
                 return
 
@@ -319,17 +326,17 @@ class TradingAgent:
             except Exception:
                 pass  # Headlines are informational only; ignore errors.
 
-            # Save signal for dashboard
+            # Save signal for dashboard (using Day metrics for UI)
             self._current_signals[symbol] = {
                 "symbol": symbol,
                 "price": current_price,
                 "changePct": 0.0,
-                "rsi": trend_signal.rsi,
-                "trendScore": trend_signal.overall_trend,
-                "macdSignal": trend_signal.macd_signal,
-                "emaSignal": trend_signal.ema_signal,
-                "adx": getattr(trend_signal, 'adx', 0.0),
-                "volumeRatio": getattr(trend_signal, 'volume_ratio', 1.0),
+                "rsi": trend_signal_day.rsi,
+                "trendScore": trend_signal_day.overall_trend,
+                "macdSignal": trend_signal_day.macd_signal,
+                "emaSignal": trend_signal_day.ema_signal,
+                "adx": getattr(trend_signal_day, 'adx', 0.0),
+                "volumeRatio": getattr(trend_signal_day, 'volume_ratio', 1.0),
                 "signal": "HOLD"
             }
 
@@ -341,22 +348,24 @@ class TradingAgent:
             }
 
             # --- 3.5 AI Driver Feature Fetch ---
-            # Fetch the raw ML probability early so the decision engine can use it
-            ml_confidence = self.ai_validator.get_ml_confidence(trend_signal, sentiment_score)
+            ml_confidence_day = self.ai_validator.get_ml_confidence(trend_signal_day, sentiment_score, mode="day")
+            ml_confidence_swing = self.ai_validator.get_ml_confidence(trend_signal_swing, sentiment_score, mode="swing")
 
             decision: Decision = self.decision_engine.make_decision(
                 symbol=symbol,
-                trend_signal=trend_signal,
+                trend_signal=trend_signal_day,
                 sentiment_score=sentiment_score,
                 current_price=current_price,
                 portfolio=portfolio_state,
-                ml_confidence=ml_confidence,
+                ml_confidence_day=ml_confidence_day,
+                ml_confidence_swing=ml_confidence_swing,
             )
 
             # --- 4.5 AI Validation ---
             decision = self.ai_validator.validate_decision(
                 symbol=symbol,
-                trend_signal=trend_signal,
+                trend_signal_day=trend_signal_day,
+                trend_signal_swing=trend_signal_swing,
                 sentiment_score=sentiment_score,
                 decision=decision,
             )
@@ -364,7 +373,7 @@ class TradingAgent:
             # --- 4.6 Continuous Learning Log ---
             self.continuous_learning.log_daily_features(
                 symbol=symbol,
-                trend_signal=trend_signal,
+                trend_signal=trend_signal_day,
                 sentiment_score=sentiment_score,
                 predicted_prob=decision.ml_confidence
             )
