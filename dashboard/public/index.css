@@ -168,8 +168,11 @@ header {
 .ticker {
   display: flex;
   white-space: nowrap;
-  justify-content: center;
-  gap: 24px;
+  animation: ticker 40s linear infinite;
+}
+
+.ticker:hover {
+  animation-play-state: paused;
 }
 
 .ticker-item {
@@ -183,6 +186,11 @@ header {
 
 .ticker-item.up { color: var(--primary-accent); }
 .ticker-item.down { color: var(--secondary-accent); }
+
+@keyframes ticker {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
 
 @keyframes flash-green {
   0% { background-color: rgba(16, 185, 129, 0.5); transform: scale(1.05); }

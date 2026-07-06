@@ -110,7 +110,7 @@ async function fetchDashboardData() {
     }
     if (tradesRes && tradesRes.ok) renderTrades(await tradesRes.json());
     if (analyticsRes && analyticsRes.ok) renderAnalytics(await analyticsRes.json());
-    // SSE live ticker handles updates directly, do not overwrite ticker-content here
+    if (tickerRes && tickerRes.ok) renderTicker(await tickerRes.json());
 
     const lastUpdated = document.getElementById('last-updated');
     if (lastUpdated) {
@@ -599,17 +599,20 @@ function setupLiveTicker() {
       const prevPrice = livePrices[data.symbol] || data.price;
       livePrices[data.symbol] = data.price;
       
-      // Update the ticker tape if it exists
+      // Update all instances of this symbol in the marquee
       const tickerContent = document.getElementById('ticker-content');
       if (tickerContent) {
-        let el = document.getElementById(`live-tick-${data.symbol}`);
-        if (!el) {
-          // Instead of wiping the ticker, prepend this new symbol
-          el = document.createElement('span');
-          el.id = `live-tick-${data.symbol}`;
+        // SSE will target all duplicate nodes (due to marquee)
+        const nodes = Array.from(tickerContent.querySelectorAll(`[id^="live-tick-${data.symbol}"]`));
+        
+        if (nodes.length === 0) {
+          // If it doesn't exist, prepend it to the beginning of the marquee
+          let el = document.createElement('span');
+          el.id = `live-tick-${data.symbol}-0`;
           el.className = 'ticker-item';
           tickerContent.prepend(el);
-          // remove "Loading live ticker..."
+          nodes.push(el);
+          
           const loadingEl = Array.from(tickerContent.children).find(c => c.textContent.includes('Loading'));
           if (loadingEl) loadingEl.remove();
         }
@@ -617,15 +620,14 @@ function setupLiveTicker() {
         const isUp = data.price >= prevPrice;
         const arrow = isUp ? '▲' : '▼';
         
-        // Only trigger animation if price actually changed
-        if (data.price !== prevPrice) {
-          el.classList.remove('flash-green', 'flash-red');
-          // Force reflow
-          void el.offsetWidth;
-          el.classList.add(isUp ? 'flash-green' : 'flash-red');
-        }
-        
-        el.innerHTML = `<strong>${data.symbol}</strong> ${formatMoney(data.price)} ${arrow}`;
+        nodes.forEach(el => {
+          if (data.price !== prevPrice) {
+            el.classList.remove('flash-green', 'flash-red');
+            void el.offsetWidth; // Reflow
+            el.classList.add(isUp ? 'flash-green' : 'flash-red');
+          }
+          el.innerHTML = `<strong>${data.symbol}</strong> ${formatMoney(data.price)} ${arrow}`;
+        });
       }
     } catch (err) {
       console.error("Error parsing live tick:", err);
@@ -643,3 +645,58 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchDashboardData();
   setInterval(fetchDashboardData, 5000);
 });
+
+function renderTicker(data) {
+  const container = document.getElementById('ticker-content');
+  if (!data || !data.ticker || data.ticker.length === 0) {
+    if (container.children.length === 0 || container.innerHTML.includes('Loading')) {
+      container.innerHTML = '<span class="ticker-item">No ticker data available</span>';
+    }
+    return;
+  }
+  
+  // Remove "Loading" text if present
+  const loadingEl = Array.from(container.children).find(c => c.textContent.includes('Loading'));
+  if (loadingEl) loadingEl.remove();
+
+  // Create two copies for seamless marquee
+  const items = [...data.ticker, ...data.ticker];
+  
+  // Only recreate innerHTML if we have an empty container or a totally different count.
+  // Otherwise, intelligently update existing spans to not break CSS scroll animation or SSE classes.
+  if (container.children.length !== items.length) {
+    let html = '';
+    items.forEach((t, i) => {
+      const rawChange = t.change !== undefined ? t.change : t.changePercent;
+      let changePct = parseFloat(rawChange);
+      if (isNaN(changePct)) changePct = 0;
+      
+      const isUp = changePct >= 0;
+      const arrow = isUp ? '▲' : '▼';
+      const cls = isUp ? 'up' : 'down';
+      
+      // We append index to ID to allow duplicates in the marquee
+      html += `<span id="live-tick-${t.symbol}-${i}" class="ticker-item ${cls}"><strong>${t.symbol}</strong> ${formatMoney(t.price)} ${arrow} ${Math.abs(changePct).toFixed(2)}%</span>`;
+    });
+    container.innerHTML = html;
+  } else {
+    // Intelligently update text
+    items.forEach((t, i) => {
+      const el = document.getElementById(`live-tick-${t.symbol}-${i}`);
+      if (el) {
+        // Only update if SSE hasn't flashed it very recently (prevent race condition overwrites)
+        if (el.classList.contains('flash-green') || el.classList.contains('flash-red')) return;
+
+        const rawChange = t.change !== undefined ? t.change : t.changePercent;
+        let changePct = parseFloat(rawChange);
+        if (isNaN(changePct)) changePct = 0;
+        
+        const isUp = changePct >= 0;
+        const arrow = isUp ? '▲' : '▼';
+        
+        el.className = `ticker-item ${isUp ? 'up' : 'down'}`;
+        el.innerHTML = `<strong>${t.symbol}</strong> ${formatMoney(t.price)} ${arrow} ${Math.abs(changePct).toFixed(2)}%`;
+      }
+    });
+  }
+}
