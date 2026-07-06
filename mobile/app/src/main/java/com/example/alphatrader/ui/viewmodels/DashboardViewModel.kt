@@ -8,12 +8,16 @@ import com.example.alphatrader.data.network.SignalResponse
 import com.example.alphatrader.data.network.AnalyticsResponse
 import com.example.alphatrader.data.network.NavHistoryItem
 import com.example.alphatrader.data.network.StockDetailsResponse
+import com.example.alphatrader.data.network.LiveTickerClient
+import com.example.alphatrader.BuildConfig
 import com.example.alphatrader.ui.components.AgentStatus
 import com.example.alphatrader.ui.components.MarketRegion
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
 
 import com.example.alphatrader.ui.components.TickerItem
 import com.example.alphatrader.ui.components.SignalAction
@@ -54,6 +58,8 @@ data class DashboardState(
 class DashboardViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(DashboardState())
     val uiState: StateFlow<DashboardState> = _uiState.asStateFlow()
+    
+    private var sseJob: Job? = null
 
     init {
         // Load initial data (US default)
@@ -138,12 +144,41 @@ class DashboardViewModel : ViewModel() {
                     executionLogs = mappedExecutionLogs,
                     agentStatus = status
                 )
+                
+                // Start SSE stream
+                startSseStream(market)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     errorMessage = "Failed to connect to EC2 server: ${e.message}"
                 )
             }
+        }
+    }
+
+    private fun startSseStream(market: MarketRegion) {
+        sseJob?.cancel()
+        sseJob = viewModelScope.launch {
+            val baseUrl = if (market == MarketRegion.US) BuildConfig.US_API_BASE_URL else BuildConfig.IN_API_BASE_URL
+            LiveTickerClient.streamTicks(baseUrl)
+                .catch { e -> 
+                    // Log or handle reconnect later
+                }
+                .collect { tick ->
+                    val currentTickers = _uiState.value.tickers.toMutableList()
+                    val idx = currentTickers.indexOfFirst { it.symbol == tick.symbol }
+                    
+                    if (idx != -1) {
+                        // Update existing (flash effect is handled by UI via timestamp/value change, 
+                        // we can pass price directly. Jetpack Compose recomposes on state change)
+                        currentTickers[idx] = currentTickers[idx].copy(price = tick.price)
+                    } else {
+                        // Prepend
+                        currentTickers.add(0, TickerItem(tick.symbol, tick.price, 0.0))
+                    }
+                    
+                    _uiState.value = _uiState.value.copy(tickers = currentTickers)
+                }
         }
     }
 

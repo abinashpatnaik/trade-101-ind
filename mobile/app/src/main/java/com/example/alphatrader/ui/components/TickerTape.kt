@@ -1,5 +1,6 @@
 package com.example.alphatrader.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -53,29 +54,55 @@ fun TickerTape(tickers: List<TickerItem>, currencySymbol: String = "$", onTicker
         val displayTickers = if (tickers.isEmpty()) emptyList() else (1..10).flatMap { tickers }
         
         displayTickers.forEach { ticker ->
-            val isUp = ticker.changePct >= 0
-            val color = if (isUp) BrandGreen else BrandRed
-            val icon = if (isUp) "▲" else "▼"
-            Row(modifier = Modifier.clickable { onTickerClick(ticker.symbol) }) {
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "${ticker.symbol} $currencySymbol${String.format("%.2f", ticker.price)}",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MonoTextStyle
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "$icon ${String.format("%.2f", Math.abs(ticker.changePct))}%",
-                    color = color,
-                    style = MonoTextStyle
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "|",
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    style = MonoTextStyle
-                )
-            }
+            TickerTapeItem(ticker, currencySymbol, onTickerClick)
         }
+    }
+}
+
+@Composable
+fun TickerTapeItem(ticker: TickerItem, currencySymbol: String, onTickerClick: (String) -> Unit) {
+    val isUp = ticker.changePct >= 0
+    val changeColor = if (isUp) BrandGreen else BrandRed
+    val icon = if (isUp) "▲" else "▼"
+    
+    // Track previous price to know flash direction
+    var previousPrice by remember { mutableStateOf(ticker.price) }
+    val defaultBg = androidx.compose.ui.graphics.Color.Transparent
+    val flashColor = remember { androidx.compose.animation.Animatable(defaultBg) }
+    
+    LaunchedEffect(ticker.price) {
+        if (ticker.price != previousPrice) {
+            val isPriceUp = ticker.price > previousPrice
+            previousPrice = ticker.price
+            val flash = if (isPriceUp) BrandGreen.copy(alpha = 0.5f) else BrandRed.copy(alpha = 0.5f)
+            flashColor.snapTo(flash)
+            flashColor.animateTo(
+                targetValue = defaultBg,
+                animationSpec = tween(durationMillis = 1000)
+            )
+        }
+    }
+
+    Row(modifier = Modifier
+        .background(flashColor.value)
+        .clickable { onTickerClick(ticker.symbol) }) {
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = "${ticker.symbol} $currencySymbol${String.format("%.2f", ticker.price)}",
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MonoTextStyle
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "$icon ${String.format("%.2f", Math.abs(ticker.changePct))}%",
+            color = changeColor,
+            style = MonoTextStyle
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = "|",
+            color = MaterialTheme.colorScheme.outlineVariant,
+            style = MonoTextStyle
+        )
     }
 }
