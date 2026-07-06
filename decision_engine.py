@@ -138,6 +138,16 @@ class DecisionEngine:
         clean_sym = symbol.replace('.NS', '') if ACTIVE_MARKET == "IN" else symbol
         return self.ml_thresholds[mode].get(clean_sym, self._sig.ml_buy_threshold)
 
+    def register_cooldown(self, symbol: str, is_loss: bool) -> None:
+        """
+        Register a cooldown after a sell.
+        30 mins for losses to prevent revenge trading.
+        5 mins for profits to prevent immediate whipsaw rebuying on the same candle.
+        """
+        cooldown_duration = self._cooldown_seconds if is_loss else 300  # 5 mins
+        self._sell_cooldowns[symbol] = time.time() + cooldown_duration
+        logger.info("Registered %.1f min cooldown for %s (is_loss=%s).", cooldown_duration / 60, symbol, is_loss)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

@@ -249,6 +249,8 @@ class TradingAgent:
                                 pnl=pnl,
                                 exit_reason=exit_trigger,
                             )
+                            # Register a cooldown to prevent immediate whipsaw re-buys
+                            self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
             
             self.broker.on_price_update_callback = fast_exit_check
             logger.info("%s connection established.", "Alpaca" if ACTIVE_MARKET == "US" else "Zerodha")
@@ -439,6 +441,9 @@ class TradingAgent:
                         exit_reason=exit_reason,
                     )
 
+                    if decision.action == "SELL" and pnl is not None:
+                        self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
+
                     # Notify learning engine on SELL
                     if decision.action == "SELL":
                         try:
@@ -485,6 +490,8 @@ class TradingAgent:
                             pnl=pnl,
                             exit_reason=exit_trigger,
                         )
+                        # Register a cooldown to prevent immediate whipsaw re-buys
+                        self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
 
         except Exception as exc:
             # Never let a single-symbol failure crash the full scan loop.
