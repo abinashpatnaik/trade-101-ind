@@ -110,16 +110,29 @@ class DecisionEngine:
         self._cooldown_seconds: int = int(os.getenv("SELL_COOLDOWN_MINUTES", "30")) * 60
         
         self.ml_thresholds: Dict[str, Dict[str, float]] = {"day": {}, "swing": {}}
-        for mode in ["day", "swing"]:
-            path = os.path.join(os.path.dirname(__file__), "data", f"ml_thresholds_{ACTIVE_MARKET}_{mode}.json")
-            if os.path.exists(path):
-                with open(path, 'r') as f:
-                    self.ml_thresholds[mode] = json.load(f)
+        self._thresholds_mtime: Dict[str, float] = {"day": 0.0, "swing": 0.0}
+        self._load_ml_thresholds()
                     
         logger.debug("DecisionEngine initialised (cooldown=%ds).", self._cooldown_seconds)
 
+    def _load_ml_thresholds(self) -> None:
+        """Loads ML thresholds from disk, reloading if modified."""
+        for mode in ["day", "swing"]:
+            path = os.path.join(os.path.dirname(__file__), "data", f"ml_thresholds_{ACTIVE_MARKET}_{mode}.json")
+            if os.path.exists(path):
+                mtime = os.path.getmtime(path)
+                if mtime > self._thresholds_mtime[mode]:
+                    try:
+                        with open(path, 'r') as f:
+                            self.ml_thresholds[mode] = json.load(f)
+                        self._thresholds_mtime[mode] = mtime
+                        logger.info("Loaded ML thresholds for %s mode from %s", mode, path)
+                    except Exception as e:
+                        logger.error("Failed to load ML thresholds: %s", e)
+
     def get_ml_buy_threshold(self, symbol: str, is_swing: bool) -> float:
         """Returns the dynamic ML threshold for a symbol."""
+        self._load_ml_thresholds()
         mode = "swing" if is_swing else "day"
         # Extract base symbol if it has an extension (for IN market)
         clean_sym = symbol.replace('.NS', '') if ACTIVE_MARKET == "IN" else symbol
