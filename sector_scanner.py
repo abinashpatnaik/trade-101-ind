@@ -216,8 +216,14 @@ def run_scanner():
                 'ema_signal': 1 if signal.ema_signal == "bullish" else (-1 if signal.ema_signal == "bearish" else 0),
                 'vwap_signal': 1 if signal.vwap_signal == "above" else -1,
                 'overall_trend': signal.overall_trend,
-                'sentiment_score': stock_metrics[symbol]["sentiment"]
+                'sentiment_score': stock_metrics[symbol]["sentiment"],
+                'adx': signal.adx,
+                'volume_ratio': signal.volume_ratio
             }])
+            
+            if hasattr(ai_validator.model, 'feature_names_in_'):
+                expected_features = list(ai_validator.model.feature_names_in_)
+                features = features[expected_features]
             prob_success = ai_validator.model.predict_proba(features)[0][1]
             
             if prob_success >= 0.40:  # Much lower threshold for pre-market broad scanning (just building a watchlist)
