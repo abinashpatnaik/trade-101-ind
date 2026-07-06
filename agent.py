@@ -394,8 +394,8 @@ class TradingAgent:
                 self._current_signals[symbol]["combinedScore"] = round(decision.combined_score, 4)
                 is_ai_driver = config.ai.primary_driver and config.ai.enabled and decision.ml_confidence > 0.0
                 if is_ai_driver:
-                    already_held = symbol in portfolio_snapshot.get("open_positions", {})
-                    self._current_signals[symbol]["buyThreshold"] = self.engine.get_ml_buy_threshold(symbol, already_held)
+                    already_held = symbol in portfolio_state.get("open_positions", {})
+                    self._current_signals[symbol]["buyThreshold"] = self.decision_engine.get_ml_buy_threshold(symbol, already_held)
                 else:
                     self._current_signals[symbol]["buyThreshold"] = config.signal.buy_threshold
                 self._current_signals[symbol]["sellThreshold"] = 0.40 if is_ai_driver else config.signal.sell_threshold
