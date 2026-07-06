@@ -279,8 +279,8 @@ class DecisionEngine:
         if is_ai_driver:
             combined_score = active_ml_confidence  # Keep as 0.0 - 1.0 for UI clarity
             confidence = active_ml_confidence
-            buy_condition = ml_confidence_day >= self._sig.ml_buy_threshold
-            sell_condition = ml_confidence_swing <= 0.40
+            buy_condition = active_ml_confidence >= self._sig.ml_buy_threshold
+            sell_condition = active_ml_confidence <= 0.40
             logger.debug(
                 "AI DRIVER Active — %s: day_prob=%.4f swing_prob=%.4f mapped_score=%.4f ml_buy_thr=%.2f",
                 symbol, ml_confidence_day, ml_confidence_swing, combined_score, self._sig.ml_buy_threshold
