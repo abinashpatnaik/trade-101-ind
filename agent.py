@@ -166,13 +166,13 @@ class TradingAgent:
         self._current_signals = {}
         
         # XGBoost model bootstrap training check
-        if config.ai.enabled and self.ai_validator.model is None:
-            logger.info("XGBoost model not found. Bootstrapping initial training...")
+        if config.ai.enabled and (self.ai_validator.model_day is None or self.ai_validator.model_swing is None):
+            logger.info("XGBoost models not found. Bootstrapping initial training...")
             try:
                 from ml_trainer import train_model
                 train_model()
                 self.ai_validator.enabled = True
-                self.ai_validator._load_model()
+                self.ai_validator._load_models()
             except Exception as e:
                 logger.error("XGBoost model bootstrap training failed: %s", e)
 
