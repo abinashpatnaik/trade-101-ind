@@ -23,7 +23,7 @@ services:
       - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
       - TZ=Asia/Kolkata
-      - OBSERVE_ONLY=true
+      - OBSERVE_ONLY=false
     volumes:
       - ./:/app
       - ./logs:/app/logs
