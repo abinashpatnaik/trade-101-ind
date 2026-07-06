@@ -20,6 +20,12 @@ from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopO
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
+from alpaca.data.live import StockDataStream
+from alpaca.data.models.trades import Trade
+from alpaca.data.models.quotes import Quote
+import threading
+import asyncio
+from typing import Dict, List, Optional, Callable
 
 from config import config
 
@@ -38,6 +44,10 @@ class AlpacaConnector:
 
         self.trading_client: Optional[TradingClient] = None
         self.data_client: Optional[StockHistoricalDataClient] = None
+        self.stream: Optional[StockDataStream] = None
+        self._stream_thread: Optional[threading.Thread] = None
+        self._tick_callbacks: List[Callable] = []
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._authenticated = False
 
         if not self.api_key or not self.api_secret:
@@ -69,6 +79,7 @@ class AlpacaConnector:
         try:
             self.trading_client = TradingClient(self.api_key, self.api_secret, paper=self.paper_mode)
             self.data_client = StockHistoricalDataClient(self.api_key, self.api_secret)
+            self.stream = StockDataStream(self.api_key, self.api_secret)
             
             # Test connection by fetching account
             account = self.trading_client.get_account()
@@ -83,11 +94,62 @@ class AlpacaConnector:
             raise ConnectionError(f"Alpaca connection failed: {exc}")
 
     def disconnect(self) -> None:
-        logger.info("AlpacaConnector: disconnect() called — no-op.")
+        logger.info("AlpacaConnector: disconnect() called.")
+        if self.stream and self._loop:
+            try:
+                self.stream.stop_ws()
+            except Exception as e:
+                logger.error("Error stopping Alpaca stream: %s", e)
 
     def keepalive(self) -> None:
         if not self.is_authenticated():
             self.connect()
+
+    # ------------------------------------------------------------------
+    # Live WebSocket Streams
+    # ------------------------------------------------------------------
+
+    def _run_stream(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self.stream._run_forever())
+        except Exception as e:
+            logger.error("Alpaca stream error: %s", e)
+
+    async def _handle_trade(self, t: Trade):
+        price = float(t.price)
+        if hasattr(self, "on_price_update_callback") and callable(getattr(self, "on_price_update_callback")):
+            try:
+                self.on_price_update_callback(t.symbol, price)
+            except Exception as e:
+                logger.error("Error in on_price_update_callback for %s: %s", t.symbol, e)
+
+    async def _handle_quote(self, q: Quote):
+        price = float(q.ask_price) if q.ask_price > 0 else float(q.bid_price)
+        if price > 0:
+            if hasattr(self, "on_price_update_callback") and callable(getattr(self, "on_price_update_callback")):
+                try:
+                    self.on_price_update_callback(q.symbol, price)
+                except Exception as e:
+                    logger.error("Error in on_price_update_callback for %s: %s", q.symbol, e)
+
+    def subscribe(self, symbols: List[str]) -> None:
+        """Subscribe to live ticker updates for the given list of symbols."""
+        if not self.stream:
+            logger.warning("Alpaca data stream not initialized.")
+            return
+
+        if not symbols:
+            return
+
+        self.stream.subscribe_trades(self._handle_trade, *symbols)
+        self.stream.subscribe_quotes(self._handle_quote, *symbols)
+        logger.info("Subscribed to Alpaca live feed for %d symbols.", len(symbols))
+
+        if self._stream_thread is None or not self._stream_thread.is_alive():
+            self._stream_thread = threading.Thread(target=self._run_stream, daemon=True)
+            self._stream_thread.start()
 
     # ------------------------------------------------------------------
     # Account & Portfolio API
