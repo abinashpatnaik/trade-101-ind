@@ -22,16 +22,31 @@ function applyThemeToCharts(theme) {
   Chart.defaults.color = textColor;
   
   if (charts.nav) {
-    if (charts.nav.options.scales.x) charts.nav.options.scales.x.grid.color = gridColor;
-    if (charts.nav.options.scales.y) charts.nav.options.scales.y.grid.color = gridColor;
+    if (charts.nav.options.scales.x) {
+      charts.nav.options.scales.x.grid.color = gridColor;
+      if (charts.nav.options.scales.x.ticks) charts.nav.options.scales.x.ticks.color = textColor;
+    }
+    if (charts.nav.options.scales.y) {
+      charts.nav.options.scales.y.grid.color = gridColor;
+      if (charts.nav.options.scales.y.ticks) charts.nav.options.scales.y.ticks.color = textColor;
+    }
     charts.nav.update();
   }
   if (charts.sector) {
+    if (charts.sector.options.plugins.legend.labels) {
+      charts.sector.options.plugins.legend.labels.color = textColor;
+    }
     charts.sector.update();
   }
   if (charts.stockDetail) {
-    if (charts.stockDetail.options.scales.x) charts.stockDetail.options.scales.x.grid.color = gridColor;
-    if (charts.stockDetail.options.scales.y) charts.stockDetail.options.scales.y.grid.color = gridColor;
+    if (charts.stockDetail.options.scales.x) {
+      charts.stockDetail.options.scales.x.grid.color = gridColor;
+      if (charts.stockDetail.options.scales.x.ticks) charts.stockDetail.options.scales.x.ticks.color = textColor;
+    }
+    if (charts.stockDetail.options.scales.y) {
+      charts.stockDetail.options.scales.y.grid.color = gridColor;
+      if (charts.stockDetail.options.scales.y.ticks) charts.stockDetail.options.scales.y.ticks.color = textColor;
+    }
     charts.stockDetail.update();
   }
 }
@@ -374,8 +389,8 @@ function initCharts() {
           }
         },
         scales: {
-          x: { grid: { display: false, color: '#1F1F2E' } },
-          y: { grid: { color: '#1F1F2E' } }
+          x: { grid: { display: false, color: '#1F1F2E' }, ticks: {} },
+          y: { grid: { color: '#1F1F2E' }, ticks: {} }
         }
       }
     });
@@ -576,11 +591,12 @@ async function showStockDetails(symbol) {
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            x: { grid: { display: false, color: '#1F1F2E' } },
-            y: { grid: { color: '#1F1F2E' } }
+            x: { grid: { display: false, color: '#1F1F2E' }, ticks: {} },
+            y: { grid: { color: '#1F1F2E' }, ticks: {} }
           }
         }
       });
+      applyThemeToCharts(document.documentElement.getAttribute('data-theme') || 'dark');
     }
     
     document.getElementById('stockModal').classList.add('open');
