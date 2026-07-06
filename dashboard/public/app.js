@@ -110,7 +110,7 @@ async function fetchDashboardData() {
     }
     if (tradesRes && tradesRes.ok) renderTrades(await tradesRes.json());
     if (analyticsRes && analyticsRes.ok) renderAnalytics(await analyticsRes.json());
-    if (tickerRes && tickerRes.ok) renderTicker(await tickerRes.json());
+    // SSE live ticker handles updates directly, do not overwrite ticker-content here
 
     const lastUpdated = document.getElementById('last-updated');
     if (lastUpdated) {
@@ -503,30 +503,6 @@ function renderAnalytics(data) {
   }
 }
 
-function renderTicker(data) {
-  const container = document.getElementById('ticker-content');
-  if (!data || !data.ticker || data.ticker.length === 0) {
-    container.innerHTML = '<span class="ticker-item">No ticker data available</span>';
-    return;
-  }
-  
-  let html = '';
-  data.ticker.forEach(t => {
-    // The Python backend writes 'change', but SPY/QQQ might use 'changePercent'
-    const rawChange = t.change !== undefined ? t.change : t.changePercent;
-    let changePct = parseFloat(rawChange);
-    if (isNaN(changePct)) changePct = 0;
-    
-    const isUp = changePct >= 0;
-    const arrow = isUp ? '▲' : '▼';
-    const cls = isUp ? 'up' : 'down';
-    html += `<span class="ticker-item ${cls}"><strong>${t.symbol}</strong> ${formatMoney(t.price)} ${arrow} ${Math.abs(changePct).toFixed(2)}%</span>`;
-  });
-  
-  // Duplicate for seamless scroll
-  container.innerHTML = html + html;
-}
-
 // Modal Logic
 function closeStockModal() {
   document.getElementById('stockModal').classList.remove('open');
@@ -606,8 +582,64 @@ async function showStockDetails(symbol) {
 }
 
 
+// -----------------------------------------------------------------------------
+// Live Ticker (UDP -> SSE)
+// -----------------------------------------------------------------------------
+
+const livePrices = {};
+
+function setupLiveTicker() {
+  const source = new EventSource('/api/stream');
+  
+  source.onmessage = function(event) {
+    try {
+      const data = JSON.parse(event.data);
+      if (!data.symbol || !data.price) return;
+      
+      const prevPrice = livePrices[data.symbol] || data.price;
+      livePrices[data.symbol] = data.price;
+      
+      // Update the ticker tape if it exists
+      const tickerContent = document.getElementById('ticker-content');
+      if (tickerContent) {
+        let el = document.getElementById(`live-tick-${data.symbol}`);
+        if (!el) {
+          // Instead of wiping the ticker, prepend this new symbol
+          el = document.createElement('span');
+          el.id = `live-tick-${data.symbol}`;
+          el.className = 'ticker-item';
+          tickerContent.prepend(el);
+          // remove "Loading live ticker..."
+          const loadingEl = Array.from(tickerContent.children).find(c => c.textContent.includes('Loading'));
+          if (loadingEl) loadingEl.remove();
+        }
+        
+        const isUp = data.price >= prevPrice;
+        const arrow = isUp ? '▲' : '▼';
+        
+        // Only trigger animation if price actually changed
+        if (data.price !== prevPrice) {
+          el.classList.remove('flash-green', 'flash-red');
+          // Force reflow
+          void el.offsetWidth;
+          el.classList.add(isUp ? 'flash-green' : 'flash-red');
+        }
+        
+        el.innerHTML = `<strong>${data.symbol}</strong> ${formatMoney(data.price)} ${arrow}`;
+      }
+    } catch (err) {
+      console.error("Error parsing live tick:", err);
+    }
+  };
+  
+  source.onerror = function() {
+    console.log("Live ticker SSE connection lost. Reconnecting...");
+  };
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initCharts();
+  setupLiveTicker();
   fetchDashboardData();
   setInterval(fetchDashboardData, 5000);
 });

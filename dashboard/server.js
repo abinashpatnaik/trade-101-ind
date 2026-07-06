@@ -18,6 +18,7 @@ const { parse } = require("csv-parse/sync");
 const { execSync } = require("child_process");
 const http = require("http");
 const Database = require("better-sqlite3");
+const dgram = require("dgram");
 
 const app = express();
 
@@ -1171,6 +1172,41 @@ if (fs.existsSync(STATIC_DIR)) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// UDP to SSE Live Ticker Stream
+// ---------------------------------------------------------------------------
+
+let sseClients = [];
+
+app.get("/api/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  sseClients.push(res);
+
+  req.on("close", () => {
+    sseClients = sseClients.filter((client) => client !== res);
+  });
+});
+
+const udpServer = dgram.createSocket("udp4");
+udpServer.on("message", (msg) => {
+  try {
+    const data = msg.toString();
+    sseClients.forEach((client) => {
+      client.write(`data: ${data}\n\n`);
+    });
+  } catch (err) {
+    console.error("Error broadcasting UDP message to SSE:", err);
+  }
+});
+udpServer.on("error", (err) => {
+  console.error(`UDP Server error:\n${err.stack}`);
+});
+
+// ---------------------------------------------------------------------------
 // Error handler
 // ---------------------------------------------------------------------------
 
@@ -1188,5 +1224,12 @@ if (require.main === module) {
     console.log(`${MARKET_TYPE} Trading Dashboard listening on port ${PORT}`);
     console.log(`Trades CSV:   ${TRADES_CSV}`);
     console.log(`Agent Log:    ${AGENT_LOG}`);
+    
+    try {
+      udpServer.bind(4000);
+      console.log(`UDP Server listening on port 4000 for live ticks`);
+    } catch (e) {
+      console.error("Could not bind UDP server to 4000:", e);
+    }
   });
 }

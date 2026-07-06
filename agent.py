@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -217,7 +218,14 @@ class TradingAgent:
             self.price_feed.set_broker(self.broker)
             
             # Register instant WebSocket trailing stop callback
+            udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             def fast_exit_check(symbol: str, price: float) -> None:
+                # Fire-and-forget UDP datagram to Dashboard Server for SSE live ticker
+                try:
+                    udp_sock.sendto(json.dumps({"symbol": symbol, "price": price}).encode('utf-8'), ("127.0.0.1", 4000))
+                except Exception:
+                    pass
+
                 if symbol in self.portfolio.open_positions and self.executor is not None:
                     position = self.portfolio.open_positions[symbol]
                     exit_trigger = self.executor.check_exit_conditions(symbol, price, position)

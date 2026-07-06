@@ -168,11 +168,8 @@ header {
 .ticker {
   display: flex;
   white-space: nowrap;
-  animation: ticker 40s linear infinite;
-}
-
-.ticker:hover {
-  animation-play-state: paused;
+  justify-content: center;
+  gap: 24px;
 }
 
 .ticker-item {
@@ -187,9 +184,24 @@ header {
 .ticker-item.up { color: var(--primary-accent); }
 .ticker-item.down { color: var(--secondary-accent); }
 
-@keyframes ticker {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+@keyframes flash-green {
+  0% { background-color: rgba(16, 185, 129, 0.5); transform: scale(1.05); }
+  100% { background-color: transparent; transform: scale(1); }
+}
+
+@keyframes flash-red {
+  0% { background-color: rgba(239, 68, 68, 0.5); transform: scale(1.05); }
+  100% { background-color: transparent; transform: scale(1); }
+}
+
+.ticker-item.flash-green {
+  animation: flash-green 0.6s ease-out;
+  border-radius: 4px;
+}
+
+.ticker-item.flash-red {
+  animation: flash-red 0.6s ease-out;
+  border-radius: 4px;
 }
 
 /* Grids and Cards */
