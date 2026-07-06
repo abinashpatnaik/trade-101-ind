@@ -52,7 +52,6 @@ class ZerodhaConnector:
         self._live_prices: Dict[str, float] = {}
         self._subscribed_tokens: set = set()
         self._token_to_symbol: Dict[int, str] = {}
-        self._last_summary: Dict = {}
 
         if not self.api_key or not self.api_secret:
             logger.warning("ZerodhaConnector: KITE_API_KEY or KITE_API_SECRET not set.")
@@ -348,7 +347,6 @@ class ZerodhaConnector:
                 "AvailableFunds": available_funds,
                 "DailyPnL": daily_pnl,
             }
-            self._last_summary = result
             logger.debug("Zerodha Account summary: %s", result)
             return result
         except Exception as exc:
@@ -358,7 +356,7 @@ class ZerodhaConnector:
                 logger.debug("Zerodha maintenance window (UNKNOWN_REQUEST/Message build error), skipping account summary sync.")
             else:
                 logger.error("Failed to get account summary: %s", exc)
-            return self._last_summary
+            return {}
 
     def get_positions(self) -> Optional[Dict[str, Dict]]:
         """
