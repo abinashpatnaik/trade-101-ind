@@ -12,6 +12,7 @@ import yfinance as yf
 import xgboost as xgb
 import joblib
 import logging
+import json
 from datetime import datetime, timedelta
 
 from config import config
@@ -146,6 +147,7 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
             df_features['target'] = np.where(df_features['future_return'] > target_return, 1, 0)
             df_features = df_features.dropna()
             
+            df_features['symbol'] = sym.strip().upper()
             all_data.append(df_features)
             logger.info(f"[{mode.upper()}] Fetched and processed {len(df_features)} rows for {yf_sym}")
         except Exception as e:
@@ -182,6 +184,24 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     os.makedirs(os.path.dirname(model_path_local), exist_ok=True)
     joblib.dump(clf, model_path_local)
     logger.info(f"[{mode.upper()}] Model successfully saved to {model_path_local}")
+    
+    # Calculate dynamic thresholds
+    full_df['pred_prob'] = clf.predict_proba(X)[:, 1]
+    thresholds = {}
+    
+    for sym in full_df['symbol'].unique():
+        sym_df = full_df[full_df['symbol'] == sym]
+        if not sym_df.empty:
+            thresh = np.percentile(sym_df['pred_prob'], 90)
+            # Bound the threshold between 0.50 and 0.95
+            thresh = float(np.clip(thresh, 0.50, 0.95))
+            clean_sym = sym.replace('.NS', '') if ACTIVE_MARKET == "IN" else sym
+            thresholds[clean_sym] = thresh
+            
+    thresholds_path = os.path.join(os.path.dirname(__file__), "data", f"ml_thresholds_{ACTIVE_MARKET}_{mode}.json")
+    with open(thresholds_path, 'w') as f:
+        json.dump(thresholds, f, indent=4)
+    logger.info(f"[{mode.upper()}] Saved dynamic thresholds to {thresholds_path}")
     
     return True
 

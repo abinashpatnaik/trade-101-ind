@@ -393,7 +393,11 @@ class TradingAgent:
                 self._current_signals[symbol]["confidence"] = int(decision.confidence * 100)
                 self._current_signals[symbol]["combinedScore"] = round(decision.combined_score, 4)
                 is_ai_driver = config.ai.primary_driver and config.ai.enabled and decision.ml_confidence > 0.0
-                self._current_signals[symbol]["buyThreshold"] = config.signal.ml_buy_threshold if is_ai_driver else config.signal.buy_threshold
+                if is_ai_driver:
+                    already_held = symbol in portfolio_snapshot.get("open_positions", {})
+                    self._current_signals[symbol]["buyThreshold"] = self.engine.get_ml_buy_threshold(symbol, already_held)
+                else:
+                    self._current_signals[symbol]["buyThreshold"] = config.signal.buy_threshold
                 self._current_signals[symbol]["sellThreshold"] = 0.40 if is_ai_driver else config.signal.sell_threshold
                 self._current_signals[symbol]["mlConfidence"] = decision.ml_confidence
                 # Show reason when score is above threshold but still HOLD
