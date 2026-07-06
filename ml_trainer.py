@@ -93,8 +93,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     
 def train_model():
     logger.info("Starting Dual-Model Training Process...")
-    # Train SWING model (Daily bars, 5 years, >1% in 5 days)
-    _train_single_model(
+    swing_success = _train_single_model(
         mode="swing",
         period="5y",
         interval="1d",
@@ -102,13 +101,14 @@ def train_model():
         target_return=0.01
     )
     # Train DAY model (5m bars, 60 days, >0.2% in 12 periods)
-    _train_single_model(
+    day_success = _train_single_model(
         mode="day",
         period="60d",
         interval="5m",
         future_periods=12,
         target_return=0.002
     )
+    return swing_success and day_success
 
 def _train_single_model(mode: str, period: str, interval: str, future_periods: int, target_return: float):
     logger.info(f"[{mode.upper()}] Fetching historical data ({period}, {interval})...")
