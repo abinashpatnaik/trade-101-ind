@@ -277,7 +277,7 @@ class DecisionEngine:
         is_ai_driver = config.ai.primary_driver and config.ai.enabled and active_ml_confidence > 0.0
 
         if is_ai_driver:
-            combined_score = (active_ml_confidence * 2) - 1.0  # Map to [-1, 1] for logs
+            combined_score = active_ml_confidence  # Keep as 0.0 - 1.0 for UI clarity
             confidence = active_ml_confidence
             buy_condition = ml_confidence_day >= self._sig.ml_buy_threshold
             sell_condition = ml_confidence_swing <= 0.40
@@ -328,7 +328,7 @@ class DecisionEngine:
                         quantity=quantity,
                         stop_loss_price=0.0,
                         take_profit_price=0.0,
-                        combined_score=combined_score,
+                        combined_score=combined_score, ml_confidence=active_ml_confidence,
                     )
 
         # ---------------------------------------------------------------
@@ -355,7 +355,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             # --- Sniper Mode: Volume confirmation filter ---
@@ -378,7 +378,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             if already_held:
@@ -392,7 +392,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             # --- Cooldown check: don't re-buy a stock we just sold at a loss ---
@@ -413,7 +413,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             if not self._has_capacity(open_positions):
@@ -428,7 +428,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             # --- Max deployment check (e.g. only invest 50% of purse) ---
@@ -458,7 +458,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             # --- Wallet / daily spend cap check ---
@@ -484,7 +484,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             quantity = self._compute_quantity(
@@ -508,7 +508,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             stop_loss_price = round(
@@ -540,7 +540,7 @@ class DecisionEngine:
                 quantity=quantity,
                 stop_loss_price=stop_loss_price,
                 take_profit_price=take_profit_price,
-                combined_score=combined_score,
+                combined_score=combined_score, ml_confidence=active_ml_confidence,
             )
 
         # ---------------------------------------------------------------
@@ -558,7 +558,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             position = open_positions[symbol]
@@ -578,7 +578,7 @@ class DecisionEngine:
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
-                    combined_score=combined_score,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
             reason = (
@@ -609,7 +609,7 @@ class DecisionEngine:
                 quantity=quantity,
                 stop_loss_price=0.0,
                 take_profit_price=0.0,
-                combined_score=combined_score,
+                combined_score=combined_score, ml_confidence=active_ml_confidence,
             )
 
         # ---------------------------------------------------------------
@@ -626,5 +626,5 @@ class DecisionEngine:
             quantity=0,
             stop_loss_price=0.0,
             take_profit_price=0.0,
-            combined_score=combined_score,
+            combined_score=combined_score, ml_confidence=active_ml_confidence,
         )
