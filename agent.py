@@ -214,6 +214,33 @@ class TradingAgent:
             self.broker = BrokerConnector()
             self.broker.connect()
             self.executor = OrderExecutor(self.broker)
+            self.price_feed.set_broker(self.broker)
+            
+            # Register instant WebSocket trailing stop callback
+            def fast_exit_check(symbol: str, price: float) -> None:
+                if symbol in self.portfolio.open_positions and self.executor is not None:
+                    position = self.portfolio.open_positions[symbol]
+                    exit_trigger = self.executor.check_exit_conditions(symbol, price, position)
+                    if exit_trigger in ("STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP"):
+                        logger.info("INSTANT WebSocket exit triggered for %s: %s", symbol, exit_trigger)
+                        qty = float(position.get("quantity", 0))
+                        if qty > 0:
+                            if config.agent.observe_only:
+                                logger.info("[OBSERVE MODE] Would close position for %s instantly (reason: %s), skipping.", symbol, exit_trigger)
+                            else:
+                                self.executor.close_position(symbol, qty)
+                                avg_cost = float(position.get("avg_cost", price))
+                            pnl = (price - avg_cost) * qty
+                            self.portfolio.record_trade(
+                                symbol=symbol,
+                                action="SELL",
+                                quantity=qty,
+                                price=price,
+                                pnl=pnl,
+                                exit_reason=exit_trigger,
+                            )
+            
+            self.broker.on_price_update_callback = fast_exit_check
             logger.info("%s connection established.", "Alpaca" if ACTIVE_MARKET == "US" else "Zerodha")
             return True
         except ConnectionError as exc:
@@ -816,6 +843,11 @@ class TradingAgent:
                 try:
                     self.portfolio.update(self.broker)
                     self.executor.sync_positions(self.portfolio.open_positions, self.broker)
+                    
+                    # Ensure we are subscribed to WebSockets for all open positions
+                    if hasattr(self.broker, "subscribe") and self.portfolio.open_positions:
+                        self.broker.subscribe(list(self.portfolio.open_positions.keys()))
+                        
                 except Exception as exc:
                     logger.error(
                         "Portfolio update failed: %s", exc, exc_info=True

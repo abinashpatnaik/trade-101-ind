@@ -56,6 +56,11 @@ class PriceFeed:
 
     def __init__(self) -> None:
         logger.debug("PriceFeed initialised.")
+        self._broker = None
+        
+    def set_broker(self, broker) -> None:
+        """Inject the broker connector to allow premium historical data fetching."""
+        self._broker = broker
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -80,12 +85,84 @@ class PriceFeed:
         end: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
-        Core wrapper for data fetch. Routes to Alpaca or yfinance based on market.
+        Core wrapper for data fetch. Routes to Alpaca or yfinance/Zerodha based on market.
+        Uses a Hybrid approach for Indian market: if the broker is Zerodha and we have credits,
+        it uses high-fidelity Zerodha historical data.
         """
         if ACTIVE_MARKET == "US":
             return self._fetch_alpaca(symbol, period, interval, start, end)
         else:
+            # If broker is injected, try hybrid fetch via Zerodha API
+            if getattr(self, "_broker", None) and type(self._broker).__name__ == "ZerodhaConnector":
+                df = self._fetch_zerodha(symbol, period, interval, start, end)
+                if df is not None and not df.empty:
+                    return df
+            # Fallback to yfinance
             return self._fetch_yfinance(symbol, period, interval, start, end)
+
+    def _fetch_zerodha(
+        self,
+        symbol: str,
+        period: Optional[str] = None,
+        interval: str = "5m",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch high-fidelity historical data from Zerodha's API.
+        WARNING: This consumes the 500 API credits!
+        """
+        try:
+            # Check if this symbol is a top target (to avoid draining credits on full Nifty 50 scan)
+            import json
+            import os
+            # Detect path logic matching config.py
+            _IN_DOCKER = os.path.exists("/app")
+            DATA_DIR = "/app/data" if _IN_DOCKER else "data"
+            targets_file = os.path.join(DATA_DIR, "daily_targets.json")
+            
+            top_targets = []
+            if os.path.exists(targets_file):
+                with open(targets_file, "r") as f:
+                    data = json.load(f)
+                    top_targets = [item["symbol"] for item in data]
+                    
+            # Only use premium API credits for the Top 5 candidates, or if we already own it (open position)
+            # This protects the 500 credits limit!
+            open_positions = []
+            if hasattr(self._broker, "get_positions"):
+                open_positions = list(self._broker.get_positions().keys())
+                
+            is_premium_target = symbol in top_targets[:5] or symbol in open_positions
+            
+            if not is_premium_target:
+                return None  # Fallback to yfinance to save credits
+                
+            logger.info("Using Zerodha Premium API credits to fetch high-fidelity data for %s", symbol)
+            
+            # Map intervals to Zerodha format
+            z_interval = "5minute"
+            if interval == "1m": z_interval = "minute"
+            elif interval == "15m": z_interval = "15minute"
+            elif interval == "1d": z_interval = "day"
+            
+            # Calculate dates
+            now = datetime.datetime.now()
+            if start and end:
+                start_dt = pd.to_datetime(start)
+                end_dt = pd.to_datetime(end)
+            else:
+                days = 5
+                if period:
+                    if period.endswith('d'): days = int(period[:-1])
+                    elif period.endswith('mo'): days = int(period[:-2]) * 30
+                start_dt = now - datetime.timedelta(days=days)
+                end_dt = now
+
+            return self._broker.get_historical_data(symbol, start_dt, end_dt, z_interval)
+        except Exception as e:
+            logger.error("Zerodha Premium fetch failed for %s: %s", symbol, e)
+            return None
 
     def _fetch_alpaca(
         self,

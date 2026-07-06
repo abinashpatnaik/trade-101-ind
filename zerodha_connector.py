@@ -18,7 +18,8 @@ import urllib.parse
 from typing import Dict, List, Optional, Tuple
 import requests
 import pyotp
-from kiteconnect import KiteConnect, exceptions
+import threading
+from kiteconnect import KiteConnect, KiteTicker, exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,13 @@ class ZerodhaConnector:
         
         self.kite: Optional[KiteConnect] = None
         self._authenticated = False
+        
+        # WebSocket / Ticker state
+        self.kws: Optional[KiteTicker] = None
+        self._kws_thread: Optional[threading.Thread] = None
+        self._live_prices: Dict[str, float] = {}
+        self._subscribed_tokens: set = set()
+        self._token_to_symbol: Dict[int, str] = {}
 
         if not self.api_key or not self.api_secret:
             logger.warning("ZerodhaConnector: KITE_API_KEY or KITE_API_SECRET not set.")
@@ -106,6 +114,7 @@ class ZerodhaConnector:
                     self.kite.profile()
                     self._authenticated = True
                     logger.info("Successfully authenticated with cached access token.")
+                    self._init_websocket()
                     return
             except exceptions.TokenException:
                 logger.info("Cached access token is invalid/expired. Proceeding to login.")
@@ -181,6 +190,8 @@ class ZerodhaConnector:
             self._authenticated = True
             logger.info("Zerodha automated login successful. New access token cached.")
             
+            self._init_websocket()
+            
         except Exception as exc:
             self._authenticated = False
             logger.error("Zerodha automated login failed: %s", exc)
@@ -198,6 +209,106 @@ class ZerodhaConnector:
                 self.connect()
             except Exception as exc:
                 logger.error("Failed to reconnect during keepalive: %s", exc)
+
+    # ------------------------------------------------------------------
+    # WebSockets (Live Quotes)
+    # ------------------------------------------------------------------
+
+    def _init_websocket(self) -> None:
+        """Initialize and start the KiteTicker WebSocket connection in a background thread."""
+        if not self.kite or not self.kite.access_token:
+            return
+            
+        if self.kws and self.kws.is_connected():
+            return
+
+        self.kws = KiteTicker(self.api_key, self.kite.access_token)
+        
+        def on_ticks(ws, ticks):
+            for tick in ticks:
+                token = tick.get("instrument_token")
+                price = tick.get("last_price")
+                if token and price and token in self._token_to_symbol:
+                    symbol = self._token_to_symbol[token]
+                    self._live_prices[symbol] = price
+                    
+                    # Trigger instant callback if defined (for instant trailing stop)
+                    if hasattr(self, "on_price_update_callback") and callable(getattr(self, "on_price_update_callback")):
+                        try:
+                            self.on_price_update_callback(symbol, price)
+                        except Exception as exc:
+                            logger.error("Error in on_price_update_callback for %s: %s", symbol, exc)
+
+        def on_connect(ws, response):
+            logger.info("Kite WebSocket connected.")
+            # Resubscribe to existing tokens if reconnected
+            if self._subscribed_tokens:
+                ws.subscribe(list(self._subscribed_tokens))
+                ws.set_mode(ws.MODE_LTP, list(self._subscribed_tokens))
+
+        def on_close(ws, code, reason):
+            logger.warning(f"Kite WebSocket closed: {code} - {reason}")
+
+        def on_error(ws, code, reason):
+            logger.error(f"Kite WebSocket error: {code} - {reason}")
+
+        self.kws.on_ticks = on_ticks
+        self.kws.on_connect = on_connect
+        self.kws.on_close = on_close
+        self.kws.on_error = on_error
+
+        def start_kws():
+            # enable_reconnect handles automatic reconnections
+            self.kws.connect(threaded=False, disable_ssl_verification=False)
+
+        self._kws_thread = threading.Thread(target=start_kws, daemon=True)
+        self._kws_thread.start()
+
+    def subscribe(self, symbols: List[str]) -> None:
+        """
+        Subscribe to live ticker updates for the given list of symbols.
+        Resolves instrument tokens via the REST LTP endpoint if not already known.
+        """
+        if not self.kite or not self.kws:
+            return
+            
+        new_instruments = []
+        # Map symbol -> "NSE:SYMBOL" for lookup
+        for sym in symbols:
+            if sym not in self._live_prices:  # Unseen symbol
+                tradingsymbol = sym.split(".")[0]
+                new_instruments.append(f"NSE:{tradingsymbol}")
+                
+        if not new_instruments:
+            return
+            
+        # Fetch tokens via REST API
+        try:
+            ltp_data = self.kite.ltp(new_instruments)
+            tokens_to_subscribe = []
+            
+            for inst, data in ltp_data.items():
+                token = data.get("instrument_token")
+                tradingsymbol = inst.split(":")[1]
+                sym = f"{tradingsymbol}.NS"
+                
+                if token:
+                    self._token_to_symbol[token] = sym
+                    self._subscribed_tokens.add(token)
+                    tokens_to_subscribe.append(token)
+                    
+                    # Store the initial price so we have it immediately
+                    if "last_price" in data:
+                        self._live_prices[sym] = data["last_price"]
+            
+            # Subscribe over WebSocket
+            if self.kws.is_connected() and tokens_to_subscribe:
+                self.kws.subscribe(tokens_to_subscribe)
+                self.kws.set_mode(self.kws.MODE_LTP, tokens_to_subscribe)
+                logger.info(f"Subscribed to WebSockets for {len(tokens_to_subscribe)} new symbols.")
+                
+        except Exception as exc:
+            logger.error("Failed to subscribe symbols: %s", exc)
 
     # ------------------------------------------------------------------
     # Account & Portfolio API
@@ -287,16 +398,30 @@ class ZerodhaConnector:
 
     def get_current_price(self, symbol: str) -> Optional[float]:
         """
-        Retrieve live LTP for a symbol using Kite's ltp REST endpoint.
+        Retrieve live LTP for a symbol. First checks the WebSocket live price cache.
+        If missing, triggers a REST request and auto-subscribes.
         """
+        if symbol in self._live_prices and self._live_prices[symbol] > 0:
+            return self._live_prices[symbol]
+            
         if not self.kite:
             return None
         try:
             tradingsymbol = symbol.split(".")[0]
             instrument = f"NSE:{tradingsymbol}"
             ltp_data = self.kite.ltp(instrument)
+            
+            token = ltp_data.get(instrument, {}).get("instrument_token")
             price = float(ltp_data.get(instrument, {}).get("last_price", 0.0))
+            
             if price > 0:
+                self._live_prices[symbol] = price
+                # Auto-subscribe for future tick updates
+                if token and self.kws and self.kws.is_connected():
+                    self._token_to_symbol[token] = symbol
+                    self._subscribed_tokens.add(token)
+                    self.kws.subscribe([token])
+                    self.kws.set_mode(self.kws.MODE_LTP, [token])
                 return price
         except Exception as exc:
             logger.error("Failed to get current price for %s: %s", symbol, exc)
@@ -305,6 +430,44 @@ class ZerodhaConnector:
     def get_conid(self, symbol: str) -> Optional[int]:
         """Compatibility shim. Returns 0 as contract IDs are not used."""
         return 0
+
+    def get_historical_data(self, symbol: str, start_dt, end_dt, interval: str = "5minute") -> Optional[pd.DataFrame]:
+        """
+        Fetch historical data from Zerodha API.
+        WARNING: This consumes API credits. Use sparingly (e.g. only for top scanned candidates).
+        interval can be "minute", "day", "3minute", "5minute", "10minute", "15minute", "30minute", "60minute".
+        """
+        if not self.kite:
+            return None
+        try:
+            tradingsymbol = symbol.split(".")[0]
+            instrument = f"NSE:{tradingsymbol}"
+            # Need instrument_token for historical data
+            ltp_data = self.kite.ltp(instrument)
+            token = ltp_data.get(instrument, {}).get("instrument_token")
+            if not token:
+                logger.error("Could not resolve token for %s historical data", symbol)
+                return None
+                
+            import pandas as pd
+            records = self.kite.historical_data(token, start_dt, end_dt, interval)
+            if not records:
+                return None
+                
+            df = pd.DataFrame(records)
+            df.rename(columns={
+                'date': 'Date',
+                'open': 'Open',
+                'high': 'High',
+                'low': 'Low',
+                'close': 'Close',
+                'volume': 'Volume'
+            }, inplace=True)
+            df.set_index('Date', inplace=True)
+            return df
+        except Exception as exc:
+            logger.error("Failed to fetch historical data from Zerodha for %s: %s", symbol, exc)
+            return None
 
     # ------------------------------------------------------------------
     # Order Execution API

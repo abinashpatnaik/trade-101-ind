@@ -309,7 +309,7 @@ class OrderExecutor:
             return None
 
         # Whole-share positions use native Alpaca stops — skip software check
-        if not order.is_fractional:
+        if not order.is_fractional and type(self._ibkr).__name__ != "ZerodhaConnector":
             return None
 
         if current_price <= 0:
