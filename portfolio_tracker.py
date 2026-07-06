@@ -67,9 +67,10 @@ class PortfolioTracker:
         self._risk = config.risk
         self._wallet = config.wallet
 
+        is_simulated = os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
         # Portfolio state
-        self.portfolio_value: float = 0.0      # Total NAV (INR)
-        self.cash: float = 0.0                 # Available funds (INR)
+        self.portfolio_value: float = 100000.0 if is_simulated else 0.0      # Total NAV (INR)
+        self.cash: float = 100000.0 if is_simulated else 0.0                 # Available funds (INR)
         self.open_positions: Dict[str, Dict] = {}
         self.daily_pnl: float = 0.0            # P&L since session start (INR)
 
@@ -153,12 +154,20 @@ class PortfolioTracker:
             Connected IBKRConnector instance.
         """
         try:
-            summary = ibkr_connector.get_account_summary()
-            positions = ibkr_connector.get_positions()
+            is_simulated = os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
+            
+            if is_simulated:
+                # Bypass broker sync for simulated environments that lack paper trading (like Zerodha)
+                pos_val = sum(float(pos.get("market_value", 0.0)) for pos in self.open_positions.values())
+                self.portfolio_value = self.cash + pos_val
+                positions = None
+            else:
+                summary = ibkr_connector.get_account_summary()
+                positions = ibkr_connector.get_positions()
 
-            self.portfolio_value = summary.get("NetLiquidation", self.portfolio_value)
-            self.cash = summary.get("AvailableFunds", self.cash)
-            self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
+                self.portfolio_value = summary.get("NetLiquidation", self.portfolio_value)
+                self.cash = summary.get("AvailableFunds", self.cash)
+                self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
             if positions is not None:
                 # Detect natively closed positions (e.g., via Alpaca Trailing Stop)
                 for symbol, old_pos in self.open_positions.items():
