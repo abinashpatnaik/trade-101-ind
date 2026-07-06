@@ -290,7 +290,7 @@ class TradingAgent:
                 logger.warning("No intraday OHLCV data for %s — skipping.", symbol)
                 return
                 
-            df_swing = self.price_feed.get_ohlcv(symbol, period="1mo", interval="1d")
+            df_swing = self.price_feed.get_ohlcv(symbol, period="3mo", interval="1d")
             if df_swing is None or df_swing.empty:
                 logger.warning("No daily OHLCV data for %s — falling back to intraday.", symbol)
                 df_swing = df_day
