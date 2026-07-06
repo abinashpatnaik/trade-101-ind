@@ -199,13 +199,19 @@
             <span style="display:inline-block; width:8px; height:8px; background:var(--signal-green); border-radius:50%;"></span> <strong>BUY</strong> (Score &ge; Threshold)
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
-            <span style="display:inline-block; width:8px; height:8px; background:var(--signal-red); border-radius:50%;"></span> <strong>SELL</strong> (Score &le; Threshold)
+            <span style="display:inline-block; width:8px; height:8px; background:var(--signal-red); border-radius:50%;"></span> <strong>SELL</strong> (Score &le; 40%)
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
-            <span style="display:inline-block; width:8px; height:8px; background:var(--text-tertiary); border-radius:50%;"></span> <strong>HOLD</strong> (Score within Thresholds)
+            <span style="display:inline-block; width:8px; height:8px; background:var(--text-tertiary); border-radius:50%;"></span> <strong>HOLD</strong> (Score in safe zone)
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="display:inline-block; width:8px; height:8px; background:#facc15; border-radius:50%;"></span> <strong>WARMING</strong> (Score within 5% of Buy Threshold)
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
             <span style="display:inline-block; width:8px; height:8px; background:var(--signal-orange); border-radius:50%;"></span> <strong>GATED</strong> (Buy Score Met, but Risk Controls Blocked)
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="display:inline-block; width:8px; height:8px; background:var(--signal-red); border-radius:50%;"></span> <strong>SELL (Not Held)</strong> (Sell Signal but stock not in portfolio)
           </div>
         </div>
       </div>
