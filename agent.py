@@ -923,7 +923,7 @@ class TradingAgent:
                 # d. Per-symbol scan (using daily targets from sector scanner if available)
                 try:
                     data_dir = os.path.dirname(config.agent.trades_csv)
-                    targets_file = os.path.join(data_dir, "daily_targets.json")
+                    targets_file = os.path.join(data_dir, f"daily_targets_{ACTIVE_MARKET}.json")
                     daily_targets = config.universe.tickers
                     if os.path.exists(targets_file):
                         with open(targets_file, "r") as f:
@@ -935,7 +935,7 @@ class TradingAgent:
                                 # Sort to maintain some stable ordering
                                 daily_targets.sort()
                 except Exception as exc:
-                    logger.warning("Failed to load daily_targets.json, falling back to config: %s", exc)
+                    logger.warning(f"Failed to load daily_targets_{ACTIVE_MARKET}.json, falling back to config: %s", exc)
                     daily_targets = config.universe.tickers
 
                 logger.info(

@@ -39,7 +39,7 @@ if not os.path.exists(DATA_DIR):
 
 _UNIVERSE_FILENAME = "us_universe.json" if ACTIVE_MARKET == "US" else "nse_universe.json"
 UNIVERSE_FILE = os.path.join(os.path.dirname(__file__), _UNIVERSE_FILENAME)
-TARGETS_FILE = os.path.join(DATA_DIR, "daily_targets.json")
+TARGETS_FILE = os.path.join(DATA_DIR, f"daily_targets_{ACTIVE_MARKET}.json")
 
 def fetch_rss_sentiment(symbol: str) -> float:
     """Fetch Yahoo Finance RSS feed and calculate average sentiment for a symbol."""
@@ -163,7 +163,7 @@ def run_scanner():
     logger.info("Validating candidates through XGBoost ML Model...")
     
     ai_validator = AIValidator()
-    if ai_validator.model is None:
+    if ai_validator.model_day is None and ai_validator.model_swing is None:
         logger.warning("ML model not found or disabled. Falling back to non-ML selection.")
         # Fallback: Just take the top 15 candidate stocks by combined momentum and sentiment
         candidate_stocks.sort(key=lambda x: stock_metrics[x]["momentum"] + stock_metrics[x]["sentiment"], reverse=True)
@@ -221,10 +221,10 @@ def run_scanner():
                 'volume_ratio': signal.volume_ratio
             }])
             
-            if hasattr(ai_validator.model, 'feature_names_in_'):
-                expected_features = list(ai_validator.model.feature_names_in_)
+            if hasattr(ai_validator.model_swing, 'feature_names_in_'):
+                expected_features = list(ai_validator.model_swing.feature_names_in_)
                 features = features[expected_features]
-            prob_success = ai_validator.model.predict_proba(features)[0][1]
+            prob_success = ai_validator.model_swing.predict_proba(features)[0][1]
             
             if prob_success >= 0.40:  # Much lower threshold for pre-market broad scanning (just building a watchlist)
                 approved_targets.append({

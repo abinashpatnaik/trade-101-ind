@@ -119,7 +119,7 @@ class PriceFeed:
             # Detect path logic matching config.py
             _IN_DOCKER = os.path.exists("/app")
             DATA_DIR = "/app/data" if _IN_DOCKER else "data"
-            targets_file = os.path.join(DATA_DIR, "daily_targets.json")
+            targets_file = os.path.join(DATA_DIR, f"daily_targets_{ACTIVE_MARKET}.json")
             
             top_targets = []
             if os.path.exists(targets_file):
