@@ -347,9 +347,13 @@ function renderTrades(trades) {
       const entryPrice = parseFloat(t.price) - (pnl / qty);
       const pnlColor = pnl >= 0 ? 'var(--signal-green)' : 'var(--signal-red)';
       const pnlSign = pnl >= 0 ? '+' : '';
+      const exitReasonStr = t.exit_reason ? `<span style="margin-left: 8px; font-weight: normal; font-size: 10px; padding: 2px 4px; background: rgba(255,255,255,0.1); border-radius: 4px;">${t.exit_reason.replace('_', ' ')}</span>` : '';
       detailsHtml = `
         <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 2px;">Entry: ${formatMoney(entryPrice)} &rarr; Exit: ${formatMoney(t.price)}</div>
-        <div style="color: ${pnlColor}; font-weight: 600; font-size: 12px;">PnL: ${pnlSign}${formatMoney(pnl)}</div>
+        <div style="color: ${pnlColor}; font-weight: 600; font-size: 12px; display: flex; align-items: center; justify-content: flex-end;">
+          PnL: ${pnlSign}${formatMoney(pnl)}
+          ${exitReasonStr}
+        </div>
       `;
     }
 
