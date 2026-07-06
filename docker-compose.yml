@@ -23,6 +23,7 @@ services:
       - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
       - TZ=Asia/Kolkata
+      - DASHBOARD_HOST=dashboard-in
       - OBSERVE_ONLY=false
     volumes:
       - ./:/app
@@ -48,6 +49,7 @@ services:
       - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
       - TZ=America/New_York
+      - DASHBOARD_HOST=dashboard-us
     volumes:
       - ./:/app
       - ./logs:/app/logs

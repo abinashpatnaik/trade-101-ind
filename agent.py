@@ -219,10 +219,12 @@ class TradingAgent:
             
             # Register instant WebSocket trailing stop callback
             udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            dashboard_host = os.getenv("DASHBOARD_HOST", "127.0.0.1")
+            
             def fast_exit_check(symbol: str, price: float) -> None:
                 # Fire-and-forget UDP datagram to Dashboard Server for SSE live ticker
                 try:
-                    udp_sock.sendto(json.dumps({"symbol": symbol, "price": price}).encode('utf-8'), ("127.0.0.1", 4000))
+                    udp_sock.sendto(json.dumps({"symbol": symbol, "price": price}).encode('utf-8'), (dashboard_host, 4000))
                 except Exception:
                     pass
 
