@@ -217,7 +217,7 @@ function renderSignals() {
   }
 
   if (filtered.length === 0) {
-    container.innerHTML = '<tr><td colspan="5" class="empty-state">No signals match filter</td></tr>';
+    container.innerHTML = '<tr><td colspan="6" class="empty-state">No signals match filter</td></tr>';
     return;
   }
   
@@ -281,12 +281,15 @@ function renderSignals() {
       `;
     }
 
+    const thresholdHtml = s.buyThreshold ? `<span style="color: var(--text-secondary); font-size: 11px;">&ge; ${(s.buyThreshold * 100).toFixed(1)}%</span>` : '-';
+
     html += `
       <tr>
         <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${s.symbol}')">${s.symbol}</span></td>
         <td class="mono ${scoreClass}">${s.combinedScore ? s.combinedScore.toFixed(3) : '-'}</td>
         <td><span class="badge-outline ${badgeClass}">${displaySignal}</span></td>
         <td>${mlHtml}</td>
+        <td class="mono">${thresholdHtml}</td>
         <td class="mono td-right">${formatMoney(s.price)}</td>
       </tr>
     `;
