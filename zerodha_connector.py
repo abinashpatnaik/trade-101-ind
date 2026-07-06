@@ -353,9 +353,9 @@ class ZerodhaConnector:
             return result
         except Exception as exc:
             err_msg = str(exc)
-            if "UNKNOWN_REQUEST" in err_msg:
+            if "UNKNOWN_REQUEST" in err_msg or "Message build error" in err_msg:
                 # Zerodha nightly maintenance error, don't spam the logs
-                logger.debug("Zerodha maintenance window (UNKNOWN_REQUEST), skipping account summary sync.")
+                logger.debug("Zerodha maintenance window (UNKNOWN_REQUEST/Message build error), skipping account summary sync.")
             else:
                 logger.error("Failed to get account summary: %s", exc)
             return self._last_summary
