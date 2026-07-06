@@ -462,7 +462,7 @@ class DecisionEngine:
                 )
 
             # --- Max deployment check (e.g. only invest 50% of purse) ---
-            if config.ACTIVE_MARKET == "US" and portfolio_value < 500:
+            if ACTIVE_MARKET == "US" and portfolio_value < 500:
                 max_deploy_pct = 0.95
             else:
                 max_deploy_pct = config.wallet.max_deploy_pct
