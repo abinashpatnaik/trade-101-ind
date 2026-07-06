@@ -340,12 +340,17 @@ class TradingAgent:
                 "open_positions": self.portfolio.open_positions,
             }
 
+            # --- 3.5 AI Driver Feature Fetch ---
+            # Fetch the raw ML probability early so the decision engine can use it
+            ml_confidence = self.ai_validator.get_ml_confidence(trend_signal, sentiment_score)
+
             decision: Decision = self.decision_engine.make_decision(
                 symbol=symbol,
                 trend_signal=trend_signal,
                 sentiment_score=sentiment_score,
                 current_price=current_price,
                 portfolio=portfolio_state,
+                ml_confidence=ml_confidence,
             )
 
             # --- 4.5 AI Validation ---
@@ -882,6 +887,7 @@ class TradingAgent:
                     # Trigger EOD model learning
                     try:
                         self.continuous_learning.retrain_model_if_needed()
+                        self.ai_validator.reload_model()
                     except Exception as exc:
                         logger.error("Continuous learning retrain failed: %s", exc)
                         

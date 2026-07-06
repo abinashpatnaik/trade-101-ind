@@ -290,21 +290,34 @@ class DecisionEngine:
         available_funds: float = float(portfolio.get("available_funds", 0.0))
         open_positions: Dict = portfolio.get("open_positions", {})
 
-        combined_score = self._compute_combined_score(
-            trend_signal.overall_trend, sentiment_score
-        )
-        confidence = round(abs(combined_score), 4)
+        is_ai_driver = config.ai.primary_driver and config.ai.enabled and ml_confidence > 0.0
 
-        logger.debug(
-            "Decision input — %s: trend=%.4f sentiment=%.4f combined=%.4f "
-            "buy_thr=%.2f sell_thr=%.2f",
-            symbol,
-            trend_signal.overall_trend,
-            sentiment_score,
-            combined_score,
-            self._sig.buy_threshold,
-            self._sig.sell_threshold,
-        )
+        if is_ai_driver:
+            combined_score = (ml_confidence * 2) - 1.0  # Map to [-1, 1] for logs
+            confidence = ml_confidence
+            buy_condition = ml_confidence >= self._sig.ml_buy_threshold
+            sell_condition = ml_confidence <= 0.40
+            logger.debug(
+                "AI DRIVER Active — %s: ml_prob=%.4f mapped_score=%.4f ml_buy_thr=%.2f",
+                symbol, ml_confidence, combined_score, self._sig.ml_buy_threshold
+            )
+        else:
+            combined_score = self._compute_combined_score(
+                trend_signal.overall_trend, sentiment_score
+            )
+            confidence = round(abs(combined_score), 4)
+            buy_condition = combined_score >= self._sig.buy_threshold
+            sell_condition = combined_score <= self._sig.sell_threshold
+            logger.debug(
+                "Decision input — %s: trend=%.4f sentiment=%.4f combined=%.4f "
+                "buy_thr=%.2f sell_thr=%.2f",
+                symbol,
+                trend_signal.overall_trend,
+                sentiment_score,
+                combined_score,
+                self._sig.buy_threshold,
+                self._sig.sell_threshold,
+            )
 
         already_held = symbol in open_positions
 
@@ -337,12 +350,12 @@ class DecisionEngine:
         # ---------------------------------------------------------------
         # BUY logic
         # ---------------------------------------------------------------
-        if combined_score >= self._sig.buy_threshold:
+        if buy_condition:
             # --- Sniper Mode: ADX trend strength filter ---
             # Only trade in clear trends (ADX > 25). Protects against
             # whipsaw losses in choppy/sideways markets.
             adx = getattr(trend_signal, 'adx', 0.0)
-            if adx > 0 and adx < 25:
+            if not is_ai_driver and adx > 0 and adx < 25:
                 logger.info(
                     "BUY blocked for %s — ADX=%.1f (weak trend, need >25). "
                     "Protecting capital by avoiding choppy market.",
@@ -365,7 +378,7 @@ class DecisionEngine:
             # Only trade when volume is above average (>1.5x). Low volume
             # moves often reverse — high volume confirms conviction.
             vol_ratio = getattr(trend_signal, 'volume_ratio', 1.0)
-            if vol_ratio > 0 and vol_ratio < 1.5:
+            if not is_ai_driver and vol_ratio > 0 and vol_ratio < 1.5:
                 logger.info(
                     "BUY blocked for %s — volume_ratio=%.2f (need >1.5x avg). "
                     "No market conviction behind this move.",
@@ -549,7 +562,7 @@ class DecisionEngine:
         # ---------------------------------------------------------------
         # SELL logic
         # ---------------------------------------------------------------
-        if combined_score <= self._sig.sell_threshold:
+        if sell_condition:
             if not already_held:
                 return Decision(
                     action="HOLD",

@@ -12,10 +12,10 @@ import logging
 import os
 from typing import Dict, List, Optional
 
-from config import CUR_SYM
+from config import CUR_SYM, ACTIVE_MARKET
 
 logger = logging.getLogger(__name__)
-MARKET_NAME = "US" if os.getenv("TRADING_MARKET", "IN").upper() == "US" else "Indian"
+MARKET_NAME = "US" if ACTIVE_MARKET == "US" else "Indian"
 
 
 class EODReportGenerator:

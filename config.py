@@ -114,6 +114,7 @@ class SignalConfig:
     """Decision-engine thresholds."""
     buy_threshold: float = 0.48
     sell_threshold: float = -0.35
+    ml_buy_threshold: float = 0.60
 
 
 @dataclass
@@ -137,6 +138,7 @@ class AIConfig:
     enabled: bool = field(default_factory=lambda: str(os.getenv("AI_VALIDATION_ENABLED", "false")).lower() == "true")
     model: str = "gemini-2.5-flash"
     validate_sells: bool = False
+    primary_driver: bool = field(default_factory=lambda: str(os.getenv("AI_PRIMARY_DRIVER", "false")).lower() == "true")
 
 
 @dataclass

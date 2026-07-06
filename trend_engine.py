@@ -346,20 +346,36 @@ class TrendEngine:
             current_price = float(close.iloc[-1])
 
             # --- Compute each sub-signal ---
+            adx_val = self._compute_adx(high, low, close)
+            vol_ratio = self._compute_volume_ratio(df["Volume"].astype(float))
             rsi_val, rsi_score = self._compute_rsi_signal(close)
             ema_label, ema_score = self._compute_ema_signal(close)
             macd_label, macd_score = self._compute_macd_signal(close)
             atr_val = self._compute_atr(high, low, close)
             vwap_label, vwap_score = self._compute_vwap_signal(df, current_price)
-            adx_val = self._compute_adx(high, low, close)
-            vol_ratio = self._compute_volume_ratio(df["Volume"].astype(float))
+
+            # --- Dynamic Regime Detection ---
+            w_rsi = self._WEIGHTS["rsi"]
+            w_ema = self._WEIGHTS["ema"]
+            w_macd = self._WEIGHTS["macd"]
+            w_vwap = self._WEIGHTS["vwap"]
+
+            # If market is strongly trending, RSI overbought is normal momentum
+            if adx_val >= 25.0:
+                if rsi_score < 0:  # Suppress RSI overbought bearish penalty
+                    rsi_score = 0.0
+                    logger.debug("Strong trend (ADX=%.1f) detected for %s, suppressing RSI overbought penalty.", adx_val, symbol)
+                # Shift weight from RSI to EMA/MACD momentum
+                w_rsi = 0.0
+                w_ema += 0.125
+                w_macd += 0.125
 
             # --- Weighted composite score ---
             overall_trend = (
-                self._WEIGHTS["rsi"]  * rsi_score
-                + self._WEIGHTS["ema"]  * ema_score
-                + self._WEIGHTS["macd"] * macd_score
-                + self._WEIGHTS["vwap"] * vwap_score
+                w_rsi  * rsi_score
+                + w_ema  * ema_score
+                + w_macd * macd_score
+                + w_vwap * vwap_score
             )
             # Clip to guarantee [-1, 1] even with floating-point imprecision.
             overall_trend = float(np.clip(overall_trend, -1.0, 1.0))

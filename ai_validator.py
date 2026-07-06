@@ -70,21 +70,13 @@ class AIValidator:
         except Exception as e:
             logger.error("Failed to write ML validation log to DB: %s", e)
 
-    def validate_decision(
-        self,
-        symbol: str,
-        trend_signal: TrendSignal,
-        sentiment_score: float,
-        decision: Decision
-    ) -> Decision:
+    def get_ml_confidence(self, trend_signal: TrendSignal, sentiment_score: float) -> float:
         """
-        Validates a trading decision using the local XGBoost model.
-        Returns the original decision if approved, or a modified HOLD decision if rejected.
+        Returns the raw probability of success (0.0 to 1.0) from the ML model
+        based on the current trend and sentiment features. Returns 0.0 if disabled.
         """
         if not self.enabled or self.model is None:
-            return decision
-
-        logger.info("Requesting ML validation for %s %s decision...", symbol, decision.action)
+            return 0.0
 
         try:
             # Convert string signals to numeric values matching training data
@@ -110,9 +102,31 @@ class AIValidator:
                 features = features[expected_features]
             
             # Predict Probability of Success (Class 1)
-            # XGBoost predict_proba returns array of [prob_0, prob_1]
             prob_success = self.model.predict_proba(features)[0][1]
-            decision.ml_confidence = float(prob_success)
+            return float(prob_success)
+        except Exception as e:
+            logger.error("Failed to calculate ML confidence: %s", e)
+            return 0.0
+
+    def validate_decision(
+        self,
+        symbol: str,
+        trend_signal: TrendSignal,
+        sentiment_score: float,
+        decision: Decision
+    ) -> Decision:
+        """
+        Validates a trading decision using the local XGBoost model.
+        Returns the original decision if approved, or a modified HOLD decision if rejected.
+        """
+        if not self.enabled or self.model is None:
+            return decision
+
+        logger.info("Requesting ML validation for %s %s decision...", symbol, decision.action)
+
+        try:
+            prob_success = self.get_ml_confidence(trend_signal, sentiment_score)
+            decision.ml_confidence = prob_success
             
             # Risk Management Thresholds
             # For BUY: we want high confidence of success (e.g., > 60%)

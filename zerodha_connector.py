@@ -257,12 +257,9 @@ class ZerodhaConnector:
         self.kws.on_close = on_close
         self.kws.on_error = on_error
 
-        def start_kws():
-            # enable_reconnect handles automatic reconnections
-            self.kws.connect(threaded=False, disable_ssl_verification=False)
-
-        self._kws_thread = threading.Thread(target=start_kws, daemon=True)
-        self._kws_thread.start()
+        # Let kiteconnect manage the background thread so it configures Twisted correctly
+        # (Twisted crashes if you run reactor.run() in a user thread because it tries to install signal handlers)
+        self.kws.connect(threaded=True, disable_ssl_verification=False)
 
     def subscribe(self, symbols: List[str]) -> None:
         """

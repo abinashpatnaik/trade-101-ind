@@ -100,6 +100,7 @@ async function fetchDashboardData() {
         if (flagEl) {
           flagEl.textContent = currentMarket === 'IN' ? '🇮🇳' : '🇺🇸';
         }
+        document.title = `Alpha Trader Dashboard - ${currentMarket === 'IN' ? 'Indian' : 'US'} Market`;
       }
       renderPortfolio(data, healthData);
     }
