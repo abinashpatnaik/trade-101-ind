@@ -144,8 +144,7 @@ class AlpacaConnector:
             return
 
         self.stream.subscribe_trades(self._handle_trade, *symbols)
-        self.stream.subscribe_quotes(self._handle_quote, *symbols)
-        logger.info("Subscribed to Alpaca live feed for %d symbols.", len(symbols))
+        logger.info("Subscribed to Alpaca live TRADES feed for %d symbols.", len(symbols))
 
         if self._stream_thread is None or not self._stream_thread.is_alive():
             self._stream_thread = threading.Thread(target=self._run_stream, daemon=True)
