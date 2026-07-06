@@ -114,7 +114,7 @@ class SignalConfig:
     """Decision-engine thresholds."""
     buy_threshold: float = 0.48
     sell_threshold: float = -0.35
-    ml_buy_threshold: float = 0.60
+    ml_buy_threshold: float = 0.55
 
 
 @dataclass

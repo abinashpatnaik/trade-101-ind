@@ -163,6 +163,9 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     
     logger.info(f"[{mode.upper()}] Training XGBoost on {len(X)} samples...")
     
+    scale_pos_weight = len(y[y == 0]) / max(len(y[y == 1]), 1)
+    logger.info(f"[{mode.upper()}] Computed scale_pos_weight: {scale_pos_weight:.2f}")
+    
     clf = xgb.XGBClassifier(
         n_estimators=100,
         max_depth=4,
@@ -170,6 +173,7 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         subsample=0.8,
         colsample_bytree=0.8,
         eval_metric='logloss',
+        scale_pos_weight=scale_pos_weight,
         random_state=42
     )
     
