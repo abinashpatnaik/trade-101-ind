@@ -262,6 +262,7 @@ class DecisionEngine:
         sentiment_score: float,
         current_price: float,
         portfolio: Dict,
+        ml_confidence: float = 0.0,
     ) -> Decision:
         """
         Produce a trading decision for *symbol*.
