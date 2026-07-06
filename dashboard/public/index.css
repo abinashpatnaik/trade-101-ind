@@ -365,6 +365,7 @@ tr:last-child td {
 .badge-outline.sell { color: var(--signal-red); border-color: rgba(255, 71, 87, 0.3); background-color: rgba(255, 71, 87, 0.05); }
 .badge-outline.hold { color: var(--text-secondary); border-color: rgba(139, 139, 158, 0.3); background-color: rgba(139, 139, 158, 0.05); }
 .badge-outline.gated { color: var(--signal-orange); border-color: rgba(255, 165, 2, 0.3); background-color: rgba(255, 165, 2, 0.05); }
+.badge-outline.warming { color: #facc15; border-color: rgba(250, 204, 21, 0.3); background-color: rgba(250, 204, 21, 0.05); }
 
 /* Progress Bar */
 .progress-wrap {

@@ -254,13 +254,25 @@ function renderSignals() {
     }
 
     let displaySignal = isGated ? 'GATED' : rawSignal;
+    let badgeClass = isGated ? 'gated' : rawSignal.toLowerCase();
+
+    // Check if WARMING or SELL (Not Held)
+    if (rawSignal === 'HOLD') {
+      if (s.holdReason && s.holdReason.includes('SELL signal') && s.holdReason.includes('not held')) {
+        displaySignal = 'SELL (Not Held)';
+        badgeClass = 'sell';
+      } else if (!isGated && s.mlConfidence && s.buyThreshold) {
+        const diff = s.buyThreshold - s.mlConfidence;
+        if (diff > 0 && diff <= 0.05) {
+          displaySignal = 'WARMING';
+          badgeClass = 'warming';
+        }
+      }
+    }
+
     if (isGated && shortReason) {
       displaySignal += ` (${shortReason})`;
     }
-    const badgeClass = isGated ? 'gated' : rawSignal.toLowerCase();
-    
-    // Agent Score Color matches Recommendation
-    let scoreClass = 'status-' + (isGated ? 'gated' : rawSignal.toLowerCase());
     
     // ML Confidence progress bar
     let mlHtml = '-';
@@ -281,15 +293,25 @@ function renderSignals() {
       `;
     }
 
-    const thresholdHtml = s.buyThreshold ? `<span style="color: var(--text-secondary); font-size: 11px;">&ge; ${(s.buyThreshold * 100).toFixed(1)}%</span>` : '-';
+    let thresholdHtml = '-';
+    if (s.buyThreshold) {
+      const targetPct = (s.buyThreshold * 100).toFixed(1);
+      thresholdHtml = `
+        <div style="width: 100px;">
+          <div style="font-size: 10px; color: var(--text-secondary); margin-bottom: 2px; text-align: right;">&ge; ${targetPct}%</div>
+          <div class="progress-wrap" style="background-color: var(--card-border);">
+            <div class="progress-bar" style="width: ${targetPct}%; background-color: var(--text-secondary); border-radius: 4px;"></div>
+          </div>
+        </div>
+      `;
+    }
 
     html += `
       <tr>
         <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${s.symbol}')">${s.symbol}</span></td>
-        <td class="mono ${scoreClass}">${s.combinedScore ? s.combinedScore.toFixed(3) : '-'}</td>
         <td><span class="badge-outline ${badgeClass}">${displaySignal}</span></td>
         <td>${mlHtml}</td>
-        <td class="mono">${thresholdHtml}</td>
+        <td>${thresholdHtml}</td>
         <td class="mono td-right">${formatMoney(s.price)}</td>
       </tr>
     `;
