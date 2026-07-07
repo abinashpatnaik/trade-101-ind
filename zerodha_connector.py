@@ -505,7 +505,7 @@ class ZerodhaConnector:
                 return None
                 
             buffer = 1.02 if action.upper() == "BUY" else 0.98
-            limit_price = round((ltp * buffer) * 20) / 20.0
+            limit_price = round(ltp * buffer, 1)
             
             order_id = self.kite.place_order(
                 variety="regular",
@@ -536,8 +536,8 @@ class ZerodhaConnector:
             # Use SL (Stop Loss Limit) order type because SL-M is often blocked by NSE.
             # We simulate SL-M by adding a 2% buffer to the limit price.
             buffer = 1.02 if action.upper() == "BUY" else 0.98
-            trigger_rounded = round(stop_price * 20) / 20.0
-            limit_price = round((stop_price * buffer) * 20) / 20.0
+            trigger_rounded = round(stop_price, 1)
+            limit_price = round(stop_price * buffer, 1)
             
             order_id = self.kite.place_order(
                 variety="regular",
@@ -576,7 +576,7 @@ class ZerodhaConnector:
                 quantity=quantity,
                 product="CNC",
                 order_type="LIMIT",
-                price=round(limit_price, 2)
+                price=round(limit_price, 1)
             )
             logger.info("Kite LIMIT order placed: %s %d %s limit=%.2f, ID: %s", action, quantity, symbol, limit_price, order_id)
             return str(order_id)
