@@ -136,6 +136,7 @@ class AIValidator:
             try:
                 prob_success = self.get_ml_confidence(trend_signal, sentiment_score, mode="swing")
                 decision.ml_confidence = prob_success
+                decision.ml_confidence_swing = prob_success
                 decision.ai_decision = "GHOST_EVALUATED"
                 decision.ai_reason = f"ML Validator (SWING) evaluated HOLD (Confidence: {prob_success*100:.1f}%)"
                 return decision
@@ -152,9 +153,17 @@ class AIValidator:
             decision.ml_confidence = prob_success
             
             if decision.action == "BUY":
+                # User requested swing confidence to be available for BUY decisions as well
+                try:
+                    prob_success_swing = self.get_ml_confidence(trend_signal_swing, sentiment_score, mode="swing")
+                    decision.ml_confidence_swing = prob_success_swing
+                except Exception as e:
+                    logger.error("Swing ML Validation failed for %s BUY: %s", symbol, e)
+                
                 approved = prob_success >= 0.60
                 reason = f"ML Validator ({mode.upper()}) {'APPROVED' if approved else 'REJECTED'} BUY (Confidence: {prob_success*100:.1f}%)"
             elif decision.action == "SELL":
+                decision.ml_confidence_swing = prob_success
                 approved = prob_success <= 0.40
                 reason = f"ML Validator ({mode.upper()}) {'APPROVED' if approved else 'REJECTED'} SELL (Confidence of upward trend: {prob_success*100:.1f}%)"
 

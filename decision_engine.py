@@ -76,6 +76,7 @@ class Decision:
     ai_decision: Optional[str] = None
     ai_reason: Optional[str] = None
     ml_confidence: float = 0.0
+    ml_confidence_swing: float = 0.0
 
 class DecisionEngine:
     """

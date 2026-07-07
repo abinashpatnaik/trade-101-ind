@@ -13,6 +13,8 @@ let state = {
   signals: [],
   sigPage: 1,
   sigFilter: 'ALL', // ALL, BUY, SELL, HOLD, GATED
+  sigSortColumn: 'combinedScore',
+  sigSortDesc: true,
 };
 
 function applyThemeToCharts(theme) {
@@ -207,6 +209,21 @@ function renderPositions(positions) {
   container.innerHTML = html;
 }
 
+function setSort(col) {
+  if (state.sigSortColumn === col) {
+    state.sigSortDesc = !state.sigSortDesc;
+  } else {
+    state.sigSortColumn = col;
+    state.sigSortDesc = true;
+  }
+  renderSignals();
+}
+
+function changePage(delta) {
+  state.sigPage += delta;
+  renderSignals();
+}
+
 function renderSignals() {
   const container = document.getElementById('table-signals');
   let filtered = state.signals;
@@ -219,13 +236,52 @@ function renderSignals() {
     }
   }
 
+  // Sorting
+  filtered.sort((a, b) => {
+    let valA = a[state.sigSortColumn];
+    let valB = b[state.sigSortColumn];
+    
+    if (valA === undefined || valA === null) valA = '';
+    if (valB === undefined || valB === null) valB = '';
+
+    if (valA < valB) return state.sigSortDesc ? 1 : -1;
+    if (valA > valB) return state.sigSortDesc ? -1 : 1;
+    return 0;
+  });
+
+  // Update headers UI
+  const headers = ['symbol', 'signal', 'mlConfidence', 'mlConfidenceSwing', 'price'];
+  headers.forEach(h => {
+    const span = document.getElementById('sort-' + h);
+    if (span) {
+      if (state.sigSortColumn === h) {
+        span.innerText = state.sigSortDesc ? ' ↓' : ' ↑';
+      } else {
+        span.innerText = ' ↕';
+      }
+    }
+  });
+
+  // Pagination
+  const totalPages = Math.ceil(filtered.length / 10) || 1;
+  if (state.sigPage > totalPages) state.sigPage = totalPages;
+  if (state.sigPage < 1) state.sigPage = 1;
+
+  const startIdx = (state.sigPage - 1) * 10;
+  const pageSignals = filtered.slice(startIdx, startIdx + 10);
+
+  // Update Pagination Controls UI
+  const btnPrev = document.getElementById('btn-prev');
+  const btnNext = document.getElementById('btn-next');
+  const pageInd = document.getElementById('page-indicator');
+  if (btnPrev) btnPrev.disabled = state.sigPage === 1;
+  if (btnNext) btnNext.disabled = state.sigPage === totalPages;
+  if (pageInd) pageInd.innerText = `Page ${state.sigPage} of ${totalPages} (${filtered.length} total)`;
+
   if (filtered.length === 0) {
     container.innerHTML = '<tr><td colspan="6" class="empty-state">No signals match filter</td></tr>';
     return;
   }
-  
-  // Show only top 10
-  const pageSignals = filtered.slice(0, 10);
   
   let html = '';
   pageSignals.forEach(s => {
@@ -296,6 +352,25 @@ function renderSignals() {
       `;
     }
 
+    // Swing Confidence progress bar (Only for BUY)
+    let swingHtml = '-';
+    if (rawSignal === 'BUY' && s.mlConfidenceSwing) {
+      const upConf = s.mlConfidenceSwing * 100;
+      const downConf = 100 - upConf;
+      swingHtml = `
+        <div style="width: 100px;">
+          <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px;">
+            <span style="color: var(--signal-green); font-weight: 600;">▲ ${upConf.toFixed(0)}%</span>
+            <span style="color: var(--signal-red); font-weight: 600;">${downConf.toFixed(0)}% ▼</span>
+          </div>
+          <div class="progress-wrap" style="display: flex;">
+            <div class="progress-bar" style="width: ${upConf}%; background-color: var(--signal-green); border-radius: 0;"></div>
+            <div class="progress-bar" style="width: ${downConf}%; background-color: var(--signal-red); border-radius: 0;"></div>
+          </div>
+        </div>
+      `;
+    }
+
     let thresholdHtml = '-';
     if (s.buyThreshold) {
       const targetPct = (s.buyThreshold * 100).toFixed(1);
@@ -314,6 +389,7 @@ function renderSignals() {
         <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${s.symbol}')">${s.symbol}</span></td>
         <td><span class="badge-outline ${badgeClass}">${displaySignal}</span></td>
         <td>${mlHtml}</td>
+        <td>${swingHtml}</td>
         <td>${thresholdHtml}</td>
         <td class="mono td-right">${formatMoney(s.price)}</td>
       </tr>
@@ -324,6 +400,7 @@ function renderSignals() {
 
 function setSignalFilter(filter) {
   state.sigFilter = filter;
+  state.sigPage = 1;
   document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.classList.remove('active');
     if (btn.innerText.toUpperCase() === filter) btn.classList.add('active');

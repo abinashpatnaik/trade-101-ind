@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS signals (
     ai_reason TEXT,
     hold_reason TEXT DEFAULT '',
     ml_confidence REAL,
+    ml_confidence_swing REAL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -147,6 +148,11 @@ class TradingDB:
             # Migrate: add ml_confidence column if missing
             try:
                 conn.execute("ALTER TABLE signals ADD COLUMN ml_confidence REAL")
+            except sqlite3.OperationalError:
+                pass
+            # Migrate: add ml_confidence_swing column if missing
+            try:
+                conn.execute("ALTER TABLE signals ADD COLUMN ml_confidence_swing REAL")
             except sqlite3.OperationalError:
                 pass
         logger.debug("Database schema verified.")
@@ -271,8 +277,8 @@ class TradingDB:
                 """INSERT INTO signals
                    (symbol, price, change_pct, rsi, trend_score, macd_signal, ema_signal,
                     combined_score, signal, confidence, buy_threshold, sell_threshold,
-                    ai_decision, ai_reason, hold_reason, ml_confidence, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ai_decision, ai_reason, hold_reason, ml_confidence, ml_confidence_swing, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                    ON CONFLICT(symbol) DO UPDATE SET
                     price=excluded.price, change_pct=excluded.change_pct,
                     rsi=excluded.rsi, trend_score=excluded.trend_score,
@@ -282,6 +288,7 @@ class TradingDB:
                     sell_threshold=excluded.sell_threshold, ai_decision=excluded.ai_decision,
                     ai_reason=excluded.ai_reason, hold_reason=excluded.hold_reason,
                     ml_confidence=excluded.ml_confidence,
+                    ml_confidence_swing=excluded.ml_confidence_swing,
                     updated_at=CURRENT_TIMESTAMP""",
                 (
                     signal["symbol"],
@@ -300,6 +307,7 @@ class TradingDB:
                     signal.get("aiReason", ""),
                     signal.get("holdReason", ""),
                     signal.get("mlConfidence", 0.0),
+                    signal.get("mlConfidenceSwing", 0.0),
                 ),
             )
 

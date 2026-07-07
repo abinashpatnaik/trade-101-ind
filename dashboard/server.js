@@ -197,8 +197,9 @@ function readSignals() {
                combined_score as combinedScore, signal, confidence,
                buy_threshold as buyThreshold, sell_threshold as sellThreshold,
                ai_decision as aiDecision, ai_reason as aiReason,
-               hold_reason as holdReason, ml_confidence as mlConfidence, updated_at
-        FROM signals ORDER BY ABS(trend_score) DESC LIMIT 30
+               hold_reason as holdReason, ml_confidence as mlConfidence, 
+               ml_confidence_swing as mlConfidenceSwing, updated_at
+        FROM signals ORDER BY ABS(trend_score) DESC
       `).all();
     } catch (err) {
       console.error("readSignals SQLite error:", err.message);

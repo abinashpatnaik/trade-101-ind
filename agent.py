@@ -402,6 +402,7 @@ class TradingAgent:
                     self._current_signals[symbol]["buyThreshold"] = config.signal.buy_threshold
                 self._current_signals[symbol]["sellThreshold"] = 0.40 if is_ai_driver else config.signal.sell_threshold
                 self._current_signals[symbol]["mlConfidence"] = decision.ml_confidence
+                self._current_signals[symbol]["mlConfidenceSwing"] = decision.ml_confidence_swing
                 # Show reason when score is above threshold but still HOLD
                 if decision.action == "HOLD" and decision.combined_score >= self._current_signals[symbol]["buyThreshold"]:
                     self._current_signals[symbol]["holdReason"] = decision.reason
