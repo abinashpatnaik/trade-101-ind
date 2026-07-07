@@ -340,8 +340,8 @@ class ZerodhaConnector:
                 if last_price is None:
                     last_price = float(pos.get("last_price", 0.0))
                     
-                avg_cost = float(pos.get("average_price", 0.0))
-                pnl = (last_price - avg_cost) * qty
+                # Zerodha 'm2m' is the exact day's mark-to-market P&L including realized
+                pnl = float(pos.get("m2m", 0.0))
                 
                 daily_pnl += pnl
                 
