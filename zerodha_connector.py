@@ -478,6 +478,7 @@ class ZerodhaConnector:
 
     def place_market_order(self, symbol: str, action: str, quantity: int, **kwargs) -> Optional[str]:
         """Place a market order on NSE."""
+        quantity = int(quantity)
         if not self.kite:
             return None
         
@@ -515,6 +516,7 @@ class ZerodhaConnector:
         Place a stop-loss market order (SL-M) on NSE.
         Fires a market order when price reaches the trigger price.
         """
+        quantity = int(quantity)
         if not self.kite:
             return None
         try:
@@ -542,6 +544,7 @@ class ZerodhaConnector:
 
     def place_limit_order(self, symbol: str, action: str, quantity: int, limit_price: float) -> Optional[str]:
         """Place a limit order (LMT) on NSE."""
+        quantity = int(quantity)
         if not self.kite:
             return None
         try:
