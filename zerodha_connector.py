@@ -496,6 +496,17 @@ class ZerodhaConnector:
 
         try:
             tradingsymbol = symbol.split(".")[0]
+            
+            # Zerodha blocks plain MARKET orders for many stocks. 
+            # We simulate a MARKET order using a LIMIT order with a 2% execution buffer.
+            ltp = self.get_current_price(symbol)
+            if not ltp or ltp <= 0:
+                logger.error("Cannot simulate MARKET order for %s: LTP unavailable", symbol)
+                return None
+                
+            buffer = 1.02 if action.upper() == "BUY" else 0.98
+            limit_price = round((ltp * buffer) * 20) / 20.0
+            
             order_id = self.kite.place_order(
                 variety="regular",
                 exchange="NSE",
@@ -503,9 +514,10 @@ class ZerodhaConnector:
                 transaction_type=action.upper(),
                 quantity=quantity,
                 product="CNC",
-                order_type="MARKET"
+                order_type="LIMIT",
+                price=limit_price
             )
-            logger.info("Kite MARKET order placed: %s %d %s, ID: %s", action, quantity, symbol, order_id)
+            logger.info("Kite MARKET (simulated LIMIT @ %.2f) order placed: %s %d %s, ID: %s", limit_price, action, quantity, symbol, order_id)
             return str(order_id)
         except Exception as exc:
             logger.error("Failed to place MARKET order for %s: %s", symbol, exc)
@@ -521,7 +533,12 @@ class ZerodhaConnector:
             return None
         try:
             tradingsymbol = symbol.split(".")[0]
-            # Use SL-M (Stop Loss Market) order type for simplicity and guaranteed execution
+            # Use SL (Stop Loss Limit) order type because SL-M is often blocked by NSE.
+            # We simulate SL-M by adding a 2% buffer to the limit price.
+            buffer = 1.02 if action.upper() == "BUY" else 0.98
+            trigger_rounded = round(stop_price * 20) / 20.0
+            limit_price = round((stop_price * buffer) * 20) / 20.0
+            
             order_id = self.kite.place_order(
                 variety="regular",
                 exchange="NSE",
@@ -529,10 +546,12 @@ class ZerodhaConnector:
                 transaction_type=action.upper(),
                 quantity=quantity,
                 product="CNC",
-                order_type="SL-M",
-                trigger_price=round(stop_price, 2)
+                order_type="SL",
+                trigger_price=trigger_rounded,
+                price=limit_price
             )
-            logger.info("Kite SL-M order placed: %s %d %s stop=%.2f, ID: %s", action, quantity, symbol, stop_price, order_id)
+            logger.info("Kite SL (simulated SL-M) order placed: %s %d %s trigger=%.2f limit=%.2f, ID: %s", 
+                        action, quantity, symbol, trigger_rounded, limit_price, order_id)
             return str(order_id)
         except Exception as exc:
             logger.error("Failed to place stop order for %s: %s", symbol, exc)
