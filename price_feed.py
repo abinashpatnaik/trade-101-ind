@@ -111,13 +111,11 @@ class PriceFeed:
         if ACTIVE_MARKET == "US":
             df = self._fetch_alpaca(symbol, period, interval, start, end)
         else:
-            # If broker is injected, try hybrid fetch via Zerodha API
-            if getattr(self, "_broker", None) and type(self._broker).__name__ == "ZerodhaConnector":
-                df = self._fetch_zerodha(symbol, period, interval, start, end)
-            
-            if df is None or df.empty:
-                # Fallback to yfinance
-                df = self._fetch_yfinance(symbol, period, interval, start, end)
+            # Due to the strict 500 credits/month limit (16 credits/day), 
+            # we CANNOT use Zerodha's premium historical API for continuous tracking.
+            # We completely bypass _fetch_zerodha and rely purely on yfinance for OHLCV.
+            # Real-time prices will still use Zerodha's free `kite.ltp()` via `get_current_price`.
+            df = self._fetch_yfinance(symbol, period, interval, start, end)
                 
         if df is not None and not df.empty:
             self._cache[cache_key] = (now, df.copy())
