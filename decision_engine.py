@@ -666,14 +666,22 @@ class DecisionEngine:
         # ---------------------------------------------------------------
         # HOLD — score within [-sell_threshold, buy_threshold)
         # ---------------------------------------------------------------
-        return Decision(
-            action="HOLD",
-            confidence=confidence,
-            reason=(
+        if is_ai_driver:
+            reason_str = (
+                f"No signal — ML_confidence={combined_score:.3f} is within "
+                f"hold band [0.40, {active_buy_threshold:.2f}]."
+            )
+        else:
+            reason_str = (
                 f"No signal — combined_score={combined_score:.3f} is within "
                 f"hold band [{self._sig.sell_threshold:.2f}, "
                 f"{self._sig.buy_threshold:.2f}]."
-            ),
+            )
+
+        return Decision(
+            action="HOLD",
+            confidence=confidence,
+            reason=reason_str,
             quantity=0,
             stop_loss_price=0.0,
             take_profit_price=0.0,
