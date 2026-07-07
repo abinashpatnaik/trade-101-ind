@@ -482,6 +482,8 @@ class DecisionEngine:
             # --- Max deployment check (e.g. only invest 50% of purse) ---
             if ACTIVE_MARKET == "US" and portfolio_value < 500:
                 max_deploy_pct = 0.95
+            elif ACTIVE_MARKET == "IN" and portfolio_value < 50000:
+                max_deploy_pct = 0.95
             else:
                 max_deploy_pct = config.wallet.max_deploy_pct
             total_deployed = sum(
@@ -489,18 +491,19 @@ class DecisionEngine:
                 for p in open_positions.values()
             )
             max_deployable = portfolio_value * max_deploy_pct
+            currency_sym = "₹" if ACTIVE_MARKET == "IN" else "$" if ACTIVE_MARKET == "US" else "£"
             if total_deployed >= max_deployable:
                 logger.info(
-                    "Max deployment reached for %s — deployed £%.2f / £%.2f (%.0f%% of purse). "
+                    "Max deployment reached for %s — deployed %s%.2f / %s%.2f (%.0f%% of purse). "
                     "Holding until positions close and free up capital.",
-                    symbol, total_deployed, max_deployable, max_deploy_pct * 100,
+                    symbol, currency_sym, total_deployed, currency_sym, max_deployable, max_deploy_pct * 100,
                 )
                 return Decision(
                     action="HOLD",
                     confidence=confidence,
                     reason=(
                         f"Max deployment {max_deploy_pct*100:.0f}% reached — "
-                        f"£{total_deployed:.2f} deployed of £{max_deployable:.2f} allowed. "
+                        f"{currency_sym}{total_deployed:.2f} deployed of {currency_sym}{max_deployable:.2f} allowed. "
                         "Waiting for positions to close before investing more."
                     ),
                     quantity=0,
