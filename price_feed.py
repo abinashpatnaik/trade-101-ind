@@ -125,7 +125,10 @@ class PriceFeed:
             if os.path.exists(targets_file):
                 with open(targets_file, "r") as f:
                     data = json.load(f)
-                    top_targets = [item["symbol"] for item in data]
+                    if data and isinstance(data[0], dict):
+                        top_targets = [item["symbol"] for item in data if "symbol" in item]
+                    else:
+                        top_targets = data
                     
             # Only use premium API credits for the Top 5 candidates, or if we already own it (open position)
             # This protects the 500 credits limit!
