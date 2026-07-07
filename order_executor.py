@@ -318,16 +318,28 @@ class OrderExecutor:
             return "TAKE_PROFIT"
 
         # 3. Check Trailing Stop
-        # Variable Tightening Trailing Stop Algorithm
-        # Initial gap is set dynamically via ATR when order is opened.
-        # For every 0.1% the stock gains, the gap shrinks by 0.1%, down to a minimum of 0.5%.
         gain_pct = (self._trailing_high[symbol] / order.entry_price) - 1.0
-        if gain_pct <= 0:
-            current_trailing_pct = order.initial_trailing_pct
-        else:
-            current_trailing_pct = max(0.005, order.initial_trailing_pct - gain_pct)
+        
+        # Calculate standard trailing stop first
+        base_trailing_pct = order.initial_trailing_pct
+        base_trigger = self._trailing_high[symbol] * (1.0 - base_trailing_pct)
 
-        trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - current_trailing_pct)
+        # Apply tightening only if it results in a break-even or positive PnL
+        if gain_pct > 0:
+            tightened_pct = max(0.005, order.initial_trailing_pct - gain_pct)
+            tightened_trigger = self._trailing_high[symbol] * (1.0 - tightened_pct)
+            
+            # If the tightened trigger guarantees at least break-even (>= entry_price), use it.
+            # Otherwise, use the base trigger to give the trade room to breathe early on.
+            if tightened_trigger >= order.entry_price:
+                trailing_stop_trigger = tightened_trigger
+                current_trailing_pct = tightened_pct
+            else:
+                trailing_stop_trigger = base_trigger
+                current_trailing_pct = base_trailing_pct
+        else:
+            trailing_stop_trigger = base_trigger
+            current_trailing_pct = base_trailing_pct
 
         if current_price <= trailing_stop_trigger:
             logger.warning(
