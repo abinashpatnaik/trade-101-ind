@@ -133,14 +133,23 @@ class AIValidator:
             return decision
             
         if decision.action == "HOLD":
-            decision.ai_decision = "GHOST_EVALUATED"
-            decision.ai_reason = "HOLD decisions bypass ML validation"
-            return decision
+            try:
+                prob_success = self.get_ml_confidence(trend_signal, sentiment_score, mode="swing")
+                decision.ml_confidence = prob_success
+                decision.ai_decision = "GHOST_EVALUATED"
+                decision.ai_reason = f"ML Validator (SWING) evaluated HOLD (Confidence: {prob_success*100:.1f}%)"
+                return decision
+            except Exception as e:
+                logger.error("ML Validation failed for %s HOLD: %s", symbol, e)
+                decision.ai_decision = "GHOST_EVALUATED"
+                decision.ai_reason = f"Bypassed: ML Model Error ({str(e)})"
+                return decision
 
         logger.info("Requesting %s ML validation for %s %s decision...", mode.upper(), symbol, decision.action)
 
         try:
             prob_success = self.get_ml_confidence(trend_signal, sentiment_score, mode=mode)
+            decision.ml_confidence = prob_success
             
             if decision.action == "BUY":
                 approved = prob_success >= 0.60
