@@ -22,6 +22,7 @@ from typing import Optional
 
 import os
 import datetime
+import time
 import pandas as pd
 import yfinance as yf
 
@@ -57,6 +58,7 @@ class PriceFeed:
     def __init__(self) -> None:
         logger.debug("PriceFeed initialised.")
         self._broker = None
+        self._cache = {}
         
     def set_broker(self, broker) -> None:
         """Inject the broker connector to allow premium historical data fetching."""
@@ -89,16 +91,38 @@ class PriceFeed:
         Uses a Hybrid approach for Indian market: if the broker is Zerodha and we have credits,
         it uses high-fidelity Zerodha historical data.
         """
+        cache_key = (symbol, period, interval, start, end)
+        now = time.time()
+        
+        ttl = 60
+        if interval == "1d":
+            ttl = 3600
+        elif interval == "5m":
+            ttl = 270
+        elif interval == "1m":
+            ttl = 50
+            
+        if cache_key in self._cache:
+            cached_time, cached_df = self._cache[cache_key]
+            if now - cached_time < ttl:
+                return cached_df.copy()
+
+        df = None
         if ACTIVE_MARKET == "US":
-            return self._fetch_alpaca(symbol, period, interval, start, end)
+            df = self._fetch_alpaca(symbol, period, interval, start, end)
         else:
             # If broker is injected, try hybrid fetch via Zerodha API
             if getattr(self, "_broker", None) and type(self._broker).__name__ == "ZerodhaConnector":
                 df = self._fetch_zerodha(symbol, period, interval, start, end)
-                if df is not None and not df.empty:
-                    return df
-            # Fallback to yfinance
-            return self._fetch_yfinance(symbol, period, interval, start, end)
+            
+            if df is None or df.empty:
+                # Fallback to yfinance
+                df = self._fetch_yfinance(symbol, period, interval, start, end)
+                
+        if df is not None and not df.empty:
+            self._cache[cache_key] = (now, df.copy())
+            
+        return df
 
     def _fetch_zerodha(
         self,
