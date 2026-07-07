@@ -297,11 +297,31 @@ class OrderExecutor:
                 "Software trailing high updated for %s: %.4f", symbol, current_price
             )
 
-        # 1. Check Hard Stop Loss
-        if order.stop_loss_price > 0 and current_price <= order.stop_loss_price:
+        # 1. Check Hard Stop Loss (with Break-Even Upgrade)
+        #
+        # 3-Phase Safety System:
+        #   Phase 1: Stock hasn't risen yet → hard stop at original level (-1%)
+        #   Phase 2: Stock rose 1× trailing gap → stop upgrades to ENTRY PRICE
+        #   Phase 3: Stock rose 2× trailing gap → trailing stop arms (profit lock)
+        #
+        # The break-even upgrade ensures that stocks which rise modestly
+        # (1-2%) and then reverse will exit at $0 PnL instead of -1%.
+        effective_stop = order.stop_loss_price
+
+        breakeven_threshold = order.entry_price * (1.0 + order.initial_trailing_pct)
+        if self._trailing_high.get(symbol, 0) >= breakeven_threshold:
+            # Stock has risen enough — upgrade stop to break-even
+            effective_stop = max(effective_stop, order.entry_price)
+
+        if effective_stop > 0 and current_price <= effective_stop:
+            is_breakeven = effective_stop >= order.entry_price
             logger.warning(
-                "SOFTWARE STOP LOSS triggered for %s: price=%.4f <= trigger=%.4f",
-                symbol, current_price, order.stop_loss_price
+                "SOFTWARE %s triggered for %s: price=%.4f <= trigger=%.4f "
+                "(original_stop=%.4f, entry=%.4f, high=%.4f)",
+                "BREAKEVEN STOP" if is_breakeven else "STOP LOSS",
+                symbol, current_price, effective_stop,
+                order.stop_loss_price, order.entry_price,
+                self._trailing_high.get(symbol, 0),
             )
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
