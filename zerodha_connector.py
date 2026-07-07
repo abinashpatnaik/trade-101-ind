@@ -333,8 +333,16 @@ class ZerodhaConnector:
             
             for pos in net_positions:
                 qty = int(pos.get("quantity", 0))
-                last_price = float(pos.get("last_price", 0.0))
-                pnl = float(pos.get("pnl", 0.0))
+                symbol = pos.get("tradingsymbol", "") + ".NS"
+                
+                # Use live websocket price if available
+                last_price = self.get_current_price(symbol)
+                if last_price is None:
+                    last_price = float(pos.get("last_price", 0.0))
+                    
+                avg_cost = float(pos.get("average_price", 0.0))
+                pnl = (last_price - avg_cost) * qty
+                
                 daily_pnl += pnl
                 
                 if qty > 0:
@@ -377,7 +385,10 @@ class ZerodhaConnector:
                 tradingsymbol = pos.get("tradingsymbol", "")
                 symbol = tradingsymbol + ".NS"
                 
-                last_price = float(pos.get("last_price", 0.0))
+                # Use live websocket price if available
+                last_price = self.get_current_price(symbol)
+                if last_price is None:
+                    last_price = float(pos.get("last_price", 0.0))
                 positions[symbol] = {
                     "quantity": qty,
                     "avg_cost": float(pos.get("average_price", 0.0)),
