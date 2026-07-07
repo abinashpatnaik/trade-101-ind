@@ -774,29 +774,36 @@ async function getNavHistory(range = '1mo') {
   } catch (err) {
     console.log("Could not fetch IBKR NAV for history, using local summary or default.");
   }
-  // 2. Intraday graph for 1d
-  if (range === '1d') {
-    const db = getDB();
-    if (db) {
-      try {
-        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-        const rows = db.prepare(`SELECT timestamp, nav FROM nav_history WHERE timestamp >= ? ORDER BY timestamp ASC`)
-          .all(oneDayAgo);
-        
-        if (rows && rows.length > 0) {
-          const history = rows.filter(r => r.nav > 0).map(r => ({ date: r.timestamp, nav: r.nav }));
-          if (currentNav > 0) {
-            history.push({ date: new Date().toISOString(), nav: currentNav });
-          }
-          return history;
+  
+  // 2. Try fetching from nav_history for all ranges
+  const db = getDB();
+  if (db) {
+    try {
+      let timeLimitMs;
+      if (range === '1d') timeLimitMs = 24 * 60 * 60 * 1000;
+      else if (range === '5d') timeLimitMs = 5 * 24 * 60 * 60 * 1000;
+      else if (range === '1mo') timeLimitMs = 30 * 24 * 60 * 60 * 1000;
+      else if (range === '3mo') timeLimitMs = 90 * 24 * 60 * 60 * 1000;
+      else if (range === '1y') timeLimitMs = 365 * 24 * 60 * 60 * 1000;
+      else timeLimitMs = 365 * 24 * 60 * 60 * 1000;
+      
+      const startDateIso = new Date(Date.now() - timeLimitMs).toISOString();
+      const rows = db.prepare(`SELECT timestamp, nav FROM nav_history WHERE timestamp >= ? ORDER BY timestamp ASC`)
+        .all(startDateIso);
+      
+      if (rows && rows.length > 0) {
+        const history = rows.filter(r => r.nav > 0).map(r => ({ date: r.timestamp, nav: r.nav }));
+        if (currentNav > 0) {
+          history.push({ date: new Date().toISOString(), nav: currentNav });
         }
-      } catch (err) {
-        console.error("nav_history query error:", err.message);
+        return history;
       }
+    } catch (err) {
+      console.error("nav_history query error:", err.message);
     }
   }
 
-  // 3. Read all historical trades
+  // 3. Fallback: Read all historical trades for reconstruction
   const tradingMode = process.env.TRADING_MODE || "paper";
   const trades = readTrades(null, tradingMode, null, 10000);
   
