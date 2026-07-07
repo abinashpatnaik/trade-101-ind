@@ -89,11 +89,12 @@ class OrderExecutor:
         tp_order_id: Optional[int] = None
         fractional = self._is_fractional(quantity)
 
-        if fractional:
+        if fractional or not hasattr(self._ibkr, "place_trailing_stop_order"):
             logger.info(
-                "Fractional position for %s (qty=%.4f) — using SOFTWARE trailing stop.",
+                "Native trailing stops not supported or fractional position for %s (qty=%.4f) — using SOFTWARE trailing stop.",
                 symbol, quantity,
             )
+            fractional = True # Force software trailing stop behavior
         else:
             # --- Native Trailing Stop (whole shares only) ---
             for attempt in range(5):
