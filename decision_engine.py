@@ -207,9 +207,15 @@ class DecisionEngine:
         price_qty = max_notional / current_price
         qty = min(atr_qty, price_qty)
 
-        # Round to 4 decimal places (Alpaca supports up to 9 but 4 is practical)
-        qty = round(qty, 4)
-        return max(0.01, qty)
+        import config
+        if config.ACTIVE_MARKET == "IN":
+            import math
+            qty = math.floor(qty)
+            return float(qty)
+        else:
+            # Round to 4 decimal places (Alpaca supports up to 9 but 4 is practical)
+            qty = round(qty, 4)
+            return max(0.01, qty)
 
     def _has_capacity(self, open_positions: Dict) -> bool:
         """Return True if the portfolio can take on another position."""

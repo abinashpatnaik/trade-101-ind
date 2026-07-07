@@ -425,43 +425,43 @@ class TradingAgent:
                         pnl: Optional[float] = None
                         exit_reason: Optional[str] = None
 
-                    if decision.action == "SELL":
-                        position = self.portfolio.open_positions.get(symbol, {})
-                        avg_cost = float(position.get("avg_cost", current_price))
-                        qty = float(position.get("quantity", decision.quantity))
-                        pnl = (current_price - avg_cost) * qty
-                        exit_reason = "SELL_SIGNAL"
+                        if decision.action == "SELL":
+                            position = self.portfolio.open_positions.get(symbol, {})
+                            avg_cost = float(position.get("avg_cost", current_price))
+                            qty = float(position.get("quantity", decision.quantity))
+                            pnl = (current_price - avg_cost) * qty
+                            exit_reason = "SELL_SIGNAL"
 
-                    self.portfolio.record_trade(
-                        symbol=symbol,
-                        action=decision.action,
-                        quantity=decision.quantity,
-                        price=current_price,
-                        pnl=pnl,
-                        exit_reason=exit_reason,
-                    )
+                        self.portfolio.record_trade(
+                            symbol=symbol,
+                            action=decision.action,
+                            quantity=decision.quantity,
+                            price=current_price,
+                            pnl=pnl,
+                            exit_reason=exit_reason,
+                        )
 
-                    if decision.action == "SELL" and pnl is not None:
-                        self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
+                        if decision.action == "SELL" and pnl is not None:
+                            self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
 
-                    # Notify learning engine on SELL
-                    if decision.action == "SELL":
-                        try:
-                            trade_headlines = self.sentiment_engine.get_last_headlines(symbol)
-                            cost_basis = decision.quantity * current_price if decision.quantity and current_price else 1.0
-                            pnl_pct = (pnl / cost_basis * 100) if pnl is not None and cost_basis > 0 else 0.0
-                            self.learning.on_trade_closed(
-                                symbol=symbol,
-                                action="SELL",
-                                pnl=pnl or 0.0,
-                                pnl_pct=pnl_pct,
-                                sentiment_score=sentiment_score,
-                                trend_score=trend_signal.overall_trend,
-                                combined_score=decision.combined_score,
-                                headlines=trade_headlines,
-                            )
-                        except Exception as _le:
-                            logger.debug("Learning engine update failed: %s", _le)
+                        # Notify learning engine on SELL
+                        if decision.action == "SELL":
+                            try:
+                                trade_headlines = self.sentiment_engine.get_last_headlines(symbol)
+                                cost_basis = decision.quantity * current_price if decision.quantity and current_price else 1.0
+                                pnl_pct = (pnl / cost_basis * 100) if pnl is not None and cost_basis > 0 else 0.0
+                                self.learning.on_trade_closed(
+                                    symbol=symbol,
+                                    action="SELL",
+                                    pnl=pnl or 0.0,
+                                    pnl_pct=pnl_pct,
+                                    sentiment_score=sentiment_score,
+                                    trend_score=trend_signal.overall_trend,
+                                    combined_score=decision.combined_score,
+                                    headlines=trade_headlines,
+                                )
+                            except Exception as _le:
+                                logger.debug("Learning engine update failed: %s", _le)
 
             # --- 6. Exit condition check for existing positions ---
             if symbol in self.portfolio.open_positions and self.executor is not None:
