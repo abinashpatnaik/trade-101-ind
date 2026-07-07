@@ -192,11 +192,14 @@ function renderPositions(positions) {
       <tr>
         <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${p.symbol}')">${p.symbol}</span></td>
         <td class="mono td-right">${p.quantity}</td>
-        <td class="mono td-right">${formatMoney(p.currentPrice)}</td>
-        <td class="mono td-right ${colorClass}">${formatMoney(p.pnl)}<br><span style="font-size: 11px;">${p.pnlPct.toFixed(2)}%</span></td>
+        <td class="mono td-right" id="pos-price-${p.symbol}">${formatMoney(p.currentPrice)}</td>
+        <td class="mono td-right ${colorClass}" id="pos-pnl-cell-${p.symbol}" data-entry="${p.entryPrice}" data-qty="${p.quantity}">
+          <span id="pos-pnl-${p.symbol}">${formatMoney(p.pnl)}</span><br>
+          <span style="font-size: 11px;" id="pos-pnlpct-${p.symbol}">${p.pnlPct.toFixed(2)}%</span>
+        </td>
         <td class="td-right">
-          <div style="font-size: 11px; color: var(--text-secondary);">TP: $${p.takeProfit || '-'}</div>
-          <div style="font-size: 11px; color: var(--text-secondary);">Trail: $${p.trailingStop || '-'}</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">TP: ${p.takeProfit ? formatMoney(p.takeProfit) : '-'}</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">Trail: ${p.trailingStop ? formatMoney(p.trailingStop) : '-'}</div>
         </td>
       </tr>
     `;
@@ -658,6 +661,39 @@ function setupLiveTicker() {
           }
           el.innerHTML = `<strong>${data.symbol}</strong> ${formatMoney(data.price)} ${arrow}`;
         });
+      }
+
+      // Update positions table
+      const posPriceEl = document.getElementById(`pos-price-${data.symbol}`);
+      if (posPriceEl) {
+        if (data.price !== prevPrice) {
+          posPriceEl.classList.remove('flash-green', 'flash-red');
+          void posPriceEl.offsetWidth; // Reflow
+          posPriceEl.classList.add(data.price >= prevPrice ? 'flash-green' : 'flash-red');
+        }
+        posPriceEl.innerHTML = formatMoney(data.price);
+
+        const posPnlCell = document.getElementById(`pos-pnl-cell-${data.symbol}`);
+        const posPnlEl = document.getElementById(`pos-pnl-${data.symbol}`);
+        const posPnlPctEl = document.getElementById(`pos-pnlpct-${data.symbol}`);
+
+        if (posPnlCell && posPnlEl && posPnlPctEl) {
+          const entryPrice = parseFloat(posPnlCell.getAttribute('data-entry'));
+          const qty = parseFloat(posPnlCell.getAttribute('data-qty'));
+          
+          if (!isNaN(entryPrice) && !isNaN(qty) && qty > 0) {
+            const mktValue = data.price * qty;
+            const costValue = entryPrice * qty;
+            const pnl = mktValue - costValue;
+            const pnlPct = (pnl / costValue) * 100;
+            
+            posPnlEl.innerHTML = formatMoney(pnl);
+            posPnlPctEl.innerHTML = pnlPct.toFixed(2) + '%';
+            
+            posPnlCell.classList.remove('status-buy', 'status-sell');
+            posPnlCell.classList.add(pnl >= 0 ? 'status-buy' : 'status-sell');
+          }
+        }
       }
     } catch (err) {
       console.error("Error parsing live tick:", err);
