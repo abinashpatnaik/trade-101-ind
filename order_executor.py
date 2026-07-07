@@ -337,25 +337,16 @@ class OrderExecutor:
             self._trailing_high.pop(symbol, None)
             return "TAKE_PROFIT"
 
-        # 3. Check Trailing Stop — Profit Lock Gate
+        # 3. Continuous Fast Break-Even Trailing Stop
         #
-        # The trailing stop stays DORMANT until the high-water mark has
-        # risen by at least 1.5× the trailing gap above entry price.
-        # This guarantees that when the trailing stop fires (after a
-        # pullback of 1× gap from the high), you still lock in at least
-        # 0.5× gap worth of REAL PROFIT above entry.
-        #
-        # Example (1% ATR gap):
-        #   Entry = $100, gap = 1%
-        #   Stock must reach $101.50 (1.5× gap) → trailing stop ARMS
-        #   Trigger = $101.50 × 0.99 = $100.49 → guaranteed +0.49% profit
-        #   If stock keeps climbing to $110 → trigger tightens to ~$109.45
-        #
-        # Before the stock reaches 1.5× gap, ONLY the hard stop-loss
-        # (with break-even upgrade at 1× gap) protects the downside.
+        # The trailing stop is active immediately. As the stock climbs,
+        # the gap shrinks (e.g. from 1.0% down to 0.5%).
+        # By the time the stock has climbed 0.5× the gap (+0.5%), the
+        # tightening math naturally puts the trigger at break-even.
+        # We enforce a hard Break-Even floor once it reaches this point
+        # to guarantee zero negative PnL exits for stocks that had a modest rise.
         gain_pct = (self._trailing_high[symbol] / order.entry_price) - 1.0
 
-        # Compute trailing percentage (tightens as profit grows, min 0.5%)
         base_trailing_pct = order.initial_trailing_pct
         if gain_pct > 0:
             current_trailing_pct = max(0.005, base_trailing_pct - gain_pct)
@@ -364,18 +355,22 @@ class OrderExecutor:
 
         trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - current_trailing_pct)
 
-        # ── Profit Lock Gate ──
-        # The trailing stop only arms once the stock has climbed 1.5× the
-        # trailing gap.  This ensures real profit is locked in.
-        arming_threshold = order.entry_price * (1.0 + 1.5 * base_trailing_pct)
-        if self._trailing_high[symbol] < arming_threshold:
-            return None
+        # Hard Break-Even Floor: If stock rose at least half the gap, never lose money.
+        if gain_pct >= (base_trailing_pct * 0.5):
+            trailing_stop_trigger = max(trailing_stop_trigger, order.entry_price)
 
         if current_price <= trailing_stop_trigger:
             locked_profit_pct = ((trailing_stop_trigger / order.entry_price) - 1.0) * 100
+            
+            # Label negative exits as STOP_LOSS to prevent user confusion,
+            # and positive exits as TRAILING_STOP.
+            is_profit = trailing_stop_trigger >= order.entry_price
+            exit_reason = "TRAILING_STOP" if is_profit else "STOP_LOSS"
+            
             logger.warning(
-                "SOFTWARE TRAILING STOP triggered for %s: price=%.4f <= trigger=%.4f "
-                "(high=%.4f, entry=%.4f, gap=%.2f%%, locked_profit=+%.2f%%)",
+                "SOFTWARE %s triggered for %s: price=%.4f <= trigger=%.4f "
+                "(high=%.4f, entry=%.4f, gap=%.2f%%, locked_profit=%.2f%%)",
+                exit_reason,
                 symbol,
                 current_price,
                 trailing_stop_trigger,
@@ -386,7 +381,7 @@ class OrderExecutor:
             )
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
-            return "TRAILING_STOP"
+            return exit_reason
 
         return None
 
