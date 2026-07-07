@@ -625,8 +625,8 @@ class SentimentEngine:
             )
 
         logger.info(
-            "Trade history loaded: %d symbols scored from %s",
-            len(self._trade_history_score), trades_csv,
+            "Trade history loaded: %d symbols scored from the database",
+            len(self._trade_history_score)
         )
 
     # ------------------------------------------------------------------
