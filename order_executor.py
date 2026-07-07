@@ -340,19 +340,19 @@ class OrderExecutor:
         # 3. Check Trailing Stop — Profit Lock Gate
         #
         # The trailing stop stays DORMANT until the high-water mark has
-        # risen by at least 2× the trailing gap above entry price.
+        # risen by at least 1.5× the trailing gap above entry price.
         # This guarantees that when the trailing stop fires (after a
         # pullback of 1× gap from the high), you still lock in at least
-        # 1× gap worth of REAL PROFIT above entry.
+        # 0.5× gap worth of REAL PROFIT above entry.
         #
-        # Example (1.5% ATR gap):
-        #   Entry = $100, gap = 1.5%
-        #   Stock must reach $103.00 (2× gap = 3%) → trailing stop ARMS
-        #   Trigger = $103 × 0.985 = $101.46 → guaranteed +1.46% profit
+        # Example (1% ATR gap):
+        #   Entry = $100, gap = 1%
+        #   Stock must reach $101.50 (1.5× gap) → trailing stop ARMS
+        #   Trigger = $101.50 × 0.99 = $100.49 → guaranteed +0.49% profit
         #   If stock keeps climbing to $110 → trigger tightens to ~$109.45
         #
-        # Before the stock reaches 2× gap, ONLY the hard stop-loss
-        # protects the downside.
+        # Before the stock reaches 1.5× gap, ONLY the hard stop-loss
+        # (with break-even upgrade at 1× gap) protects the downside.
         gain_pct = (self._trailing_high[symbol] / order.entry_price) - 1.0
 
         # Compute trailing percentage (tightens as profit grows, min 0.5%)
@@ -365,9 +365,9 @@ class OrderExecutor:
         trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - current_trailing_pct)
 
         # ── Profit Lock Gate ──
-        # The trailing stop only arms once the stock has climbed 2× the
-        # trailing gap.  This ensures a full gap of profit is locked in.
-        arming_threshold = order.entry_price * (1.0 + 2.0 * base_trailing_pct)
+        # The trailing stop only arms once the stock has climbed 1.5× the
+        # trailing gap.  This ensures real profit is locked in.
+        arming_threshold = order.entry_price * (1.0 + 1.5 * base_trailing_pct)
         if self._trailing_high[symbol] < arming_threshold:
             return None
 
