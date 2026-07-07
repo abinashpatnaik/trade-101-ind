@@ -581,10 +581,16 @@ app.get("/api/positions", async (_req, res) => {
           else strategy = "Trend Follow";
       }
 
-        let trailingTrigger = mktPrice * 0.985;
-        if (mktPrice > avgCost * 1.01) {
-            trailingTrigger = Math.max(trailingTrigger, avgCost * 1.002);
+        // Variable Tightening Trailing Stop Algorithm (Display approximation)
+        let initialTrailingPct = 0.015; // default fallback if ATR unknown
+        let gainPct = (mktPrice / avgCost) - 1.0;
+        let currentTrailingPct = initialTrailingPct;
+        
+        if (gainPct > 0) {
+            currentTrailingPct = Math.max(0.005, initialTrailingPct - gainPct);
         }
+        
+        let trailingTrigger = mktPrice * (1.0 - currentTrailingPct);
 
         return {
           symbol,

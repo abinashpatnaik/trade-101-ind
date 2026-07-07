@@ -72,10 +72,10 @@ class Decision:
     stop_loss_price: float       # 0.0 for HOLD/SELL-to-close
     take_profit_price: float     # 0.0 for HOLD/SELL-to-close
     combined_score: float        # [-1.0, 1.0]
+    trailing_stop_pct: float = 0.0 # Dynamic ATR-based trailing stop pct
     ai_decision: Optional[str] = None
     ai_reason: Optional[str] = None
     ml_confidence: float = 0.0
-
 
 class DecisionEngine:
     """
@@ -568,15 +568,18 @@ class DecisionEngine:
             take_profit_price = round(
                 current_price * (1.0 + self._risk.take_profit_pct), 4
             )
+            
+            # Dynamic ATR-based trailing stop pct (bounded 1% to 3%)
+            atr_multiplier = 2.0
+            atr_pct = (trend_signal.atr * atr_multiplier) / current_price if current_price > 0 else 0.015
+            dynamic_trailing_stop_pct = max(0.01, min(0.03, atr_pct))
 
             reason = (
                 f"BUY signal — combined_score={combined_score:.3f} "
                 f"(trend={trend_signal.overall_trend:.3f}, "
                 f"sentiment={sentiment_score:.3f}). "
-                f"RSI={trend_signal.rsi:.1f}, EMA={trend_signal.ema_signal}, "
-                f"MACD={trend_signal.macd_signal}, VWAP={trend_signal.vwap_signal}, "
-                f"ADX={adx:.1f}, Vol={vol_ratio:.2f}x. "
-                f"SL={stop_loss_price:.4f}, TP={take_profit_price:.4f}."
+                f"ML={active_ml_confidence:.2f} "
+                f"Using {quantity} shares."
             )
 
             logger.info(
@@ -591,6 +594,7 @@ class DecisionEngine:
                 quantity=quantity,
                 stop_loss_price=stop_loss_price,
                 take_profit_price=take_profit_price,
+                trailing_stop_pct=dynamic_trailing_stop_pct,
                 combined_score=combined_score, ml_confidence=active_ml_confidence,
             )
 

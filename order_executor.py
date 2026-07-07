@@ -43,6 +43,7 @@ class OpenOrder:
     stop_loss_order_id: Optional[int] = None
     take_profit_order_id: Optional[int] = None
     is_fractional: bool = False               # True = software trailing stop
+    initial_trailing_pct: float = 0.0         # Dynamic ATR-based gap
 
 
 class OrderExecutor:
@@ -78,6 +79,7 @@ class OrderExecutor:
         entry_price: float,
         stop_loss_price: float,
         take_profit_price: float,
+        initial_trailing_pct: float,
     ) -> OpenOrder:
         """
         Submit trailing stop after market-buy.
@@ -87,44 +89,12 @@ class OrderExecutor:
         """
         sl_order_id: Optional[int] = None
         tp_order_id: Optional[int] = None
-        fractional = self._is_fractional(quantity)
+        fractional = True # Force software trailing stop behavior for all markets (Variable Tightening logic)
 
-        if fractional or not hasattr(self._ibkr, "place_trailing_stop_order"):
-            logger.info(
-                "Native trailing stops not supported or fractional position for %s (qty=%.4f) — using SOFTWARE trailing stop.",
-                symbol, quantity,
-            )
-            fractional = True # Force software trailing stop behavior
-        else:
-            # --- Native Trailing Stop (whole shares only) ---
-            for attempt in range(5):
-                try:
-                    sl_order_id = self._ibkr.place_trailing_stop_order(
-                        symbol=symbol,
-                        action="SELL",
-                        quantity=quantity,
-                        trail_percent=config.risk.trailing_stop_pct,
-                    )
-                    logger.info(
-                        "Native Trailing Stop placed for %s @ %.2f%% trail (order_id=%s)",
-                        symbol, config.risk.trailing_stop_pct * 100, sl_order_id,
-                    )
-                    break
-                except Exception as exc:
-                    if attempt < 4:
-                        logger.warning(
-                            "Trailing stop rejected for %s (waiting for BUY fill). Retrying in 2s...",
-                            symbol,
-                        )
-                        time.sleep(2)
-                    else:
-                        logger.error(
-                            "Failed to place trailing stop for %s after 5 attempts: %s",
-                            symbol, exc, exc_info=True,
-                        )
-                        # Fall back to software trailing stop
-                        fractional = True
-                        logger.info("Falling back to SOFTWARE trailing stop for %s.", symbol)
+        logger.info(
+            "Using SOFTWARE trailing stop for %s to enable dynamic Variable Tightening math.",
+            symbol,
+        )
 
         return OpenOrder(
             symbol=symbol,
@@ -137,6 +107,7 @@ class OrderExecutor:
             stop_loss_order_id=sl_order_id,
             take_profit_order_id=tp_order_id,
             is_fractional=fractional,
+            initial_trailing_pct=initial_trailing_pct,
         )
 
     def _cancel_bracket(self, symbol: str) -> None:
@@ -216,6 +187,7 @@ class OrderExecutor:
                 entry_price=current_price,
                 stop_loss_price=decision.stop_loss_price,
                 take_profit_price=decision.take_profit_price,
+                initial_trailing_pct=decision.trailing_stop_pct,
             )
             self._open_orders[symbol] = open_order
             self._trailing_high[symbol] = current_price
@@ -346,25 +318,26 @@ class OrderExecutor:
             return "TAKE_PROFIT"
 
         # 3. Check Trailing Stop
-        trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - self._trailing_stop_pct)
+        # Variable Tightening Trailing Stop Algorithm
+        # Initial gap is set dynamically via ATR when order is opened.
+        # For every 0.1% the stock gains, the gap shrinks by 0.1%, down to a minimum of 0.5%.
+        gain_pct = (self._trailing_high[symbol] / order.entry_price) - 1.0
+        if gain_pct <= 0:
+            current_trailing_pct = order.initial_trailing_pct
+        else:
+            current_trailing_pct = max(0.005, order.initial_trailing_pct - gain_pct)
 
-        # Smart Trailing Stop (Breakeven Protection)
-        # If the stock has gained more than 1.0% since entry, we ensure the 
-        # trailing stop does not fall below a 0.2% profit margin to guarantee +ve PNL.
-        if self._trailing_high[symbol] > order.entry_price * 1.01:
-            breakeven_floor = order.entry_price * 1.002
-            if trailing_stop_trigger < breakeven_floor:
-                trailing_stop_trigger = breakeven_floor
+        trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - current_trailing_pct)
 
         if current_price <= trailing_stop_trigger:
             logger.warning(
                 "SOFTWARE TRAILING STOP triggered for %s: price=%.4f <= trigger=%.4f "
-                "(high=%.4f, pct=%.1f%%)",
+                "(high=%.4f, pct=%.2f%%)",
                 symbol,
                 current_price,
                 trailing_stop_trigger,
                 self._trailing_high[symbol],
-                self._trailing_stop_pct * 100,
+                current_trailing_pct * 100,
             )
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
@@ -434,7 +407,8 @@ class OrderExecutor:
                             entry_price=float(pos.get("avg_cost", current_price)),
                             stop_loss_price=0.0,
                             take_profit_price=0.0,
-                            is_fractional=True
+                            is_fractional=True,
+                            initial_trailing_pct=0.015
                         )
                         self._trailing_high[symbol] = current_price
                         logger.info("Restored software trailing stop tracker for %s at %.4f", symbol, current_price)
