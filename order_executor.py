@@ -303,9 +303,9 @@ class OrderExecutor:
         #
         # If a stock hasn't risen significantly, progressively squeeze
         # the stop loss so we don't hold dead positions for hours:
-        #   At entry:     hard stop = original (-1%)
-        #   After 15 min: if gain < +0.3%, tighten to -0.5%
-        #   After 30 min: if gain < +0.3%, tighten to -0.3%
+        #   At entry:     hard stop = -0.5%
+        #   After 15 min: if gain < +0.3%, tighten to -0.3%
+        #   After 30 min: if gain < +0.3%, tighten to -0.15%
         #   After 60 min: if gain < +0.3%, exit at market
         elapsed_sec = time.monotonic() - order.entry_time if order.entry_time > 0 else 0
         current_gain_pct = (current_price / order.entry_price) - 1.0 if order.entry_price > 0 else 0
@@ -324,10 +324,10 @@ class OrderExecutor:
                 self._trailing_high.pop(symbol, None)
                 return "STOP_LOSS"
             elif elapsed_sec >= 1800:  # 30 minutes
-                tight_stop = order.entry_price * (1.0 - 0.003)  # -0.3%
+                tight_stop = order.entry_price * (1.0 - 0.0015)  # -0.15%
                 effective_stop = max(effective_stop, tight_stop)
             elif elapsed_sec >= 900:  # 15 minutes
-                tight_stop = order.entry_price * (1.0 - 0.005)  # -0.5%
+                tight_stop = order.entry_price * (1.0 - 0.003)  # -0.3%
                 effective_stop = max(effective_stop, tight_stop)
 
         # 2. Break-Even Upgrade
