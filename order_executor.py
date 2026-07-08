@@ -44,6 +44,7 @@ class OpenOrder:
     take_profit_order_id: Optional[int] = None
     is_fractional: bool = False               # True = software trailing stop
     initial_trailing_pct: float = 0.0         # Dynamic ATR-based gap
+    entry_time: float = 0.0                   # time.monotonic() at entry for time-based tightening
 
 
 class OrderExecutor:
@@ -108,6 +109,7 @@ class OrderExecutor:
             take_profit_order_id=tp_order_id,
             is_fractional=fractional,
             initial_trailing_pct=initial_trailing_pct,
+            entry_time=time.monotonic(),
         )
 
     def _cancel_bracket(self, symbol: str) -> None:
@@ -297,37 +299,62 @@ class OrderExecutor:
                 "Software trailing high updated for %s: %.4f", symbol, current_price
             )
 
-        # 1. Check Hard Stop Loss (with Break-Even Upgrade)
+        # 1. Time-Based Progressive Stop Tightening
         #
-        # 3-Phase Safety System:
-        #   Phase 1: Stock hasn't risen yet → hard stop at original level (-1%)
-        #   Phase 2: Stock rose 1× trailing gap → stop upgrades to ENTRY PRICE
-        #   Phase 3: Stock rose 2× trailing gap → trailing stop arms (profit lock)
-        #
-        # The break-even upgrade ensures that stocks which rise modestly
-        # (1-2%) and then reverse will exit at $0 PnL instead of -1%.
+        # If a stock hasn't risen significantly, progressively squeeze
+        # the stop loss so we don't hold dead positions for hours:
+        #   At entry:     hard stop = original (-1%)
+        #   After 15 min: if gain < +0.3%, tighten to -0.5%
+        #   After 30 min: if gain < +0.3%, tighten to -0.3%
+        #   After 60 min: if gain < +0.3%, exit at market
+        elapsed_sec = time.monotonic() - order.entry_time if order.entry_time > 0 else 0
+        current_gain_pct = (current_price / order.entry_price) - 1.0 if order.entry_price > 0 else 0
+
         effective_stop = order.stop_loss_price
 
+        if current_gain_pct < 0.003:  # Stock hasn't risen 0.3%
+            if elapsed_sec >= 3600:  # 60 minutes
+                # Exit at market — accept whatever small loss
+                logger.warning(
+                    "TIME STOP (60min) triggered for %s: price=%.4f, gain=%.2f%%, "
+                    "elapsed=%.0fs. Exiting stale position.",
+                    symbol, current_price, current_gain_pct * 100, elapsed_sec,
+                )
+                self._open_orders.pop(symbol, None)
+                self._trailing_high.pop(symbol, None)
+                return "STOP_LOSS"
+            elif elapsed_sec >= 1800:  # 30 minutes
+                tight_stop = order.entry_price * (1.0 - 0.003)  # -0.3%
+                effective_stop = max(effective_stop, tight_stop)
+            elif elapsed_sec >= 900:  # 15 minutes
+                tight_stop = order.entry_price * (1.0 - 0.005)  # -0.5%
+                effective_stop = max(effective_stop, tight_stop)
+
+        # 2. Break-Even Upgrade
+        #
+        # If stock has risen past the trailing gap, upgrade hard stop
+        # to entry price (break-even).
         breakeven_threshold = order.entry_price * (1.0 + order.initial_trailing_pct)
         if self._trailing_high.get(symbol, 0) >= breakeven_threshold:
-            # Stock has risen enough — upgrade stop to break-even
             effective_stop = max(effective_stop, order.entry_price)
 
         if effective_stop > 0 and current_price <= effective_stop:
             is_breakeven = effective_stop >= order.entry_price
+            is_time_tightened = elapsed_sec >= 900 and current_gain_pct < 0.003
+            label = "TIME STOP" if is_time_tightened else ("BREAKEVEN STOP" if is_breakeven else "STOP LOSS")
             logger.warning(
                 "SOFTWARE %s triggered for %s: price=%.4f <= trigger=%.4f "
-                "(original_stop=%.4f, entry=%.4f, high=%.4f)",
-                "BREAKEVEN STOP" if is_breakeven else "STOP LOSS",
+                "(original_stop=%.4f, entry=%.4f, high=%.4f, elapsed=%.0fs)",
+                label,
                 symbol, current_price, effective_stop,
                 order.stop_loss_price, order.entry_price,
-                self._trailing_high.get(symbol, 0),
+                self._trailing_high.get(symbol, 0), elapsed_sec,
             )
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
             return "STOP_LOSS"
 
-        # 2. Check Take Profit
+        # 3. Check Take Profit
         if order.take_profit_price > 0 and current_price >= order.take_profit_price:
             logger.warning(
                 "SOFTWARE TAKE PROFIT triggered for %s: price=%.4f >= trigger=%.4f",
@@ -337,14 +364,13 @@ class OrderExecutor:
             self._trailing_high.pop(symbol, None)
             return "TAKE_PROFIT"
 
-        # 3. Continuous Fast Break-Even Trailing Stop
+        # 4. Continuous Fast Break-Even Trailing Stop
         #
         # The trailing stop is active immediately. As the stock climbs,
         # the gap shrinks (e.g. from 1.0% down to 0.5%).
-        # By the time the stock has climbed 0.5× the gap (+0.5%), the
-        # tightening math naturally puts the trigger at break-even.
-        # We enforce a hard Break-Even floor once it reaches this point
-        # to guarantee zero negative PnL exits for stocks that had a modest rise.
+        # We enforce a hard Break-Even floor once the stock rises even
+        # slightly (0.15× the gap) to guarantee zero negative PnL exits
+        # for stocks that had any positive movement at all.
         gain_pct = (self._trailing_high[symbol] / order.entry_price) - 1.0
 
         base_trailing_pct = order.initial_trailing_pct
@@ -355,8 +381,9 @@ class OrderExecutor:
 
         trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - current_trailing_pct)
 
-        # Hard Break-Even Floor: If stock rose at least half the gap, never lose money.
-        if gain_pct >= (base_trailing_pct * 0.5):
+        # Hard Break-Even Floor: If stock rose even 0.15× the gap, never lose money.
+        # (Lowered from 0.5 to 0.15 so even a +0.15% bounce protects you)
+        if gain_pct >= (base_trailing_pct * 0.15):
             trailing_stop_trigger = max(trailing_stop_trigger, order.entry_price)
 
         if current_price <= trailing_stop_trigger:
@@ -448,7 +475,8 @@ class OrderExecutor:
                             stop_loss_price=0.0,
                             take_profit_price=0.0,
                             is_fractional=True,
-                            initial_trailing_pct=0.015
+                            initial_trailing_pct=0.015,
+                            entry_time=time.monotonic(),
                         )
                         self._trailing_high[symbol] = current_price
                         logger.info("Restored software trailing stop tracker for %s at %.4f", symbol, current_price)

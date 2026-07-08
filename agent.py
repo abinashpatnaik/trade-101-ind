@@ -235,11 +235,14 @@ class TradingAgent:
                         logger.info("INSTANT WebSocket exit triggered for %s: %s", symbol, exit_trigger)
                         qty = float(position.get("quantity", 0))
                         if qty > 0:
+                            # Use the order executor's entry_price for accurate PnL
+                            # (avoids Zerodha blended avg_cost bug for re-bought symbols)
+                            order = self.executor._open_orders.get(symbol)
+                            avg_cost = order.entry_price if order else float(position.get("avg_cost", price))
                             if config.agent.observe_only:
                                 logger.info("[OBSERVE MODE] Would close position for %s instantly (reason: %s), skipping.", symbol, exit_trigger)
                             else:
                                 self.executor.close_position(symbol, qty)
-                                avg_cost = float(position.get("avg_cost", price))
                             pnl = (price - avg_cost) * qty
                             self.portfolio.record_trade(
                                 symbol=symbol,
@@ -477,11 +480,14 @@ class TradingAgent:
                     )
                     qty = float(position.get("quantity", 0))
                     if qty > 0:
+                        # Use the order executor's entry_price for accurate PnL
+                        # (avoids Zerodha blended avg_cost bug for re-bought symbols)
+                        order = self.executor._open_orders.get(symbol)
+                        avg_cost = order.entry_price if order else float(position.get("avg_cost", current_price))
                         if config.agent.observe_only:
                             logger.info("[OBSERVE MODE] Would close position for %s (reason: %s), skipping.", symbol, exit_trigger)
                         else:
                             self.executor.close_position(symbol, qty)
-                            avg_cost = float(position.get("avg_cost", current_price))
                         pnl = (current_price - avg_cost) * qty
                         self.portfolio.record_trade(
                             symbol=symbol,
