@@ -68,7 +68,7 @@ class RiskConfig:
     """Position-level and portfolio-level risk controls."""
     max_position_size_pct: float = 0.30
     max_daily_loss_pct: float = 0.02
-    stop_loss_pct: float = 0.005
+    stop_loss_pct: float = 0.01
     take_profit_pct: float = 9.99  # Effectively disabled so profits can run
     max_open_positions: int = 3
     allow_short_selling: bool = False
