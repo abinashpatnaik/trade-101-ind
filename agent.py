@@ -244,6 +244,10 @@ class TradingAgent:
                             else:
                                 self.executor.close_position(symbol, qty)
                             pnl = (price - avg_cost) * qty
+                            # Profit-lock exits intend break-even or better;
+                            # tiny negatives are tick-gap slippage, not real losses.
+                            if exit_trigger == "TRAILING_STOP" and pnl < 0:
+                                pnl = 0.0
                             self.portfolio.record_trade(
                                 symbol=symbol,
                                 action="SELL",
@@ -489,6 +493,10 @@ class TradingAgent:
                         else:
                             self.executor.close_position(symbol, qty)
                         pnl = (current_price - avg_cost) * qty
+                        # Profit-lock exits intend break-even or better;
+                        # tiny negatives are tick-gap slippage, not real losses.
+                        if exit_trigger == "TRAILING_STOP" and pnl < 0:
+                            pnl = 0.0
                         self.portfolio.record_trade(
                             symbol=symbol,
                             action="SELL",

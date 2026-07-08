@@ -371,9 +371,12 @@ class OrderExecutor:
             trailing_stop_trigger = max(trailing_stop_trigger, order.entry_price)
 
             if current_price <= trailing_stop_trigger:
+                actual_pnl_positive = current_price >= order.entry_price
                 locked_profit_pct = ((trailing_stop_trigger / order.entry_price) - 1.0) * 100
-                is_profit = trailing_stop_trigger >= order.entry_price
-                exit_reason = "TRAILING_STOP" if is_profit else "STOP_LOSS"
+                # Label based on ACTUAL exit PnL, not the trigger level.
+                # Tick gaps can cause current_price to drop below entry even
+                # though the trigger was at break-even — label honestly.
+                exit_reason = "TRAILING_STOP" if actual_pnl_positive else "STOP_LOSS"
 
                 logger.warning(
                     "PROFIT-LOCK %s triggered for %s: price=%.4f <= trigger=%.4f "

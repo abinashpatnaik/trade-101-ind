@@ -582,18 +582,34 @@ app.get("/api/positions", async (_req, res) => {
           else strategy = "Trend Follow";
       }
 
-        // Variable Tightening Trailing Stop Algorithm (Display approximation)
-        let initialTrailingPct = 0.015; // default fallback if ATR unknown
-        let gainPct = (mktPrice / avgCost) - 1.0;
-        let currentTrailingPct = initialTrailingPct;
-        
-        if (gainPct > 0) {
-            currentTrailingPct = Math.max(0.005, initialTrailingPct - gainPct);
-        }
-        
-        let trailingTrigger = mktPrice * (1.0 - currentTrailingPct);
+        // "Patience Then Lock" Trailing Stop Display
+        // Mirrors the Python logic in order_executor.py:
+        //   - If stock has EVER been in profit (mktPrice > avgCost at any point),
+        //     trail tightly (0.3% gap) from the high, floored at entry price.
+        //   - If stock is not in profit, show the hard stop at -1%.
+        let gainPct = avgCost > 0 ? (mktPrice / avgCost) - 1.0 : 0;
+        let trailingTrigger;
+        let effectiveStopLoss = Math.round(avgCost * (1.0 - 0.01) * 100) / 100; // -1% hard stop
 
-        return {
+        if (gainPct > 0) {
+            // Stock is in profit — show the profit-lock trailing stop
+            // Graduated gap: tighter as profit grows
+            let trailGap;
+            if (gainPct >= 0.03) trailGap = 0.001;       // 0.1% gap
+            else if (gainPct >= 0.02) trailGap = 0.0015;  // 0.15% gap
+            else if (gainPct >= 0.01) trailGap = 0.002;   // 0.2% gap
+            else if (gainPct >= 0.005) trailGap = 0.0025;  // 0.25% gap
+            else trailGap = 0.003;                          // 0.3% gap
+
+            trailingTrigger = mktPrice * (1.0 - trailGap);
+            // Floor at entry price (break-even)
+            trailingTrigger = Math.max(trailingTrigger, avgCost);
+        } else {
+            // Stock is not in profit — trailing stop = hard stop
+            trailingTrigger = effectiveStopLoss;
+        }
+
+      return {
           symbol,
           quantity: qty,
           entryPrice: avgCost,
@@ -601,8 +617,8 @@ app.get("/api/positions", async (_req, res) => {
           marketValue: mktValue,
           pnl: Math.round(pnl * 100) / 100,
           pnlPct: Math.round(pnlPct * 100) / 100,
-          stopLoss: Math.round(avgCost * 0.985 * 100) / 100,
-          takeProfit: Math.round(avgCost * 1.015 * 100) / 100,
+          stopLoss: effectiveStopLoss,
+          takeProfit: Math.round(avgCost * (1.0 + 0.015) * 100) / 100,
           trailingStop: Math.round(trailingTrigger * 100) / 100,
           allocation: nav > 0 ? Math.round((mktValue / nav) * 1000) / 10 : 0,
         strategy: strategy
