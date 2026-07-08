@@ -342,35 +342,34 @@ class OrderExecutor:
 
         # --- 3. Profit-Lock Trailing Stop ---
         #
-        # Only activates when the stock is CURRENTLY at +0.15% or more.
-        # If the stock dips below +0.15%, the lock deactivates and the
-        # stock is free to oscillate with only the -1% hard stop.
-        # When it recovers back to +0.15%, the lock reactivates from
-        # the new recovery point (trailing_high is reset during dips).
+        # Only activates when the stock is CURRENTLY above the profit-lock
+        # threshold (market-specific: US=+0.15%, IN=+0.25%).
+        # If the stock dips below, the lock deactivates and the stock is
+        # free to oscillate with only the hard stop protecting it.
+        # When it recovers, the lock reactivates from the new recovery point.
         #
-        # This lets stocks ride through market noise instead of being
-        # sold at break-even every time they briefly touch +0.15%.
-        #
-        # Trailing gap (from the high) shrinks as profit grows:
-        #   +0.15% gain → 0.30% gap (stop at break-even)
-        #   +0.5% gain  → 0.25% gap (locks in +0.25%)
-        #   +1.0% gain  → 0.20% gap (locks in +0.8%)
-        #   +2.0% gain  → 0.15% gap (locks in +1.85%)
-        #   +3.0%+ gain → 0.10% gap (locks in +2.9%)
-        PROFIT_LOCK_THRESHOLD = 0.0015  # +0.15% minimum CURRENT gain to activate
+        # Trailing gap (from the high) shrinks as profit grows.
+        # The base gap is market-specific (US=0.3%, IN=0.5%):
+        #   threshold gain → base gap     (stop at break-even)
+        #   +0.5% gain     → base × 0.83  (slightly tighter)
+        #   +1.0% gain     → base × 0.67  (locking more profit)
+        #   +2.0% gain     → base × 0.50  (half the base gap)
+        #   +3.0%+ gain    → base × 0.33  (tight lock for big winners)
+        profit_lock_threshold = config.risk.profit_lock_threshold
+        base_gap = config.risk.trailing_gap_base
 
-        if gain_from_entry >= PROFIT_LOCK_THRESHOLD:
+        if gain_from_entry >= profit_lock_threshold:
             # Graduated trailing gap — tighter as profit grows
             if gain_from_high >= 0.03:
-                trail_gap = 0.001   # 0.1% gap for big winners
+                trail_gap = base_gap * 0.33    # tight lock for big winners
             elif gain_from_high >= 0.02:
-                trail_gap = 0.0015  # 0.15% gap
+                trail_gap = base_gap * 0.50
             elif gain_from_high >= 0.01:
-                trail_gap = 0.002   # 0.2% gap
+                trail_gap = base_gap * 0.67
             elif gain_from_high >= 0.005:
-                trail_gap = 0.0025  # 0.25% gap
+                trail_gap = base_gap * 0.83
             else:
-                trail_gap = 0.003   # 0.3% gap for small gains
+                trail_gap = base_gap            # widest gap for small gains
 
             trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - trail_gap)
 
@@ -398,7 +397,7 @@ class OrderExecutor:
                 self._trailing_high.pop(symbol, None)
                 return exit_reason
         else:
-            # Stock is below +0.15% — profit-lock INACTIVE.
+            # Stock is below threshold — profit-lock INACTIVE.
             # Reset trailing_high to current price so that when the lock
             # reactivates after a recovery, it trails from the new recovery
             # point instead of from a stale old high that would cause an

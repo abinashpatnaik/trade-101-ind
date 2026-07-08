@@ -585,21 +585,27 @@ app.get("/api/positions", async (_req, res) => {
         // "Patience Then Lock" Trailing Stop Display
         // Mirrors the Python logic in order_executor.py:
         //   - If stock has EVER been in profit (mktPrice > avgCost at any point),
-        //     trail tightly (0.3% gap) from the high, floored at entry price.
-        //   - If stock is not in profit, show the hard stop at -1%.
+        //     trail tightly from the high, floored at entry price.
+        //   - If stock is not in profit, show the hard stop.
+        // Market-specific risk parameters:
+        const isIN = (typeof MARKET_TYPE !== 'undefined' ? MARKET_TYPE : 'US') === 'IN';
+        const stopLossPct = isIN ? 0.015 : 0.01;          // IN: -1.5%, US: -1%
+        const lockThreshold = isIN ? 0.0025 : 0.0015;     // IN: +0.25%, US: +0.15%
+        const baseGap = isIN ? 0.005 : 0.003;             // IN: 0.5%, US: 0.3%
+
         let gainPct = avgCost > 0 ? (mktPrice / avgCost) - 1.0 : 0;
         let trailingTrigger;
-        let effectiveStopLoss = Math.round(avgCost * (1.0 - 0.01) * 100) / 100; // -1% hard stop
+        let effectiveStopLoss = Math.round(avgCost * (1.0 - stopLossPct) * 100) / 100;
 
-        if (gainPct >= 0.0015) {
-            // Stock is in profit (+0.15%+) — show the profit-lock trailing stop
+        if (gainPct >= lockThreshold) {
+            // Stock is in profit — show the profit-lock trailing stop
             // Graduated gap: tighter as profit grows
             let trailGap;
-            if (gainPct >= 0.03) trailGap = 0.001;       // 0.1% gap
-            else if (gainPct >= 0.02) trailGap = 0.0015;  // 0.15% gap
-            else if (gainPct >= 0.01) trailGap = 0.002;   // 0.2% gap
-            else if (gainPct >= 0.005) trailGap = 0.0025;  // 0.25% gap
-            else trailGap = 0.003;                          // 0.3% gap
+            if (gainPct >= 0.03) trailGap = baseGap * 0.33;
+            else if (gainPct >= 0.02) trailGap = baseGap * 0.50;
+            else if (gainPct >= 0.01) trailGap = baseGap * 0.67;
+            else if (gainPct >= 0.005) trailGap = baseGap * 0.83;
+            else trailGap = baseGap;
 
             trailingTrigger = mktPrice * (1.0 - trailGap);
             // Floor at entry price (break-even)

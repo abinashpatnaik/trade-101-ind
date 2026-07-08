@@ -73,6 +73,10 @@ class RiskConfig:
     max_open_positions: int = 3
     allow_short_selling: bool = False
     trailing_stop_pct: float = field(default_factory=lambda: float(os.getenv("TRAILING_STOP_PCT", "0.015")))
+    # Profit-lock trailing stop: minimum CURRENT gain to activate
+    profit_lock_threshold: float = 0.0015  # +0.15% (US default)
+    # Base trailing gap for small gains (widest gap in the graduated table)
+    trailing_gap_base: float = 0.003  # 0.3% (US default)
 
 
 @dataclass
@@ -192,7 +196,11 @@ def get_india_config() -> Config:
                      "LT.NS", "KOTAKBANK.NS", "SUNPHARMA.NS", "M&M.NS", "ULTRACEMCO.NS", 
                      "HCLTECH.NS", "TITAN.NS", "ASIANPAINT.NS", "BAJFINANCE.NS", "MARUTI.NS"]
         ),
-        risk=RiskConfig(),
+        risk=RiskConfig(
+            stop_loss_pct=0.015,            # -1.5% hard stop (wider for IN volatility)
+            profit_lock_threshold=0.0025,   # +0.25% before profit-lock activates
+            trailing_gap_base=0.005,         # 0.5% trailing gap for small gains
+        ),
         wallet=WalletConfig(min_trade_value=1000.0),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
