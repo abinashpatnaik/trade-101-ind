@@ -340,7 +340,7 @@ class OrderExecutor:
             self._trailing_high.pop(symbol, None)
             return "TAKE_PROFIT"
 
-        # --- 3. Profit-Lock Trailing Stop ---
+        # --- 3. ATR-Based Profit-Lock Trailing Stop ---
         #
         # Only activates when the stock is CURRENTLY above the profit-lock
         # threshold (market-specific: US=+0.15%, IN=+0.25%).
@@ -348,15 +348,24 @@ class OrderExecutor:
         # free to oscillate with only the hard stop protecting it.
         # When it recovers, the lock reactivates from the new recovery point.
         #
-        # Trailing gap (from the high) shrinks as profit grows.
-        # The base gap is market-specific (US=0.3%, IN=0.5%):
+        # The base gap is ATR-based (per-stock), computed at buy time as
+        # ATR × 2 / entry_price (bounded 1-3%). This means volatile stocks
+        # (e.g. AXISBANK) get wider gaps while calmer stocks (e.g. ITC)
+        # get tighter stops — automatically adapting to each stock's nature.
+        #
+        # Trailing gap (from the high) shrinks as profit grows:
         #   threshold gain → base gap     (stop at break-even)
         #   +0.5% gain     → base × 0.83  (slightly tighter)
         #   +1.0% gain     → base × 0.67  (locking more profit)
         #   +2.0% gain     → base × 0.50  (half the base gap)
         #   +3.0%+ gain    → base × 0.33  (tight lock for big winners)
         profit_lock_threshold = config.risk.profit_lock_threshold
-        base_gap = config.risk.trailing_gap_base
+
+        # Use per-stock ATR gap (computed at buy time), fall back to market config
+        atr_gap = order.initial_trailing_pct if order.initial_trailing_pct > 0 else 0
+        config_gap = config.risk.trailing_gap_base
+        # ATR is the primary driver; config is the floor to prevent overly tight stops
+        base_gap = max(atr_gap, config_gap) if atr_gap > 0 else config_gap
 
         if gain_from_entry >= profit_lock_threshold:
             # Graduated trailing gap — tighter as profit grows
@@ -387,11 +396,12 @@ class OrderExecutor:
 
                 logger.warning(
                     "PROFIT-LOCK %s triggered for %s: price=%.4f <= trigger=%.4f "
-                    "(high=%.4f, entry=%.4f, gap=%.2f%%, locked=%.2f%%)",
+                    "(high=%.4f, entry=%.4f, gap=%.2f%% [ATR=%.2f%% cfg=%.2f%%], locked=%.2f%%)",
                     exit_reason, symbol,
                     current_price, trailing_stop_trigger,
                     self._trailing_high[symbol], order.entry_price,
-                    trail_gap * 100, locked_profit_pct,
+                    trail_gap * 100, atr_gap * 100, config_gap * 100,
+                    locked_profit_pct,
                 )
                 self._open_orders.pop(symbol, None)
                 self._trailing_high.pop(symbol, None)
