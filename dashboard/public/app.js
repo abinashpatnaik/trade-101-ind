@@ -286,7 +286,7 @@ function renderSignals() {
   let html = '';
   pageSignals.forEach(s => {
     const rawSignal = s.signal || 'HOLD';
-    const isGated = rawSignal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
+    const isGated = rawSignal === 'HOLD' && s.holdReason && s.mlConfidence >= (s.buyThreshold || 0.48);
     
     let shortReason = s.holdReason;
     if (isGated && s.holdReason) {

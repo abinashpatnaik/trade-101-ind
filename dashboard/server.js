@@ -1063,7 +1063,7 @@ app.get("/api/analytics", async (_req, res) => {
         validConfCount++;
       }
       
-      const isGated = s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48);
+      const isGated = s.signal === 'HOLD' && s.holdReason && s.mlConfidence >= (s.buyThreshold || 0.48);
       if (isGated) gatedCount++;
       else if (s.signal === 'BUY') buyCount++;
       else if (s.signal === 'SELL') sellCount++;

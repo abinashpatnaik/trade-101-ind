@@ -342,10 +342,14 @@ class OrderExecutor:
 
         # --- 3. Profit-Lock Trailing Stop ---
         #
-        # Once the stock has risen at least +0.15% above entry, we switch
-        # to a tight trailing stop that protects the gains.
-        # This minimum threshold prevents a 1-cent bounce from immediately
-        # locking at break-even and selling on the next tiny dip.
+        # Only activates when the stock is CURRENTLY at +0.15% or more.
+        # If the stock dips below +0.15%, the lock deactivates and the
+        # stock is free to oscillate with only the -1% hard stop.
+        # When it recovers back to +0.15%, the lock reactivates from
+        # the new recovery point (trailing_high is reset during dips).
+        #
+        # This lets stocks ride through market noise instead of being
+        # sold at break-even every time they briefly touch +0.15%.
         #
         # Trailing gap (from the high) shrinks as profit grows:
         #   +0.15% gain → 0.30% gap (stop at break-even)
@@ -353,9 +357,9 @@ class OrderExecutor:
         #   +1.0% gain  → 0.20% gap (locks in +0.8%)
         #   +2.0% gain  → 0.15% gap (locks in +1.85%)
         #   +3.0%+ gain → 0.10% gap (locks in +2.9%)
-        PROFIT_LOCK_THRESHOLD = 0.0015  # +0.15% minimum gain to activate
+        PROFIT_LOCK_THRESHOLD = 0.0015  # +0.15% minimum CURRENT gain to activate
 
-        if gain_from_high >= PROFIT_LOCK_THRESHOLD:
+        if gain_from_entry >= PROFIT_LOCK_THRESHOLD:
             # Graduated trailing gap — tighter as profit grows
             if gain_from_high >= 0.03:
                 trail_gap = 0.001   # 0.1% gap for big winners
@@ -393,6 +397,13 @@ class OrderExecutor:
                 self._open_orders.pop(symbol, None)
                 self._trailing_high.pop(symbol, None)
                 return exit_reason
+        else:
+            # Stock is below +0.15% — profit-lock INACTIVE.
+            # Reset trailing_high to current price so that when the lock
+            # reactivates after a recovery, it trails from the new recovery
+            # point instead of from a stale old high that would cause an
+            # immediate exit.
+            self._trailing_high[symbol] = current_price
 
         return None
 
