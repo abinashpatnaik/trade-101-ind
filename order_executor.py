@@ -342,16 +342,20 @@ class OrderExecutor:
 
         # --- 3. Profit-Lock Trailing Stop ---
         #
-        # If the stock has EVER been in profit (high > entry), we switch
+        # Once the stock has risen at least +0.15% above entry, we switch
         # to a tight trailing stop that protects the gains.
+        # This minimum threshold prevents a 1-cent bounce from immediately
+        # locking at break-even and selling on the next tiny dip.
         #
-        # Trailing gap starts at 0.3% and shrinks as profit grows:
-        #   +0.0% gain → 0.30% gap (stop at break-even)
-        #   +0.5% gain → 0.25% gap
-        #   +1.0% gain → 0.20% gap (locks in +0.8%)
-        #   +2.0% gain → 0.15% gap (locks in +1.85%)
+        # Trailing gap (from the high) shrinks as profit grows:
+        #   +0.15% gain → 0.30% gap (stop at break-even)
+        #   +0.5% gain  → 0.25% gap (locks in +0.25%)
+        #   +1.0% gain  → 0.20% gap (locks in +0.8%)
+        #   +2.0% gain  → 0.15% gap (locks in +1.85%)
         #   +3.0%+ gain → 0.10% gap (locks in +2.9%)
-        if gain_from_high > 0:
+        PROFIT_LOCK_THRESHOLD = 0.0015  # +0.15% minimum gain to activate
+
+        if gain_from_high >= PROFIT_LOCK_THRESHOLD:
             # Graduated trailing gap — tighter as profit grows
             if gain_from_high >= 0.03:
                 trail_gap = 0.001   # 0.1% gap for big winners

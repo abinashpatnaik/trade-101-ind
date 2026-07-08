@@ -591,8 +591,8 @@ app.get("/api/positions", async (_req, res) => {
         let trailingTrigger;
         let effectiveStopLoss = Math.round(avgCost * (1.0 - 0.01) * 100) / 100; // -1% hard stop
 
-        if (gainPct > 0) {
-            // Stock is in profit — show the profit-lock trailing stop
+        if (gainPct >= 0.0015) {
+            // Stock is in profit (+0.15%+) — show the profit-lock trailing stop
             // Graduated gap: tighter as profit grows
             let trailGap;
             if (gainPct >= 0.03) trailGap = 0.001;       // 0.1% gap
