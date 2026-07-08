@@ -558,6 +558,88 @@ class TradingAgent:
             )
 
     # ------------------------------------------------------------------
+    # Morning gap-check for overnight positions
+    # ------------------------------------------------------------------
+
+    def _morning_gap_check(self) -> None:
+        """
+        Check overnight positions at market open.
+
+        If a stock we held overnight has gapped down past the stop-loss
+        level, sell it immediately. Otherwise leave it alone — the normal
+        intraday trailing-stop logic will manage it from here.
+        """
+        if not self.portfolio.open_positions:
+            return
+
+        stop_loss_pct = config.signal.stop_loss_pct  # e.g. 0.01 = -1%
+
+        logger.info(
+            "Morning gap-check: evaluating %d overnight position(s)…",
+            len(self.portfolio.open_positions),
+        )
+
+        for symbol, position in list(self.portfolio.open_positions.items()):
+            qty = float(position.get("quantity", 0))
+            if qty <= 0:
+                continue
+
+            avg_cost = float(position.get("avg_cost", 0))
+            if avg_cost <= 0:
+                continue
+
+            current_price = self.price_feed.get_current_price(symbol) or 0.0
+            if current_price <= 0:
+                logger.warning("Morning gap-check: no price for %s — skipping.", symbol)
+                continue
+
+            gap_pct = (current_price - avg_cost) / avg_cost
+
+            if gap_pct <= -stop_loss_pct:
+                # Gap-down exceeds stop loss — sell immediately
+                logger.warning(
+                    "MORNING GAP-DOWN SELL: %s gapped %.2f%% "
+                    "(entry=%.4f, open=%.4f, stop=-%.1f%%). Selling.",
+                    symbol, gap_pct * 100, avg_cost, current_price,
+                    stop_loss_pct * 100,
+                )
+
+                if config.agent.observe_only:
+                    logger.info(
+                        "[OBSERVE MODE] Would sell %s on morning gap-down, skipping.", symbol
+                    )
+                    continue
+
+                if self.executor is not None:
+                    try:
+                        success = self.executor.close_position(symbol, qty)
+                        if success:
+                            pnl = (current_price - avg_cost) * qty
+                            self.portfolio.record_trade(
+                                symbol=symbol,
+                                action="SELL",
+                                quantity=qty,
+                                price=current_price,
+                                pnl=pnl,
+                                exit_reason="MORNING_GAP_STOP",
+                            )
+                            logger.info(
+                                "Morning gap-stop sold %s x %.4f @ %.4f (PnL=%.2f)",
+                                symbol, qty, current_price, pnl,
+                            )
+                    except Exception as exc:
+                        logger.error(
+                            "Morning gap-check failed to sell %s: %s",
+                            symbol, exc, exc_info=True,
+                        )
+            else:
+                logger.info(
+                    "Morning gap-check OK: %s at %.2f%% (entry=%.4f, open=%.4f). "
+                    "Keeping — intraday logic will manage.",
+                    symbol, gap_pct * 100, avg_cost, current_price,
+                )
+
+    # ------------------------------------------------------------------
     # EOD close-all
     # ------------------------------------------------------------------
 
@@ -627,6 +709,23 @@ class TradingAgent:
             if reason == "EOD" and self._evaluate_ml_hold(symbol):
                 logger.info("ML model predicts overnight swing. Holding %s overnight.", symbol)
                 continue
+
+            # --- HOLD LOSERS OVERNIGHT ---
+            # Don't realize losses at EOD. Give losing positions a chance
+            # to recover overnight. In the morning, if the gap-down exceeds
+            # the stop loss, we'll sell then.
+            if reason == "EOD":
+                current_price = self.price_feed.get_current_price(symbol) or 0.0
+                avg_cost = float(position.get("avg_cost", current_price))
+                if current_price > 0 and avg_cost > 0:
+                    pnl_pct = (current_price - avg_cost) / avg_cost
+                    if pnl_pct < 0:
+                        logger.info(
+                            "HOLD OVERNIGHT (negative PnL): %s at %.2f%% "
+                            "(entry=%.4f, current=%.4f). Will check gap in morning.",
+                            symbol, pnl_pct * 100, avg_cost, current_price,
+                        )
+                        continue
 
 
             try:
@@ -861,6 +960,11 @@ class TradingAgent:
 
         # --- Step 3: Main scan loop ---
         self._running = True
+
+        # --- Morning Gap-Check for Overnight Positions ---
+        # If we held losing positions overnight, check if the opening price
+        # has gapped down past the stop loss. If so, sell immediately.
+        self._morning_gap_check()
         loop_interval = config.agent.loop_interval_seconds
 
         try:
