@@ -132,66 +132,92 @@ def get_dynamic_universe(top_n: int = 50) -> list[str]:
 
 def get_us_dynamic_universe(top_n: int = 50) -> list[str]:
     """
-    1. Scrapes S&P 500 tickers from Wikipedia.
-    2. Downloads 30-day OHLCV data.
+    1. Scrapes Russell 1000 tickers from Wikipedia.
+    2. Downloads 30-day OHLCV data in batches to avoid rate limits.
     3. Filters by volume and price.
     4. Ranks by simple momentum/RSI.
     Returns the top N ticker symbols for the US market.
     """
-    logger.info("Fetching S&P 500 instrument list from Wikipedia...")
+    import time
+    from io import StringIO
+    logger.info("Fetching Russell 1000 instrument list from Wikipedia...")
     try:
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        tables = pd.read_html(url)
-        sp500_df = tables[0]
-        tickers = sp500_df['Symbol'].tolist()
+        url = 'https://en.wikipedia.org/wiki/Russell_1000_Index'
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers)
+        tables = pd.read_html(StringIO(r.text))
+        
+        # Find the table containing 'Symbol' or 'Ticker'
+        russell_df = None
+        for t in tables:
+            if 'Symbol' in t.columns or 'Ticker' in t.columns:
+                russell_df = t
+                break
+                
+        if russell_df is None:
+            raise ValueError("Could not find Ticker/Symbol column in Wikipedia tables.")
+            
+        col = 'Symbol' if 'Symbol' in russell_df.columns else 'Ticker'
+        tickers = russell_df[col].tolist()
+        
         # Clean tickers replacing '.' with '-' for yfinance (e.g. BRK.B -> BRK-B)
         yf_tickers = [str(t).replace('.', '-') for t in tickers]
     except Exception as e:
-        logger.error(f"Failed to fetch S&P 500 instruments: {e}")
+        logger.error(f"Failed to fetch Russell 1000 instruments: {e}")
         # Fallback to hardcoded list if the scrape fails
         from config import config
         return config.universe.tickers
 
-    logger.info(f"Filtered to {len(yf_tickers)} US equities. Bulk downloading 1-month data...")
-    
-    # yfinance bulk download
-    data = yf.download(
-        " ".join(yf_tickers),
-        period="1mo",
-        interval="1d",
-        group_by="ticker",
-        threads=True,
-        progress=False
-    )
+    logger.info(f"Filtered to {len(yf_tickers)} US equities. Bulk downloading 1-month data in batches...")
     
     results = []
+    batch_size = 200
     
-    for ticker in yf_tickers:
+    for i in range(0, len(yf_tickers), batch_size):
+        batch_tickers = yf_tickers[i:i+batch_size]
+        logger.info(f"Downloading batch {i//batch_size + 1}/{(len(yf_tickers)+batch_size-1)//batch_size}...")
+        
         try:
-            if ticker in data and not data[ticker].empty:
-                df_ticker = data[ticker].dropna(subset=['Close'])
-                if len(df_ticker) < 15:
-                    continue
-                
-                recent = df_ticker.iloc[-5:]
-                avg_vol = recent['Volume'].mean()
-                last_price = recent['Close'].iloc[-1]
-                
-                # Liquidity Filter: Price > 10, Volume > 1M (US liquidity is higher, lower price boundary is fine)
-                if last_price < 10 or avg_vol < 1000000:
-                    continue
-                
-                # Calculate simple momentum: (Current Price / Price 20 days ago) - 1
-                price_20_days_ago = df_ticker['Close'].iloc[-20] if len(df_ticker) >= 20 else df_ticker['Close'].iloc[0]
-                momentum = (last_price / price_20_days_ago) - 1
-                
-                results.append({
-                    "symbol": ticker,
-                    "momentum": momentum,
-                    "avg_vol": avg_vol
-                })
-        except Exception:
-            pass
+            data = yf.download(
+                " ".join(batch_tickers),
+                period="1mo",
+                interval="1d",
+                group_by="ticker",
+                threads=True,
+                progress=False
+            )
+            
+            for ticker in batch_tickers:
+                try:
+                    if ticker in data and not data[ticker].empty:
+                        df_ticker = data[ticker].dropna(subset=['Close'])
+                        if len(df_ticker) < 15:
+                            continue
+                        
+                        recent = df_ticker.iloc[-5:]
+                        avg_vol = recent['Volume'].mean()
+                        last_price = recent['Close'].iloc[-1]
+                        
+                        # Liquidity Filter: Price > 10, Volume > 1M
+                        if last_price < 10 or avg_vol < 1000000:
+                            continue
+                        
+                        # Calculate simple momentum: (Current Price / Price 20 days ago) - 1
+                        price_20_days_ago = df_ticker['Close'].iloc[-20] if len(df_ticker) >= 20 else df_ticker['Close'].iloc[0]
+                        momentum = (last_price / price_20_days_ago) - 1
+                        
+                        results.append({
+                            "symbol": ticker,
+                            "momentum": momentum,
+                            "avg_vol": avg_vol
+                        })
+                except Exception:
+                    pass
+            
+            # Sleep to respect rate limits
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"Error downloading batch: {e}")
 
     if not results:
         logger.warning("No stocks passed the US liquidity filter. Falling back to config universe.")
