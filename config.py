@@ -129,7 +129,7 @@ class AgentConfig:
     log_file: str = field(default_factory=lambda: _LOG_FILE)
     trades_csv: str = field(default_factory=lambda: _TRADES_CSV)
     liquidate_on_shutdown: bool = field(
-        default_factory=lambda: str(os.getenv("LIQUIDATE_ON_SHUTDOWN", "true")).lower() == "true"
+        default_factory=lambda: str(os.getenv("LIQUIDATE_ON_SHUTDOWN", "false")).lower() == "true"
     )
     observe_only: bool = field(
         default_factory=lambda: str(os.getenv("OBSERVE_ONLY", "false")).lower() == "true"

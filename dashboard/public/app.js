@@ -469,7 +469,7 @@ function initCharts() {
           backgroundColor: 'rgba(0, 229, 163, 0.1)',
           borderWidth: 2,
           fill: true,
-          tension: 0.4,
+          tension: 0,
           pointRadius: 0
         }]
       },
