@@ -13,3 +13,4 @@ alpaca-py
 xgboost
 scikit-learn
 joblib
+lxml>=5.1.0
