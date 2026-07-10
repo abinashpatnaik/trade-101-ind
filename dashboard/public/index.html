@@ -92,30 +92,31 @@
       </div>
     </div>
 
-<!-- Risk Panel -->
+<!-- Strategy Analytics Panel -->
       <div class="card">
-        <h2>Risk & Analytics</h2>
+        <h2>Strategy Analytics</h2>
         <div style="display: flex; gap: 16px; margin-bottom: 20px;">
           <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div class="micro-label">Max Drawdown</div>
-            <div class="mono" style="font-size: 16px; font-weight: 600; color: var(--secondary-accent);" id="val-drawdown">-0.0%</div>
+            <div class="micro-label">Win Rate</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600; color: var(--primary-accent);" id="val-winrate">0.0%</div>
           </div>
           <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div class="micro-label">Portfolio VaR (95%)</div>
-            <div class="mono" style="font-size: 16px; font-weight: 600; color: var(--signal-orange);" id="val-var">0.0%</div>
+            <div class="micro-label">Profit Factor</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600; color: var(--primary-accent);" id="val-profitfactor">0.00</div>
           </div>
           <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div class="micro-label">Portfolio Beta</div>
-            <div class="mono" style="font-size: 16px; font-weight: 600;" id="val-beta">0.0</div>
+            <div class="micro-label">Total Trades</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600;" id="val-totaltrades">0</div>
           </div>
           <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div class="micro-label">Volatility (Ann.)</div>
-            <div class="mono" style="font-size: 16px; font-weight: 600;" id="val-volatility">0.0%</div>
+            <div class="micro-label">Avg P&L per Trade</div>
+            <div class="mono" style="font-size: 16px; font-weight: 600;" id="val-avgpnl">₹0.00</div>
           </div>
         </div>
-        <div style="display: flex; gap: 24px; align-items: center; justify-content: center; height: 200px;">
-          <div style="width: 50%; height: 100%; position: relative;">
-            <canvas id="sectorChart"></canvas>
+        <div style="display: flex; align-items: center; justify-content: center; height: 200px; text-align: center; color: rgba(255,255,255,0.5);">
+          <div style="padding: 20px;">
+            <div style="font-size: 48px; margin-bottom: 10px;">📈</div>
+            <div>Analytics drawn from all closed trades across the history of this agent.</div>
           </div>
         </div>
       </div>

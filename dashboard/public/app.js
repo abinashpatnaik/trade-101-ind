@@ -506,27 +506,7 @@ function initCharts() {
     });
   }
 
-  // Sector Donut Chart
-  const sectorCtx = document.getElementById('sectorChart');
-  if (sectorCtx) {
-    charts.sector = new Chart(sectorCtx, {
-      type: 'doughnut',
-      data: {
-        labels: ['Tech', 'Fin', 'Health', 'Other'],
-        datasets: [{
-          data: [45, 25, 15, 15], // Dummy initial
-          backgroundColor: ['#00E5A3', '#3742FA', '#FFA502', '#FF4757'],
-          borderWidth: 0,
-          cutout: '75%'
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { position: 'right', labels: { color: '#8B8B9E', font: { size: 11 } } } }
-      }
-    });
-  }
+  // Sector chart was removed
 
   // Apply theme to charts
   applyThemeToCharts(document.documentElement.getAttribute('data-theme') || 'dark');
@@ -570,19 +550,12 @@ function renderAnalytics(data) {
     document.getElementById('val-avg-conf').textContent = data.modelHealth.avgConfidence.toFixed(1) + '%';
   }
   
-  // Update Risk
-  if (data.risk) {
-    document.getElementById('val-var').textContent = data.risk.var95.toFixed(2) + '%';
-    document.getElementById('val-beta').textContent = data.risk.beta.toFixed(2);
-    document.getElementById('val-drawdown').textContent = data.risk.maxDrawdown.toFixed(2) + '%';
-    document.getElementById('val-volatility').textContent = data.risk.volatility.toFixed(1) + '%';
-  }
-  
-  // Update Sector Chart
-  if (data.sectorExposure && charts.sector) {
-    charts.sector.data.labels = data.sectorExposure.slice(0, 5).map(s => s.sector);
-    charts.sector.data.datasets[0].data = data.sectorExposure.slice(0, 5).map(s => s.allocation);
-    charts.sector.update();
+  // Update Strategy Analytics
+  if (data.strategy) {
+    document.getElementById('val-winrate').textContent = data.strategy.winRate.toFixed(1) + '%';
+    document.getElementById('val-profitfactor').textContent = data.strategy.profitFactor.toFixed(2);
+    document.getElementById('val-totaltrades').textContent = data.strategy.totalTrades;
+    document.getElementById('val-avgpnl').textContent = '₹' + data.strategy.avgPnl.toFixed(2);
   }
 
   // Update AI Feed

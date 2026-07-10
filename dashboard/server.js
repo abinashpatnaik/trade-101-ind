@@ -1132,41 +1132,31 @@ app.get("/api/analytics", async (_req, res) => {
       sectorExposure.push({ sector: "Cash / No Positions", allocation: 100 });
     }
 
-    // Real Risk metrics based on 1y NAV history
-    const history = await getNavHistory('1y');
-    let maxDrawdown = 0;
-    let peak = history.length > 0 ? history[0].nav : 100000;
-    let var95 = 0;
-    let volatility = 0;
-    let beta = 1.0; // Benchmark approx
-
-    if (history && history.length > 1) {
-      let dailyReturns = [];
-      for (let i = 1; i < history.length; i++) {
-        let prev = history[i-1].nav;
-        let curr = history[i].nav;
-        if (prev > 0) {
-          dailyReturns.push((curr - prev) / prev);
+    // Strategy Analytics based on trade history
+    const allTrades = readTrades(null, "paper", null, 100000); // Fetch all trades, default paper mode
+    let totalTrades = 0;
+    let winCount = 0;
+    let grossProfit = 0;
+    let grossLoss = 0;
+    let totalPnl = 0;
+    
+    for (const t of allTrades) {
+      if (t.pnl !== null && t.pnl !== undefined) {
+        totalTrades++;
+        const pnl = parseFloat(t.pnl);
+        totalPnl += pnl;
+        if (pnl > 0) {
+          winCount++;
+          grossProfit += pnl;
+        } else {
+          grossLoss += Math.abs(pnl);
         }
-        
-        if (curr > peak) peak = curr;
-        let drawdown = peak > 0 ? ((curr - peak) / peak * 100) : 0;
-        if (drawdown < maxDrawdown) maxDrawdown = drawdown;
-      }
-      
-      if (dailyReturns.length > 0) {
-        // Volatility = stdev of daily returns * sqrt(252)
-        const mean = dailyReturns.reduce((a,b) => a+b, 0) / dailyReturns.length;
-        const variance = dailyReturns.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / dailyReturns.length;
-        const stdev = Math.sqrt(variance);
-        volatility = stdev * Math.sqrt(252) * 100;
-        
-        // Historical VaR 95% = 5th percentile of daily returns
-        const sortedReturns = [...dailyReturns].sort((a,b) => a-b);
-        const idx95 = Math.max(0, Math.floor(sortedReturns.length * 0.05));
-        var95 = Math.abs(sortedReturns[idx95] * 100);
       }
     }
+    
+    const winRate = totalTrades > 0 ? (winCount / totalTrades) * 100 : 0;
+    const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss) : (grossProfit > 0 ? 99.9 : 0);
+    const avgPnl = totalTrades > 0 ? (totalPnl / totalTrades) : 0;
 
     res.json({
       modelHealth: {
@@ -1180,13 +1170,12 @@ app.get("/api/analytics", async (_req, res) => {
           gated: gatedCount
         }
       },
-      risk: {
-        var95: var95, 
-        beta: beta,
-        maxDrawdown: maxDrawdown, 
-        volatility: volatility 
-      },
-      sectorExposure
+      strategy: {
+        winRate,
+        profitFactor,
+        totalTrades,
+        avgPnl
+      }
     });
   } catch (e) {
     console.error("Analytics Error", e);
