@@ -1133,7 +1133,8 @@ app.get("/api/analytics", async (_req, res) => {
     }
 
     // Strategy Analytics based on trade history
-    const allTrades = readTrades(null, "paper", null, 100000); // Fetch all trades, default paper mode
+    const tradingMode = process.env.TRADING_MODE || "paper";
+    const allTrades = readTrades(null, tradingMode, null, 100000); // Fetch all trades
     let totalTrades = 0;
     let winCount = 0;
     let grossProfit = 0;
