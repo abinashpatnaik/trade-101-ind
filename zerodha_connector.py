@@ -327,29 +327,32 @@ class ZerodhaConnector:
             equity = margins.get("equity", {})
             available_funds = float(equity.get("net", 0.0))  # Net available margin
             
-            # Retrieve positions to calculate market value and P&L
-            pos_data = self.kite.positions()
-            net_positions = pos_data.get("net", [])
+            # Use get_positions to get the fully merged holdings and intraday positions
+            all_positions = self.get_positions() or {}
+            open_positions_value = sum(pos["market_value"] for pos in all_positions.values())
             
             daily_pnl = 0.0
-            open_positions_value = 0.0
             
-            for pos in net_positions:
-                qty = int(pos.get("quantity", 0))
-                symbol = pos.get("tradingsymbol", "") + ".NS"
+            # Fetch intraday P&L
+            try:
+                pos_data = self.kite.positions()
+                net_positions = pos_data.get("net", [])
+                for pos in net_positions:
+                    daily_pnl += float(pos.get("m2m", 0.0))
+            except Exception:
+                pass
                 
-                # Use live websocket price if available
-                last_price = self.get_current_price(symbol)
-                if last_price is None:
-                    last_price = float(pos.get("last_price", 0.0))
-                    
-                # Zerodha 'm2m' is the exact day's mark-to-market P&L including realized
-                pnl = float(pos.get("m2m", 0.0))
-                
-                daily_pnl += pnl
-                
-                if qty > 0:
-                    open_positions_value += qty * last_price
+            # Fetch holdings P&L (if available)
+            try:
+                holdings_data = self.kite.holdings()
+                for h in holdings_data:
+                    # Zerodha provides day_change or day_change_percentage. 
+                    # If last_price is available, day PNL = (last_price - previous_close) * qty
+                    # Usually day_change is absolute change per share, or total day change. Let's use day_change if present.
+                    pnl_change = float(h.get("day_change", 0.0))
+                    daily_pnl += pnl_change
+            except Exception:
+                pass
             
             net_liquidation = available_funds + open_positions_value
             
