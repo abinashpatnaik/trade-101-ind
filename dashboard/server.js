@@ -212,7 +212,7 @@ function readSignals() {
                ai_decision as aiDecision, ai_reason as aiReason,
                hold_reason as holdReason, ml_confidence as mlConfidence, 
                ml_confidence_swing as mlConfidenceSwing, updated_at
-        FROM signals ORDER BY ABS(trend_score) DESC
+        FROM signals ORDER BY ml_confidence_swing DESC
       `).all();
     } catch (err) {
       console.error("readSignals SQLite error:", err.message);
