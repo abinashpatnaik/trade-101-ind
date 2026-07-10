@@ -130,6 +130,82 @@ def get_dynamic_universe(top_n: int = 50) -> list[str]:
     logger.info(f"Selected Top {len(final_tickers)} high-momentum, liquid stocks for ML evaluation.")
     return final_tickers
 
+def get_us_dynamic_universe(top_n: int = 50) -> list[str]:
+    """
+    1. Scrapes S&P 500 tickers from Wikipedia.
+    2. Downloads 30-day OHLCV data.
+    3. Filters by volume and price.
+    4. Ranks by simple momentum/RSI.
+    Returns the top N ticker symbols for the US market.
+    """
+    logger.info("Fetching S&P 500 instrument list from Wikipedia...")
+    try:
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        tables = pd.read_html(url)
+        sp500_df = tables[0]
+        tickers = sp500_df['Symbol'].tolist()
+        # Clean tickers replacing '.' with '-' for yfinance (e.g. BRK.B -> BRK-B)
+        yf_tickers = [str(t).replace('.', '-') for t in tickers]
+    except Exception as e:
+        logger.error(f"Failed to fetch S&P 500 instruments: {e}")
+        # Fallback to hardcoded list if the scrape fails
+        from config import config
+        return config.universe.tickers
+
+    logger.info(f"Filtered to {len(yf_tickers)} US equities. Bulk downloading 1-month data...")
+    
+    # yfinance bulk download
+    data = yf.download(
+        " ".join(yf_tickers),
+        period="1mo",
+        interval="1d",
+        group_by="ticker",
+        threads=True,
+        progress=False
+    )
+    
+    results = []
+    
+    for ticker in yf_tickers:
+        try:
+            if ticker in data and not data[ticker].empty:
+                df_ticker = data[ticker].dropna(subset=['Close'])
+                if len(df_ticker) < 15:
+                    continue
+                
+                recent = df_ticker.iloc[-5:]
+                avg_vol = recent['Volume'].mean()
+                last_price = recent['Close'].iloc[-1]
+                
+                # Liquidity Filter: Price > 10, Volume > 1M (US liquidity is higher, lower price boundary is fine)
+                if last_price < 10 or avg_vol < 1000000:
+                    continue
+                
+                # Calculate simple momentum: (Current Price / Price 20 days ago) - 1
+                price_20_days_ago = df_ticker['Close'].iloc[-20] if len(df_ticker) >= 20 else df_ticker['Close'].iloc[0]
+                momentum = (last_price / price_20_days_ago) - 1
+                
+                results.append({
+                    "symbol": ticker,
+                    "momentum": momentum,
+                    "avg_vol": avg_vol
+                })
+        except Exception:
+            pass
+
+    if not results:
+        logger.warning("No stocks passed the US liquidity filter. Falling back to config universe.")
+        from config import config
+        return config.universe.tickers
+
+    # Sort by momentum
+    results_df = pd.DataFrame(results)
+    top_stocks = results_df.sort_values(by="momentum", ascending=False).head(top_n)
+    
+    final_tickers = top_stocks["symbol"].tolist()
+    logger.info(f"Selected Top {len(final_tickers)} high-momentum, liquid US stocks for ML evaluation.")
+    return final_tickers
+
 if __name__ == "__main__":
     targets = get_dynamic_universe(10)
     print("Found targets:", targets)

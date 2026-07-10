@@ -68,16 +68,12 @@ def run_scanner():
         universe_map = {t: "Dynamic" for t in tickers}
         logger.info(f"Loaded {len(tickers)} dynamic tickers from NSE/BSE scanner.")
     else:
-        if not os.path.exists(UNIVERSE_FILE):
-            logger.error(f"Universe file {UNIVERSE_FILE} not found!")
-            return
-            
-        with open(UNIVERSE_FILE, "r") as f:
-            universe_map = json.load(f)
-            
-        tickers = list(universe_map.keys())
-        yf_tickers = [t.replace(".", "-") for t in tickers]
-        logger.info(f"Loaded {len(tickers)} tickers from the US universe.")
+        from market_screener import get_us_dynamic_universe
+        yf_tickers = get_us_dynamic_universe(50)
+        # Convert yfinance tickers back to standard tickers (e.g. BRK-B -> BRK.B)
+        tickers = [t.replace("-", ".") for t in yf_tickers]
+        universe_map = {t: "Dynamic US" for t in tickers}
+        logger.info(f"Loaded {len(tickers)} dynamic tickers from US scanner.")
     
     # 1. Bulk Download 1 Month of Data
     logger.info("Downloading 1-month OHLCV data for momentum calculation...")
