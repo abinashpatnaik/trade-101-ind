@@ -572,7 +572,7 @@ class TradingAgent:
         if not self.portfolio.open_positions:
             return
 
-        stop_loss_pct = config.signal.stop_loss_pct  # e.g. 0.01 = -1%
+        stop_loss_pct = config.risk.stop_loss_pct  # e.g. 0.01 = -1%
 
         logger.info(
             "Morning gap-check: evaluating %d overnight position(s)…",
