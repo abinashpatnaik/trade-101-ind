@@ -822,7 +822,7 @@ async function getNavHistory(range = '1mo') {
   if (db) {
     try {
       let timeLimitMs;
-      if (range === '1d') timeLimitMs = 24 * 60 * 60 * 1000;
+      if (range === '1d') timeLimitMs = 12 * 60 * 60 * 1000;
       else if (range === '5d') timeLimitMs = 5 * 24 * 60 * 60 * 1000;
       else if (range === '1mo') timeLimitMs = 30 * 24 * 60 * 60 * 1000;
       else if (range === '3mo') timeLimitMs = 90 * 24 * 60 * 60 * 1000;
@@ -834,7 +834,25 @@ async function getNavHistory(range = '1mo') {
         .all(startDateIso);
       
       if (rows && rows.length > 0) {
-        const history = rows.filter(r => r.nav > 0).map(r => ({ date: r.timestamp, nav: r.nav }));
+        // Downsample: only include points that are at least N minutes apart
+        let minGapMs = 0;
+        if (range === '1d') minGapMs = 5 * 60 * 1000; // 5 min
+        else if (range === '5d') minGapMs = 30 * 60 * 1000; // 30 min
+        else if (range === '1mo') minGapMs = 12 * 60 * 60 * 1000; // 12 hours
+        else if (range === '3mo') minGapMs = 24 * 60 * 60 * 1000; // 1 day
+        else minGapMs = 24 * 60 * 60 * 1000; // 1 day
+        
+        const history = [];
+        let lastTimeMs = 0;
+        for (const r of rows) {
+          if (r.nav <= 0) continue;
+          const tMs = new Date(r.timestamp).getTime();
+          if (tMs - lastTimeMs >= minGapMs) {
+            history.push({ date: r.timestamp, nav: r.nav });
+            lastTimeMs = tMs;
+          }
+        }
+        
         if (currentNav > 0) {
           history.push({ date: new Date().toISOString(), nav: currentNav });
         }

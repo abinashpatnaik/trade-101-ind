@@ -499,7 +499,15 @@ function initCharts() {
           }
         },
         scales: {
-          x: { grid: { display: false, color: '#1F1F2E' }, ticks: {} },
+          x: { 
+            type: 'time',
+            time: {
+              unit: 'minute',
+              displayFormats: { minute: 'HH:mm', hour: 'HH:mm', day: 'MMM d' }
+            },
+            grid: { display: false, color: '#1F1F2E' }, 
+            ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0 } 
+          },
           y: { grid: { color: '#1F1F2E' }, ticks: {} }
         }
       }
@@ -520,13 +528,24 @@ async function fetchNavHistory(range) {
     const res = await fetch(`/api/nav-history?range=${range}`);
     if (res.ok && charts.nav) {
       const data = await res.json();
-      charts.nav.data.labels = data.map(d => {
-        if (range === '1d' && d.date.includes('T')) {
-          return d.date.split('T')[1].substring(0, 5);
-        }
-        return d.date;
-      });
-      charts.nav.data.datasets[0].data = data.map(d => d.nav);
+      
+      // Pass data as {x, y} objects for the time scale
+      charts.nav.data.labels = []; // Clear categorical labels
+      charts.nav.data.datasets[0].data = data.map(d => ({
+        x: new Date(d.date).getTime(),
+        y: d.nav
+      }));
+
+      // Force exactly 12 hours window for '1d'
+      if (range === '1d') {
+        const now = Date.now();
+        charts.nav.options.scales.x.min = now - (12 * 60 * 60 * 1000);
+        charts.nav.options.scales.x.max = now;
+      } else {
+        delete charts.nav.options.scales.x.min;
+        delete charts.nav.options.scales.x.max;
+      }
+
       charts.nav.update();
       
       // Update active button
