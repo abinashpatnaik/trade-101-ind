@@ -470,7 +470,10 @@ function initCharts() {
           borderWidth: 2,
           fill: true,
           tension: 0,
-          pointRadius: 0
+          pointRadius: function(ctx) {
+            return ctx.chart.data.datasets[0].data.length < 2 ? 4 : 0;
+          },
+          pointHoverRadius: 6
         }]
       },
       options: {
@@ -536,10 +539,10 @@ async function fetchNavHistory(range) {
         y: d.nav
       }));
 
-      // Force exactly 12 hours window for '1d'
+      // Force exactly 24 hours window for '1d'
       if (range === '1d') {
         const now = Date.now();
-        charts.nav.options.scales.x.min = now - (12 * 60 * 60 * 1000);
+        charts.nav.options.scales.x.min = now - (24 * 60 * 60 * 1000);
         charts.nav.options.scales.x.max = now;
       } else {
         delete charts.nav.options.scales.x.min;

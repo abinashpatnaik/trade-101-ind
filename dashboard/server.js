@@ -810,7 +810,7 @@ async function getNavHistory(range = '1mo') {
   if (db) {
     try {
       let timeLimitMs;
-      if (range === '1d') timeLimitMs = 12 * 60 * 60 * 1000;
+      if (range === '1d') timeLimitMs = 24 * 60 * 60 * 1000;
       else if (range === '5d') timeLimitMs = 5 * 24 * 60 * 60 * 1000;
       else if (range === '1mo') timeLimitMs = 30 * 24 * 60 * 60 * 1000;
       else if (range === '3mo') timeLimitMs = 90 * 24 * 60 * 60 * 1000;
