@@ -352,9 +352,9 @@ function renderSignals() {
       `;
     }
 
-    // Swing Confidence progress bar (Only for BUY)
+    // Swing Confidence progress bar (Show for all signals)
     let swingHtml = '-';
-    if (rawSignal === 'BUY' && s.mlConfidenceSwing) {
+    if (s.mlConfidenceSwing) {
       const upConf = s.mlConfidenceSwing * 100;
       const downConf = 100 - upConf;
       swingHtml = `

@@ -194,7 +194,9 @@ def get_india_config() -> Config:
             tickers=["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
                      "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "AXISBANK.NS", 
                      "LT.NS", "KOTAKBANK.NS", "SUNPHARMA.NS", "M&M.NS", "ULTRACEMCO.NS", 
-                     "HCLTECH.NS", "TITAN.NS", "ASIANPAINT.NS", "BAJFINANCE.NS", "MARUTI.NS"]
+                     "HCLTECH.NS", "TITAN.NS", "ASIANPAINT.NS", "BAJFINANCE.NS", "MARUTI.NS",
+                     "INDUSINDBK.NS", "BANKBARODA.NS", "PNB.NS", "FEDERALBNK.NS", 
+                     "IDFCFIRSTB.NS", "AUBANK.NS", "BANDHANBNK.NS"]
         ),
         risk=RiskConfig(
             stop_loss_pct=0.015,            # -1.5% hard stop (wider for IN volatility)

@@ -43,10 +43,7 @@ TARGETS_FILE = os.path.join(DATA_DIR, f"daily_targets_{ACTIVE_MARKET}.json")
 
 def fetch_rss_sentiment(symbol: str) -> float:
     """Fetch Yahoo Finance RSS feed and calculate average sentiment for a symbol."""
-    if ACTIVE_MARKET == "US":
-        yf_sym = symbol.replace(".", "-")
-    else:
-        yf_sym = f"{symbol.replace('.', '-')}.NS"
+    yf_sym = symbol.replace(".", "-") if ACTIVE_MARKET == "US" else symbol
     url = _yahoo_rss_url(yf_sym)
     try:
         import feedparser
@@ -64,23 +61,27 @@ def fetch_rss_sentiment(symbol: str) -> float:
 def run_scanner():
     logger.info("Starting Pre-Market Sector Scanner...")
     
-    if not os.path.exists(UNIVERSE_FILE):
-        logger.error(f"Universe file {UNIVERSE_FILE} not found!")
-        return
-        
-    with open(UNIVERSE_FILE, "r") as f:
-        universe_map = json.load(f)
-        
-    tickers = list(universe_map.keys())
-    _market_label = "NASDAQ 20" if ACTIVE_MARKET == "US" else "Nifty 50"
-    logger.info(f"Loaded {len(tickers)} tickers from the {_market_label} universe.")
+    if ACTIVE_MARKET == "IN":
+        from market_screener import get_dynamic_universe
+        yf_tickers = get_dynamic_universe(50)
+        tickers = yf_tickers # In India, the ticker IS the YF ticker (e.g. RELIANCE.NS)
+        universe_map = {t: "Dynamic" for t in tickers}
+        logger.info(f"Loaded {len(tickers)} dynamic tickers from NSE/BSE scanner.")
+    else:
+        if not os.path.exists(UNIVERSE_FILE):
+            logger.error(f"Universe file {UNIVERSE_FILE} not found!")
+            return
+            
+        with open(UNIVERSE_FILE, "r") as f:
+            universe_map = json.load(f)
+            
+        tickers = list(universe_map.keys())
+        yf_tickers = [t.replace(".", "-") for t in tickers]
+        logger.info(f"Loaded {len(tickers)} tickers from the US universe.")
     
     # 1. Bulk Download 1 Month of Data
     logger.info("Downloading 1-month OHLCV data for momentum calculation...")
-    if ACTIVE_MARKET == "US":
-        yf_tickers = [t.replace(".", "-") for t in tickers]
-    else:
-        yf_tickers = [f"{t.replace('.', '-')}.NS" for t in tickers]
+
     df_all = yf.download(
         " ".join(yf_tickers), 
         period="3mo", 
@@ -107,10 +108,7 @@ def run_scanner():
     sector_metrics = {}
     
     for t in tickers:
-        if ACTIVE_MARKET == "US":
-            yf_t = t.replace(".", "-")
-        else:
-            yf_t = f"{t.replace('.', '-')}.NS"
+        yf_t = t.replace(".", "-") if ACTIVE_MARKET == "US" else t
         momentum = 0.0
         if isinstance(df_all.columns, pd.MultiIndex) and yf_t in df_all.columns.levels[0]:
             try:
@@ -170,10 +168,7 @@ def run_scanner():
         
         final_symbols = []
         for t in candidate_stocks[:15]:
-            if ACTIVE_MARKET == "US":
-                final_symbols.append(t.replace(".", "-"))
-            else:
-                final_symbols.append(f"{t.replace('.', '-')}.NS")
+            final_symbols.append(t.replace(".", "-") if ACTIVE_MARKET == "US" else t)
                 
         logger.info(f"Fallback selected {len(final_symbols)} final targets.")
         with open(TARGETS_FILE, "w") as f:
@@ -185,10 +180,7 @@ def run_scanner():
     approved_targets = []
     
     for symbol in candidate_stocks:
-        if ACTIVE_MARKET == "US":
-            yf_t = symbol.replace(".", "-")
-        else:
-            yf_t = f"{symbol.replace('.', '-')}.NS"
+        yf_t = symbol.replace(".", "-") if ACTIVE_MARKET == "US" else symbol
         df_symbol = None
         if isinstance(df_all.columns, pd.MultiIndex):
             if yf_t in df_all.columns.levels[0]:

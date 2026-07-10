@@ -62,7 +62,59 @@ class OrderExecutor:
         self._ibkr = ibkr
         self._open_orders: Dict[str, OpenOrder] = {}
         self._trailing_high: Dict[str, float] = {}
+        self._load_state()
         logger.debug("OrderExecutor initialised (trailing_stop=%.2f%%).", self._trailing_stop_pct * 100)
+
+    # ------------------------------------------------------------------
+    # State Persistence
+    # ------------------------------------------------------------------
+
+    def _get_state_path(self) -> str:
+        import os
+        from config import config
+        data_dir = os.path.dirname(config.agent.trades_csv)
+        market = os.environ.get("TRADING_MARKET", "IN").upper()
+        return os.path.join(data_dir, f"executor_state_{market}.json")
+
+    def _dump_state(self) -> None:
+        """Serialize open orders and trailing highs to disk."""
+        import json, os, dataclasses
+        try:
+            state = {
+                "open_orders": {
+                    sym: dataclasses.asdict(order)
+                    for sym, order in self._open_orders.items()
+                },
+                "trailing_high": self._trailing_high
+            }
+            out_path = self._get_state_path()
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+            with open(out_path, "w") as f:
+                json.dump(state, f, indent=2)
+        except Exception as exc:
+            logger.error("Failed to dump OrderExecutor state: %s", exc)
+
+    def _load_state(self) -> None:
+        """Load open orders and trailing highs from disk."""
+        import json, os
+        try:
+            out_path = self._get_state_path()
+            if os.path.exists(out_path):
+                with open(out_path, "r") as f:
+                    state = json.load(f)
+                
+                self._trailing_high = state.get("trailing_high", {})
+                orders = state.get("open_orders", {})
+                self._open_orders = {}
+                for sym, order_dict in orders.items():
+                    # Handle backwards compatibility if fields were added
+                    self._open_orders[sym] = OpenOrder(**{
+                        k: v for k, v in order_dict.items()
+                        if k in OpenOrder.__dataclass_fields__
+                    })
+                logger.info("OrderExecutor state loaded: %d active trailing stops recovered.", len(self._open_orders))
+        except Exception as exc:
+            logger.error("Failed to load OrderExecutor state: %s", exc)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -193,6 +245,7 @@ class OrderExecutor:
             )
             self._open_orders[symbol] = open_order
             self._trailing_high[symbol] = current_price
+            self._dump_state()
 
             stop_type = "SOFTWARE" if open_order.is_fractional else "NATIVE"
             logger.info(
@@ -219,6 +272,7 @@ class OrderExecutor:
                 )
                 self._open_orders.pop(symbol, None)
                 self._trailing_high.pop(symbol, None)
+                self._dump_state()
                 return False
 
             self._cancel_bracket(symbol)
@@ -241,6 +295,7 @@ class OrderExecutor:
 
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
+            self._dump_state()
 
             logger.info(
                 "SELL executed for %s: qty=%.4f order_id=%s",
@@ -293,8 +348,10 @@ class OrderExecutor:
         # Advance the high-water mark
         if symbol not in self._trailing_high:
             self._trailing_high[symbol] = current_price
+            self._dump_state()
         if current_price > self._trailing_high[symbol]:
             self._trailing_high[symbol] = current_price
+            self._dump_state()
             logger.debug(
                 "Software trailing high updated for %s: %.4f", symbol, current_price
             )
@@ -461,7 +518,7 @@ class OrderExecutor:
         """
         for symbol, pos in open_positions.items():
             qty = float(pos.get("quantity", 0))
-            if qty > 0 and self._is_fractional(qty):
+            if qty > 0:
                 # Only sync if we don't already have an active trailing high
                 if symbol not in self._trailing_high:
                     current_price = broker.get_current_price(symbol)
@@ -483,6 +540,7 @@ class OrderExecutor:
                             entry_time=time.monotonic(),
                         )
                         self._trailing_high[symbol] = current_price
+                        self._dump_state()
                         logger.info("Restored software trailing stop tracker for %s at %.4f", symbol, current_price)
 
 

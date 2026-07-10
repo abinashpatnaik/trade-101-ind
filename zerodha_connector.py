@@ -274,7 +274,8 @@ class ZerodhaConnector:
         for sym in symbols:
             if sym not in self._live_prices:  # Unseen symbol
                 tradingsymbol = sym.split(".")[0]
-                new_instruments.append(f"NSE:{tradingsymbol}")
+                exchange_prefix = "BSE" if sym.endswith(".BO") else "NSE"
+                new_instruments.append(f"{exchange_prefix}:{tradingsymbol}")
                 
         if not new_instruments:
             return
@@ -287,7 +288,9 @@ class ZerodhaConnector:
             for inst, data in ltp_data.items():
                 token = data.get("instrument_token")
                 tradingsymbol = inst.split(":")[1]
-                sym = f"{tradingsymbol}.NS"
+                exchange_prefix = inst.split(":")[0]
+                suffix = ".BO" if exchange_prefix == "BSE" else ".NS"
+                sym = f"{tradingsymbol}{suffix}"
                 
                 if token:
                     self._token_to_symbol[token] = sym
@@ -375,26 +378,76 @@ class ZerodhaConnector:
         if not self.kite:
             return None
         try:
+            positions = {}
+            
+            # 1. Fetch T+1 and settled holdings
+            try:
+                holdings_data = self.kite.holdings()
+            except Exception as e:
+                logger.warning("Failed to fetch Zerodha holdings: %s", e)
+                holdings_data = []
+                
+            for h in holdings_data:
+                qty = int(h.get("quantity", 0)) + int(h.get("t1_quantity", 0))
+                if qty <= 0:
+                    continue
+                
+                tradingsymbol = h.get("tradingsymbol", "")
+                exchange = h.get("exchange", "NSE")
+                symbol = f"{tradingsymbol}.BO" if exchange == "BSE" else f"{tradingsymbol}.NS"
+                
+                last_price = self.get_current_price(symbol)
+                if last_price is None:
+                    last_price = float(h.get("last_price", 0.0))
+                    
+                positions[symbol] = {
+                    "quantity": qty,
+                    "avg_cost": float(h.get("average_price", 0.0)),
+                    "market_value": qty * last_price,
+                    "conid": 0,
+                }
+                
+            # 2. Fetch intraday / T-day positions and merge
             pos_data = self.kite.positions()
             net_positions = pos_data.get("net", [])
-            positions = {}
             for pos in net_positions:
                 qty = int(pos.get("quantity", 0))
-                if qty == 0:
+                ex_suffix = ".BO" if pos.get("exchange", "NSE") == "BSE" else ".NS"
+                if qty == 0 and pos.get("tradingsymbol", "") + ex_suffix not in positions:
                     continue
+                    
                 tradingsymbol = pos.get("tradingsymbol", "")
-                symbol = tradingsymbol + ".NS"
+                exchange = pos.get("exchange", "NSE")
+                symbol = f"{tradingsymbol}.BO" if exchange == "BSE" else f"{tradingsymbol}.NS"
                 
-                # Use live websocket price if available
                 last_price = self.get_current_price(symbol)
                 if last_price is None:
                     last_price = float(pos.get("last_price", 0.0))
-                positions[symbol] = {
-                    "quantity": qty,
-                    "avg_cost": float(pos.get("average_price", 0.0)),
-                    "market_value": qty * last_price,
-                    "conid": 0,  # Not used for Kite but kept for compatibility
-                }
+                    
+                if symbol in positions:
+                    new_qty = positions[symbol]["quantity"] + qty
+                    if new_qty <= 0:
+                        del positions[symbol]
+                    else:
+                        old_qty = positions[symbol]["quantity"]
+                        old_cost = positions[symbol]["avg_cost"]
+                        # Adjust cost only if adding to position
+                        if qty > 0:
+                            pos_cost = float(pos.get("average_price", 0.0))
+                            new_cost = ((old_qty * old_cost) + (qty * pos_cost)) / new_qty
+                            positions[symbol]["avg_cost"] = new_cost
+                            
+                        positions[symbol]["quantity"] = new_qty
+                        positions[symbol]["market_value"] = new_qty * last_price
+                else:
+                    if qty > 0:
+                        positions[symbol] = {
+                            "quantity": qty,
+                            "avg_cost": float(pos.get("average_price", 0.0)),
+                            "market_value": qty * last_price,
+                            "conid": 0,
+                        }
+            
             logger.debug("Zerodha positions synced: %d active.", len(positions))
             return positions
         except Exception as exc:
@@ -422,7 +475,8 @@ class ZerodhaConnector:
             return None
         try:
             tradingsymbol = symbol.split(".")[0]
-            instrument = f"NSE:{tradingsymbol}"
+            exchange = "BSE" if symbol.endswith(".BO") else "NSE"
+            instrument = f"{exchange}:{tradingsymbol}"
             ltp_data = self.kite.ltp(instrument)
             
             token = ltp_data.get(instrument, {}).get("instrument_token")
@@ -455,7 +509,8 @@ class ZerodhaConnector:
             return None
         try:
             tradingsymbol = symbol.split(".")[0]
-            instrument = f"NSE:{tradingsymbol}"
+            exchange = "BSE" if symbol.endswith(".BO") else "NSE"
+            instrument = f"{exchange}:{tradingsymbol}"
             # Need instrument_token for historical data
             ltp_data = self.kite.ltp(instrument)
             token = ltp_data.get(instrument, {}).get("instrument_token")
@@ -508,6 +563,8 @@ class ZerodhaConnector:
         try:
             tradingsymbol = symbol.split(".")[0]
             
+            exchange_code = "BSE" if symbol.endswith(".BO") else "NSE"
+            
             # Zerodha blocks plain MARKET orders for many stocks. 
             # We simulate a MARKET order using a LIMIT order with a 2% execution buffer.
             ltp = self.get_current_price(symbol)
@@ -520,7 +577,7 @@ class ZerodhaConnector:
             
             order_id = self.kite.place_order(
                 variety="regular",
-                exchange="NSE",
+                exchange=exchange_code,
                 tradingsymbol=tradingsymbol,
                 transaction_type=action.upper(),
                 quantity=quantity,
@@ -552,7 +609,7 @@ class ZerodhaConnector:
             
             order_id = self.kite.place_order(
                 variety="regular",
-                exchange="NSE",
+                exchange=exchange_code,
                 tradingsymbol=tradingsymbol,
                 transaction_type=action.upper(),
                 quantity=quantity,
@@ -579,9 +636,10 @@ class ZerodhaConnector:
             return None
         try:
             tradingsymbol = symbol.split(".")[0]
+            exchange_code = "BSE" if symbol.endswith(".BO") else "NSE"
             order_id = self.kite.place_order(
                 variety="regular",
-                exchange="NSE",
+                exchange=exchange_code,
                 tradingsymbol=tradingsymbol,
                 transaction_type=action.upper(),
                 quantity=quantity,

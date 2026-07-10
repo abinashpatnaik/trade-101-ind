@@ -1017,27 +1017,26 @@ class TradingAgent:
 
                 # c. EOD close check (within 15 min of close)
                 if self.session.is_near_close():
-                    logger.info(
-                        "Approaching session close (%.1f min remaining) — "
-                        "closing all open positions.",
-                        self.session.minutes_remaining(),
-                    )
-                    self.close_all_positions(reason="EOD")
-                    
-                    # Trigger EOD model learning
-                    try:
-                        self.continuous_learning.retrain_model_if_needed()
-                        self.ai_validator.reload_model()
-                    except Exception as exc:
-                        logger.error("Continuous learning retrain failed: %s", exc)
+                    if not getattr(self, "_eod_processed", False):
+                        logger.info(
+                            "Approaching session close (%.1f min remaining) — "
+                            "closing all open positions.",
+                            self.session.minutes_remaining(),
+                        )
+                        self.close_all_positions(reason="EOD")
                         
-                    # Wait for session to actually close then exit.
-                    remaining_secs = self.session.minutes_remaining() * 60
-                    logger.info(
-                        "Waiting %.0f s for session close …", remaining_secs
-                    )
-                    time.sleep(max(0, remaining_secs + 5))
-                    break
+                        # Trigger EOD model learning
+                        try:
+                            self.continuous_learning.retrain_model_if_needed()
+                            self.ai_validator.reload_model()
+                        except Exception as exc:
+                            logger.error("Continuous learning retrain failed: %s", exc)
+                            
+                        self._eod_processed = True
+                        logger.info("EOD processing complete. Agent will continue syncing prices until market fully closes.")
+                    
+                    # Skip scanning for new trades during the EOD buffer.
+                    daily_targets = []
 
                 # d. Per-symbol scan (using daily targets from sector scanner if available)
                 try:
@@ -1048,9 +1047,13 @@ class TradingAgent:
                         with open(targets_file, "r") as f:
                             parsed_targets = json.load(f)
                             if parsed_targets and isinstance(parsed_targets, list):
-                                # Combine core universe and pre-market targets, removing duplicates
-                                combined = set(daily_targets + parsed_targets)
-                                daily_targets = list(combined)
+                                if ACTIVE_MARKET == "IN":
+                                    # Use ONLY the dynamic targets for the Indian market
+                                    daily_targets = parsed_targets
+                                else:
+                                    # Combine core universe and pre-market targets, removing duplicates for US
+                                    combined = set(daily_targets + parsed_targets)
+                                    daily_targets = list(combined)
                                 # Sort to maintain some stable ordering
                                 daily_targets.sort()
                 except Exception as exc:
