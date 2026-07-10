@@ -43,18 +43,6 @@ function getDB() {
   if (_db) return _db;
   try {
     if (!fs.existsSync(DB_PATH)) return null;
-    _db = new Database(DB_PATH, { readonly: false, fileMustExist: true }); // Need write access for cleanup
-    _db.pragma("journal_mode = WAL");
-    
-    // One-time cleanup for the NAV glitch
-    try {
-      _db.prepare("DELETE FROM nav_history WHERE nav < 6000").run();
-    } catch (e) {
-      console.error("Cleanup error (safe to ignore):", e.message);
-    }
-    
-    // Re-open as readonly for normal dashboard use
-    _db.close();
     _db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
     _db.pragma("journal_mode = WAL");
     
