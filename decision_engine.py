@@ -132,12 +132,28 @@ class DecisionEngine:
                         logger.error("Failed to load ML thresholds: %s", e)
 
     def get_ml_buy_threshold(self, symbol: str, is_swing: bool) -> float:
-        """Returns the dynamic ML threshold for a symbol."""
+        """Returns the dynamic ML threshold for a symbol.
+        
+        Uses per-symbol threshold if available (training symbols).
+        Falls back to _GLOBAL_ threshold (75th percentile of all training thresholds).
+        Last resort: static config value (0.55).
+        """
         self._load_ml_thresholds()
         mode = "swing" if is_swing else "day"
         # Extract base symbol if it has an extension (for IN market)
         clean_sym = symbol.replace('.NS', '') if ACTIVE_MARKET == "IN" else symbol
-        return self.ml_thresholds[mode].get(clean_sym, self._sig.ml_buy_threshold)
+        thresholds = self.ml_thresholds[mode]
+        
+        # 1. Per-symbol threshold (training symbols only)
+        if clean_sym in thresholds:
+            return thresholds[clean_sym]
+        
+        # 2. Global dynamic threshold (covers sector-scanner picks)
+        if "_GLOBAL_" in thresholds:
+            return thresholds["_GLOBAL_"]
+        
+        # 3. Static fallback
+        return self._sig.ml_buy_threshold
 
     def register_cooldown(self, symbol: str, is_loss: bool) -> None:
         """

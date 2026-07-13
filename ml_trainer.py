@@ -239,6 +239,7 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     test_df['pred_prob'] = test_probs
     
     thresholds = {}
+    all_thresholds = []
     for sym in full_df['symbol'].unique():
         sym_test = test_df[test_df['symbol'] == sym]
         if not sym_test.empty and len(sym_test) >= 10:
@@ -252,6 +253,14 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         thresh = float(np.clip(thresh, 0.50, 0.95))
         clean_sym = sym.replace('.NS', '') if ACTIVE_MARKET == "IN" else sym
         thresholds[clean_sym] = thresh
+        all_thresholds.append(thresh)
+    
+    # Global threshold: used as fallback for any symbol NOT in training set
+    # (e.g., sector scanner picks MRNA, AFRM, etc. which aren't training symbols)
+    global_thresh = float(np.percentile(all_thresholds, 75))  # 75th pct of per-symbol thresholds
+    thresholds["_GLOBAL_"] = global_thresh
+    logger.info(f"[{mode.upper()}] Global fallback threshold: {global_thresh:.4f}")
+    logger.info(f"[{mode.upper()}] Per-symbol threshold range: {min(all_thresholds):.4f} - {max(all_thresholds):.4f}")
             
     thresholds_path = os.path.join(os.path.dirname(__file__), "data", f"ml_thresholds_{ACTIVE_MARKET}_{mode}.json")
     with open(thresholds_path, 'w') as f:

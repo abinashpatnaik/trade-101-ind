@@ -173,8 +173,15 @@ class AIValidator:
 
             self._save_log(symbol, decision.action, bool(approved), reason)
             
-            logger.info(f"Ghost Mode: {reason}")
-            decision.ai_decision = "GHOST_APPROVED" if approved else "GHOST_REJECTED"
+            if approved:
+                logger.info(f"ML Gate PASSED: {reason}")
+                decision.ai_decision = "APPROVED"
+            else:
+                logger.info(f"ML Gate BLOCKED: {reason}")
+                decision.ai_decision = "REJECTED"
+                # Actually block the trade — change action to HOLD
+                decision.action = "HOLD"
+                decision.reason = reason
             decision.ai_reason = reason
             return decision
                 
