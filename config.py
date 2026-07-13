@@ -199,9 +199,9 @@ def get_india_config() -> Config:
                      "IDFCFIRSTB.NS", "AUBANK.NS", "BANDHANBNK.NS"]
         ),
         risk=RiskConfig(
-            stop_loss_pct=0.015,            # -1.5% hard stop (wider for IN volatility)
-            profit_lock_threshold=0.0025,   # +0.25% before profit-lock activates
-            trailing_gap_base=0.005,         # 0.5% trailing gap for small gains
+            stop_loss_pct=0.025,            # -2.5% hard stop floor (ATR-dynamic widens further)
+            profit_lock_threshold=0.005,    # +0.5% before profit-lock activates
+            trailing_gap_base=0.010,        # 1.0% trailing gap (IN mid-caps are more volatile)
         ),
         wallet=WalletConfig(min_trade_value=1000.0),
         trend=TrendConfig(),
