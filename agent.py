@@ -891,18 +891,22 @@ class TradingAgent:
                 slept = 0.0
                 while slept < secs and not self._shutdown_requested:
                     self._write_system_status(False, "sleeping", self.session.next_open_time())
-                    # Run automated ML retraining if needed
-                    self._check_and_run_automated_training()
-
-                    # Check if we should run the pre-market scanner
+                    # --- Pre-Market Setup: Scanner then ML Training ---
                     if self.session.is_pre_market() and not getattr(self, "_scanner_run_today", False):
                         logger.info("Pre-market window detected. Running sector scanner...")
                         try:
                             import sector_scanner
                             sector_scanner.run_scanner()
                             self._scanner_run_today = True
+                            
+                            # IMMEDIATELY AFTER scanner finishes, run ML training on those specific targets
+                            self._check_and_run_automated_training()
                         except Exception as e:
-                            logger.error("Sector scanner failed: %s", e)
+                            logger.error("Sector scanner or ML retraining failed: %s", e)
+                    
+                    # Run automated ML retraining as fallback (e.g. on weekends or if missed)
+                    if not getattr(self, "_scanner_run_today", False):
+                        self._check_and_run_automated_training()
 
                     # --- PRE-MARKET OVERNIGHT PROTECTION ---
                     # If we hold positions overnight, wake up and monitor them in the pre-market

@@ -24,8 +24,24 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
 
-# Load symbols from config
-SYMBOLS = config.universe.tickers
+# Load anchor symbols from config
+ANCHOR_SYMBOLS = config.universe.tickers
+SYMBOLS = list(ANCHOR_SYMBOLS)
+
+# Load daily targets from sector scanner if available
+TARGETS_FILE = os.path.join(os.path.dirname(__file__), "data", f"daily_targets_{ACTIVE_MARKET}.json")
+if os.path.exists(TARGETS_FILE):
+    try:
+        with open(TARGETS_FILE, "r") as f:
+            daily_targets = json.load(f)
+            # Add new targets, remove ".NS" if present to match config style
+            for t in daily_targets:
+                clean_t = t.replace(".NS", "")
+                if clean_t not in SYMBOLS:
+                    SYMBOLS.append(clean_t)
+        logger.info(f"Loaded {len(daily_targets)} daily targets. Total training universe: {len(SYMBOLS)}")
+    except Exception as e:
+        logger.error(f"Failed to load daily targets: {e}")
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", f"ml_validator_model_{ACTIVE_MARKET}.pkl")
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -171,6 +187,10 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
             df_features['symbol'] = sym.strip().upper()
             all_data.append(df_features)
             logger.info(f"[{mode.upper()}] Fetched and processed {len(df_features)} rows for {yf_sym}")
+            
+            # Rate limiting to prevent yfinance bans
+            import time
+            time.sleep(1.0)
         except Exception as e:
             logger.warning(f"[{mode.upper()}] Failed to fetch data for {sym}: {e}")
             
@@ -180,8 +200,44 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         
     full_df = pd.concat(all_data, ignore_index=True)
     
+    # --- CONTINUOUS LEARNING: Inject Real Trade Outcomes ---
+    db_path = os.path.join(os.path.dirname(__file__), "data", f"trading_{ACTIVE_MARKET}.db")
+    if os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            # Get historical BUY trades
+            trades_df = pd.read_sql_query("SELECT symbol, pnl, exit_reason, date, time FROM trades WHERE action='BUY' AND exit_reason IS NOT NULL", conn)
+            conn.close()
+            
+            if not trades_df.empty:
+                logger.info(f"[{mode.upper()}] Loaded {len(trades_df)} historical trades for continuous learning.")
+                
+                # Add date_str to index for alignment
+                full_df['date_str'] = full_df.index.astype(str).str[:10]
+                
+                overrides = 0
+                for _, trade in trades_df.iterrows():
+                    sym = trade['symbol'].replace('.NS', '')
+                    trade_date = str(trade['date'])
+                    is_win = 1 if (trade['pnl'] > 0 or trade['exit_reason'] == "TRAILING_STOP") else 0
+                    
+                    mask = (full_df['symbol'] == sym) & (full_df['date_str'] == trade_date)
+                    if mask.any():
+                        full_df.loc[mask, 'target'] = is_win
+                        overrides += mask.sum()
+                
+                logger.info(f"[{mode.upper()}] Applied {overrides} continuous learning target overrides based on real trades.")
+                full_df = full_df.drop(columns=['date_str'])
+        except Exception as e:
+            logger.error(f"[{mode.upper()}] Failed to apply continuous learning from trades DB: {e}")
+            
     # V2 feature set: removed redundant overall_trend, added atr_pct, bb_position, rsi_slope, price_vs_sma50
     features = ['rsi', 'rsi_slope', 'macd_signal', 'ema_signal', 'vwap_signal', 'sentiment_score', 'adx', 'atr_pct', 'volume_ratio', 'bb_position', 'price_vs_sma50']
+    
+    # Drop rows with NaN targets or features
+    full_df = full_df.dropna(subset=['target'] + features)
+    
     X = full_df[features]
     y = full_df['target']
     
