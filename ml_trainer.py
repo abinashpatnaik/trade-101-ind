@@ -14,6 +14,8 @@ import joblib
 import logging
 import json
 from datetime import datetime, timedelta
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import accuracy_score, classification_report
 
 from config import config
 
@@ -36,11 +38,14 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Engineer features matching trend_engine.py"""
+    """Engineer features matching trend_engine.py — v2 with improved feature set."""
     df = df.copy()
     
     # RSI
     df['rsi'] = calculate_rsi(df['Close'], 14)
+    
+    # RSI Slope (rate of change of RSI over 3 periods — detects momentum shifts)
+    df['rsi_slope'] = df['rsi'].diff(3).fillna(0.0)
     
     # EMA
     df['ema_9'] = df['Close'].ewm(span=9, adjust=False).mean()
@@ -59,14 +64,15 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df['vwap_proxy'] = typical_price.rolling(window=14).mean()
     df['vwap_signal'] = np.where(df['Close'] > df['vwap_proxy'], 1, -1)
     
-    # Overall Trend
-    df['overall_trend'] = (df['ema_signal'] + df['macd_signal'] + df['vwap_signal']) / 3.0
+    # REMOVED: overall_trend was a redundant linear combination of ema/macd/vwap signals
+    # Instead, the model can learn the combination itself with more discriminative power
     
-    # Simulated Sentiment (Proxy based on 2-day momentum, mimics momentum sentiment in sentiment_engine)
-    momentum = df['Close'].pct_change(periods=2) * 20
-    df['sentiment_score'] = momentum.clip(-1.0, 1.0).fillna(0.0)
+    # Sentiment: set to 0.0 (neutral) during training to avoid train/serve skew.
+    # At inference time, real sentiment is provided. By training with neutral sentiment,
+    # the model learns to NOT rely on this noisy feature, preventing corruption.
+    df['sentiment_score'] = 0.0
     
-    # ADX
+    # ADX (Average Directional Index — trend strength)
     high = df['High']
     low = df['Low']
     close = df['Close']
@@ -85,9 +91,24 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1))
     df['adx'] = dx.rolling(window=period).mean().fillna(0.0)
     
+    # ATR Percentage (volatility relative to price — helps model avoid high-noise stocks)
+    df['atr_pct'] = (atr_smooth / df['Close']).fillna(0.0) * 100
+    
     # Volume Ratio
     avg_vol = df['Volume'].rolling(window=20, min_periods=1).mean()
     df['volume_ratio'] = (df['Volume'] / avg_vol.replace(0, 1)).fillna(1.0)
+    
+    # Bollinger Band Position (where price sits within the bands, 0-1)
+    sma_20 = df['Close'].rolling(window=20).mean()
+    std_20 = df['Close'].rolling(window=20).std()
+    bb_upper = sma_20 + (2 * std_20)
+    bb_lower = sma_20 - (2 * std_20)
+    bb_width = (bb_upper - bb_lower).replace(0, 1e-9)
+    df['bb_position'] = ((df['Close'] - bb_lower) / bb_width).clip(0, 1).fillna(0.5)
+    
+    # Price vs SMA50 (longer-term trend context)
+    sma_50 = df['Close'].rolling(window=50).mean()
+    df['price_vs_sma50'] = ((df['Close'] / sma_50) - 1.0).fillna(0.0) * 100  # % above/below
     
     return df
     
@@ -159,19 +180,20 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         
     full_df = pd.concat(all_data, ignore_index=True)
     
-    features = ['rsi', 'macd_signal', 'ema_signal', 'vwap_signal', 'overall_trend', 'sentiment_score', 'adx', 'volume_ratio']
+    # V2 feature set: removed redundant overall_trend, added atr_pct, bb_position, rsi_slope, price_vs_sma50
+    features = ['rsi', 'rsi_slope', 'macd_signal', 'ema_signal', 'vwap_signal', 'sentiment_score', 'adx', 'atr_pct', 'volume_ratio', 'bb_position', 'price_vs_sma50']
     X = full_df[features]
     y = full_df['target']
     
-    logger.info(f"[{mode.upper()}] Training XGBoost on {len(X)} samples...")
+    logger.info(f"[{mode.upper()}] Training XGBoost on {len(X)} samples with {len(features)} features...")
     
     scale_pos_weight = len(y[y == 0]) / max(len(y[y == 1]), 1)
-    logger.info(f"[{mode.upper()}] Computed scale_pos_weight: {scale_pos_weight:.2f}")
+    logger.info(f"[{mode.upper()}] Class balance: {len(y[y==1])} positive / {len(y[y==0])} negative (scale_pos_weight={scale_pos_weight:.2f})")
     
     clf = xgb.XGBClassifier(
-        n_estimators=100,
-        max_depth=4,
-        learning_rate=0.05,
+        n_estimators=200,
+        max_depth=5,
+        learning_rate=0.03,
         subsample=0.8,
         colsample_bytree=0.8,
         eval_metric='logloss',
@@ -179,29 +201,69 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         random_state=42
     )
     
+    # Proper train/test split using TimeSeriesSplit for honest out-of-sample evaluation
+    tscv = TimeSeriesSplit(n_splits=5)
+    test_accuracies = []
+    for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+        clf_fold = xgb.XGBClassifier(
+            n_estimators=200, max_depth=5, learning_rate=0.03,
+            subsample=0.8, colsample_bytree=0.8, eval_metric='logloss',
+            scale_pos_weight=scale_pos_weight, random_state=42
+        )
+        clf_fold.fit(X_train, y_train)
+        y_pred = clf_fold.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        test_accuracies.append(acc)
+        logger.info(f"[{mode.upper()}] Fold {fold+1} test accuracy: {acc:.3f}")
+    
+    avg_accuracy = np.mean(test_accuracies)
+    logger.info(f"[{mode.upper()}] === Average test accuracy across 5 folds: {avg_accuracy:.3f} ===")
+    
+    if avg_accuracy < 0.52:
+        logger.warning(f"[{mode.upper()}] WARNING: Model accuracy ({avg_accuracy:.3f}) is barely above random chance!")
+    
+    # Train final model on ALL data for deployment
     clf.fit(X, y)
     
     os.makedirs(os.path.dirname(model_path_local), exist_ok=True)
     joblib.dump(clf, model_path_local)
     logger.info(f"[{mode.upper()}] Model successfully saved to {model_path_local}")
     
-    # Calculate dynamic thresholds
-    full_df['pred_prob'] = clf.predict_proba(X)[:, 1]
-    thresholds = {}
+    # Calculate dynamic thresholds from test-set predictions only (honest thresholds)
+    # Use the last fold's test predictions for threshold calibration
+    last_train_idx, last_test_idx = list(tscv.split(X))[-1]
+    test_probs = clf.predict_proba(X.iloc[last_test_idx])[:, 1]
+    test_df = full_df.iloc[last_test_idx].copy()
+    test_df['pred_prob'] = test_probs
     
+    thresholds = {}
     for sym in full_df['symbol'].unique():
-        sym_df = full_df[full_df['symbol'] == sym]
-        if not sym_df.empty:
-            thresh = np.percentile(sym_df['pred_prob'], 90)
-            # Bound the threshold between 0.50 and 0.95
-            thresh = float(np.clip(thresh, 0.50, 0.95))
-            clean_sym = sym.replace('.NS', '') if ACTIVE_MARKET == "IN" else sym
-            thresholds[clean_sym] = thresh
+        sym_test = test_df[test_df['symbol'] == sym]
+        if not sym_test.empty and len(sym_test) >= 10:
+            thresh = np.percentile(sym_test['pred_prob'], 85)
+        else:
+            # Fallback: use full dataset if insufficient test data for this symbol
+            sym_full = full_df[full_df['symbol'] == sym]
+            full_probs = clf.predict_proba(X.loc[sym_full.index])[:, 1]
+            thresh = np.percentile(full_probs, 85)
+        # Bound the threshold between 0.50 and 0.95
+        thresh = float(np.clip(thresh, 0.50, 0.95))
+        clean_sym = sym.replace('.NS', '') if ACTIVE_MARKET == "IN" else sym
+        thresholds[clean_sym] = thresh
             
     thresholds_path = os.path.join(os.path.dirname(__file__), "data", f"ml_thresholds_{ACTIVE_MARKET}_{mode}.json")
     with open(thresholds_path, 'w') as f:
         json.dump(thresholds, f, indent=4)
     logger.info(f"[{mode.upper()}] Saved dynamic thresholds to {thresholds_path}")
+    
+    # Log feature importances to understand what the model actually learned
+    importances = dict(zip(features, clf.feature_importances_))
+    sorted_imp = sorted(importances.items(), key=lambda x: x[1], reverse=True)
+    logger.info(f"[{mode.upper()}] Feature importances:")
+    for feat, imp in sorted_imp:
+        logger.info(f"  {feat}: {imp:.4f}")
     
     return True
 

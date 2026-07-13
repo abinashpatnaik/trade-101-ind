@@ -48,13 +48,16 @@ class ContinuousLearning:
             "date": datetime.utcnow().strftime('%Y-%m-%d'),
             "symbol": symbol,
             "rsi": trend_signal.rsi,
+            "rsi_slope": trend_signal.rsi_slope,
             "macd_signal": trend_signal.macd_signal,
             "ema_signal": trend_signal.ema_signal,
             "vwap_signal": trend_signal.vwap_signal,
-            "overall_trend": trend_signal.overall_trend,
             "sentiment_score": sentiment_score,
             "adx": trend_signal.adx,
+            "atr_pct": trend_signal.atr_pct,
             "volume_ratio": trend_signal.volume_ratio,
+            "bb_position": trend_signal.bb_position,
+            "price_vs_sma50": trend_signal.price_vs_sma50,
             "predicted_prob": predicted_prob,
             "target": None  # Unknown until 5 days pass
         }
@@ -129,16 +132,18 @@ class ContinuousLearning:
             
             # Retrain model
             labeled_df = df.dropna(subset=['target'])
-            if len(labeled_df) > 50:  # Arbitrary minimum threshold to allow retraining
-                features = ['rsi', 'macd_signal', 'ema_signal', 'vwap_signal', 'overall_trend', 'sentiment_score', 'adx', 'volume_ratio']
-                X = labeled_df[features]
+            if len(labeled_df) > 200:  # Raised from 50 — need sufficient data for meaningful retraining
+                features = ['rsi', 'rsi_slope', 'macd_signal', 'ema_signal', 'vwap_signal', 'sentiment_score', 'adx', 'atr_pct', 'volume_ratio', 'bb_position', 'price_vs_sma50']
+                # Only use features that exist in the logged data (backward compat)
+                available_features = [f for f in features if f in labeled_df.columns]
+                X = labeled_df[available_features]
                 y = labeled_df['target'].astype(int)
                 
-                logger.info("Retraining XGBoost model on aggregated dataset...")
+                logger.info("Retraining XGBoost model on aggregated dataset (%d samples, %d features)...", len(X), len(available_features))
                 clf = xgb.XGBClassifier(
-                    n_estimators=100,
-                    max_depth=4,
-                    learning_rate=0.05,
+                    n_estimators=200,
+                    max_depth=5,
+                    learning_rate=0.03,
                     subsample=0.8,
                     colsample_bytree=0.8,
                     eval_metric='logloss',

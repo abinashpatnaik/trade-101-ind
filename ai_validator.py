@@ -95,13 +95,16 @@ class AIValidator:
 
             features = pd.DataFrame([{
                 'rsi': trend_signal.rsi,
+                'rsi_slope': trend_signal.rsi_slope,
                 'macd_signal': macd_val,
                 'ema_signal': ema_val,
                 'vwap_signal': vwap_val,
-                'overall_trend': trend_signal.overall_trend,
                 'sentiment_score': sentiment_score,
                 'adx': trend_signal.adx,
-                'volume_ratio': trend_signal.volume_ratio
+                'atr_pct': trend_signal.atr_pct,
+                'volume_ratio': trend_signal.volume_ratio,
+                'bb_position': trend_signal.bb_position,
+                'price_vs_sma50': trend_signal.price_vs_sma50,
             }])
             
             if hasattr(model, 'feature_names_in_'):

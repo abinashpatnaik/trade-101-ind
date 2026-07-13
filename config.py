@@ -68,15 +68,15 @@ class RiskConfig:
     """Position-level and portfolio-level risk controls."""
     max_position_size_pct: float = 0.30
     max_daily_loss_pct: float = 0.02
-    stop_loss_pct: float = 0.01
+    stop_loss_pct: float = 0.025            # 2.5% hard stop (US default, floor for ATR-dynamic)
     take_profit_pct: float = 9.99  # Effectively disabled so profits can run
     max_open_positions: int = 3
     allow_short_selling: bool = False
     trailing_stop_pct: float = field(default_factory=lambda: float(os.getenv("TRAILING_STOP_PCT", "0.015")))
     # Profit-lock trailing stop: minimum CURRENT gain to activate
-    profit_lock_threshold: float = 0.0015  # +0.15% (US default)
+    profit_lock_threshold: float = 0.005    # +0.5% (US default, floor for ATR-dynamic)
     # Base trailing gap for small gains (widest gap in the graduated table)
-    trailing_gap_base: float = 0.003  # 0.3% (US default)
+    trailing_gap_base: float = 0.008        # 0.8% (US default)
 
 
 @dataclass

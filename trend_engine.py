@@ -65,6 +65,10 @@ class TrendSignal:
     current_price: float
     adx: float = 0.0         # Average Directional Index (0-100)
     volume_ratio: float = 1.0  # Current volume / 20-day avg volume
+    rsi_slope: float = 0.0     # RSI rate of change (3-period diff)
+    atr_pct: float = 0.0       # ATR as % of price (volatility measure)
+    bb_position: float = 0.5   # Price position within Bollinger Bands (0-1)
+    price_vs_sma50: float = 0.0  # Price distance from SMA50 in %
 
 
 class TrendEngine:
@@ -383,6 +387,33 @@ class TrendEngine:
             # Clip to guarantee [-1, 1] even with floating-point imprecision.
             overall_trend = float(np.clip(overall_trend, -1.0, 1.0))
 
+            # --- New V2 ML features ---
+            # RSI Slope: rate of change of RSI over last 3 bars
+            rsi_series = ta.rsi(close, length=self._cfg.rsi_period)
+            rsi_slope_val = 0.0
+            if rsi_series is not None and len(rsi_series.dropna()) >= 4:
+                rsi_slope_val = float(rsi_series.iloc[-1] - rsi_series.iloc[-4])
+
+            # ATR as percentage of price (volatility measure)
+            atr_pct_val = (atr_val / current_price * 100) if current_price > 0 else 0.0
+
+            # Bollinger Band position (0 = at lower band, 1 = at upper band)
+            sma_20 = close.rolling(window=20).mean()
+            std_20 = close.rolling(window=20).std()
+            bb_position_val = 0.5
+            if not sma_20.dropna().empty and not std_20.dropna().empty:
+                bb_upper = float(sma_20.iloc[-1] + 2 * std_20.iloc[-1])
+                bb_lower = float(sma_20.iloc[-1] - 2 * std_20.iloc[-1])
+                bb_width = bb_upper - bb_lower
+                if bb_width > 0:
+                    bb_position_val = max(0.0, min(1.0, (current_price - bb_lower) / bb_width))
+
+            # Price vs SMA50 (% above/below)
+            sma_50 = close.rolling(window=50).mean()
+            price_vs_sma50_val = 0.0
+            if not sma_50.dropna().empty and float(sma_50.iloc[-1]) > 0:
+                price_vs_sma50_val = (current_price / float(sma_50.iloc[-1]) - 1.0) * 100
+
             signal = TrendSignal(
                 symbol=symbol,
                 rsi=round(rsi_val, 2),
@@ -394,6 +425,10 @@ class TrendEngine:
                 current_price=round(current_price, 4),
                 adx=round(adx_val, 2),
                 volume_ratio=round(vol_ratio, 2),
+                rsi_slope=round(rsi_slope_val, 2),
+                atr_pct=round(atr_pct_val, 4),
+                bb_position=round(bb_position_val, 4),
+                price_vs_sma50=round(price_vs_sma50_val, 4),
             )
 
             logger.info(

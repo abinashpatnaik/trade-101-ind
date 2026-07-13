@@ -563,29 +563,34 @@ class DecisionEngine:
                     combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
+            # Dynamic ATR-based stop loss — adapts to each stock's volatility
+            # Uses 2× ATR as the stop distance, bounded between config floor and 5%
+            atr_multiplier = 2.0
+            atr_pct = (trend_signal.atr * atr_multiplier) / current_price if current_price > 0 else 0.025
+            dynamic_stop_loss_pct = max(self._risk.stop_loss_pct, min(0.05, atr_pct))
+
             stop_loss_price = round(
-                current_price * (1.0 - self._risk.stop_loss_pct), 4
+                current_price * (1.0 - dynamic_stop_loss_pct), 4
             )
             take_profit_price = round(
                 current_price * (1.0 + self._risk.take_profit_pct), 4
             )
             
-            # Dynamic ATR-based trailing stop pct (bounded 1% to 3%)
-            atr_multiplier = 2.0
-            atr_pct = (trend_signal.atr * atr_multiplier) / current_price if current_price > 0 else 0.015
-            dynamic_trailing_stop_pct = max(0.01, min(0.03, atr_pct))
+            # Dynamic trailing stop pct (same ATR basis, bounded 1% to 4%)
+            dynamic_trailing_stop_pct = max(0.01, min(0.04, atr_pct))
 
             reason = (
                 f"BUY signal — combined_score={combined_score:.3f} "
                 f"(trend={trend_signal.overall_trend:.3f}, "
                 f"sentiment={sentiment_score:.3f}). "
                 f"ML={active_ml_confidence:.2f} "
+                f"ATR-stop={dynamic_stop_loss_pct*100:.1f}% "
                 f"Using {quantity} shares."
             )
 
             logger.info(
-                "BUY decision for %s: qty=%d price=%.4f sl=%.4f tp=%.4f",
-                symbol, quantity, current_price, stop_loss_price, take_profit_price,
+                "BUY decision for %s: qty=%d price=%.4f sl=%.4f (ATR-stop=%.1f%%) tp=%.4f",
+                symbol, quantity, current_price, stop_loss_price, dynamic_stop_loss_pct*100, take_profit_price,
             )
 
             return Decision(

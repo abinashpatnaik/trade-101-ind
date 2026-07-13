@@ -200,13 +200,16 @@ def run_scanner():
         try:
             features = pd.DataFrame([{
                 'rsi': signal.rsi,
+                'rsi_slope': signal.rsi_slope,
                 'macd_signal': 1 if signal.macd_signal == "bullish" else (-1 if signal.macd_signal == "bearish" else 0),
                 'ema_signal': 1 if signal.ema_signal == "bullish" else (-1 if signal.ema_signal == "bearish" else 0),
                 'vwap_signal': 1 if signal.vwap_signal == "above" else -1,
-                'overall_trend': signal.overall_trend,
                 'sentiment_score': stock_metrics[symbol]["sentiment"],
                 'adx': signal.adx,
-                'volume_ratio': signal.volume_ratio
+                'atr_pct': signal.atr_pct,
+                'volume_ratio': signal.volume_ratio,
+                'bb_position': signal.bb_position,
+                'price_vs_sma50': signal.price_vs_sma50,
             }])
             
             if hasattr(ai_validator.model_swing, 'feature_names_in_'):
@@ -214,7 +217,7 @@ def run_scanner():
                 features = features[expected_features]
             prob_success = ai_validator.model_swing.predict_proba(features)[0][1]
             
-            if prob_success >= 0.40:  # Much lower threshold for pre-market broad scanning (just building a watchlist)
+            if prob_success >= 0.55:  # Raised from 0.40 — only stocks with genuine ML signal
                 approved_targets.append({
                     "symbol": yf_t,
                     "sector": stock_metrics[symbol]["sector"],
