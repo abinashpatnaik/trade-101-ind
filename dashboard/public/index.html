@@ -230,31 +230,41 @@
 
 
 
-  <!-- Agent Intelligence -->
+  <!-- ML Accuracy Report -->
     <div style="margin-bottom: 24px;">
-<!-- Right: AI Intelligence -->
       <div class="card">
-        <h2>Agent Intelligence</h2>
+        <h2>ML Accuracy Report</h2>
         
-        <!-- Model Health Metrics -->
-        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
-          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div class="micro-label">Prediction Acc.</div>
-            <div class="mono" style="font-size: 18px; font-weight: 600; margin-top: 4px;" id="val-accuracy">0.0%</div>
+        <!-- Overall Metrics Row -->
+        <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 80px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center;">
+            <div class="micro-label">Win Rate</div>
+            <div class="mono" style="font-size: 20px; font-weight: 700; margin-top: 4px;" id="ml-win-rate">—</div>
           </div>
-          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div class="micro-label">Signals Today</div>
-            <div class="mono" style="font-size: 18px; font-weight: 600; margin-top: 4px;" id="val-signals-today">0</div>
+          <div style="flex: 1; min-width: 80px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center;">
+            <div class="micro-label">Total PnL</div>
+            <div class="mono" style="font-size: 20px; font-weight: 700; margin-top: 4px;" id="ml-total-pnl">—</div>
           </div>
-          <div style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+          <div style="flex: 1; min-width: 80px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center;">
+            <div class="micro-label">Trades</div>
+            <div class="mono" style="font-size: 20px; font-weight: 700; margin-top: 4px;" id="ml-total-trades">—</div>
+          </div>
+          <div style="flex: 1; min-width: 80px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center;">
             <div class="micro-label">Avg Confidence</div>
-            <div class="mono" style="font-size: 18px; font-weight: 600; margin-top: 4px;" id="val-avg-conf">0.0%</div>
+            <div class="mono" style="font-size: 20px; font-weight: 700; margin-top: 4px;" id="ml-avg-conf">—</div>
           </div>
         </div>
 
-        <h3 class="micro-label">Decision Log</h3>
-        <div class="feed-list" id="agent-feed">
-          <div class="empty-state">Loading AI logs...</div>
+        <!-- Calibration Chart -->
+        <h3 class="micro-label" style="margin-bottom: 8px;">Confidence vs Actual Win Rate</h3>
+        <div style="position: relative; height: 200px; margin-bottom: 20px;">
+          <canvas id="calibration-chart"></canvas>
+        </div>
+
+        <!-- Exit Reason Breakdown -->
+        <h3 class="micro-label" style="margin-bottom: 8px;">Exit Reason Breakdown</h3>
+        <div id="exit-breakdown" style="overflow-x: auto;">
+          <div class="empty-state">Loading...</div>
         </div>
       </div>
     </div>

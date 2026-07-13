@@ -81,14 +81,15 @@ async function fetchDashboardData() {
   if (syncIcon) syncIcon.classList.add('spinning');
 
   try {
-    const [portRes, posRes, sigRes, tradesRes, analyticsRes, tickerRes, healthRes] = await Promise.all([
+    const [portRes, posRes, sigRes, tradesRes, analyticsRes, tickerRes, healthRes, mlAccRes] = await Promise.all([
       fetch('/api/portfolio').catch(() => null),
       fetch('/api/positions').catch(() => null),
       fetch('/api/signals').catch(() => null),
       fetch('/api/trades').catch(() => null),
       fetch('/api/analytics').catch(() => null),
       fetch('/api/ticker').catch(() => null),
-      fetch('/api/apps-health').catch(() => null)
+      fetch('/api/apps-health').catch(() => null),
+      fetch('/api/ml-accuracy').catch(() => null)
     ]);
 
     let healthData = null;
@@ -114,6 +115,7 @@ async function fetchDashboardData() {
     if (tradesRes && tradesRes.ok) renderTrades(await tradesRes.json());
     if (analyticsRes && analyticsRes.ok) renderAnalytics(await analyticsRes.json());
     if (tickerRes && tickerRes.ok) renderTicker(await tickerRes.json());
+    if (mlAccRes && mlAccRes.ok) renderMLAccuracy(await mlAccRes.json());
 
     const lastUpdated = document.getElementById('last-updated');
     if (lastUpdated) {
@@ -565,46 +567,168 @@ async function fetchNavHistory(range) {
 }
 
 function renderAnalytics(data) {
-  // Update Model Health
-  if (data.modelHealth) {
-    document.getElementById('val-accuracy').textContent = data.modelHealth.predictionAccuracy.toFixed(1) + '%';
-    document.getElementById('val-signals-today').textContent = data.modelHealth.signalsToday;
-    document.getElementById('val-avg-conf').textContent = data.modelHealth.avgConfidence.toFixed(1) + '%';
-  }
-  
   // Update Strategy Analytics
   if (data.strategy) {
-    document.getElementById('val-winrate').textContent = data.strategy.winRate.toFixed(1) + '%';
-    document.getElementById('val-profitfactor').textContent = data.strategy.profitFactor.toFixed(2);
-    document.getElementById('val-totaltrades').textContent = data.strategy.totalTrades;
-    document.getElementById('val-avgpnl').textContent = '₹' + data.strategy.avgPnl.toFixed(2);
+    const el = (id) => document.getElementById(id);
+    if (el('val-winrate')) el('val-winrate').textContent = data.strategy.winRate.toFixed(1) + '%';
+    if (el('val-profitfactor')) el('val-profitfactor').textContent = data.strategy.profitFactor.toFixed(2);
+    if (el('val-totaltrades')) el('val-totaltrades').textContent = data.strategy.totalTrades;
+    if (el('val-avgpnl')) el('val-avgpnl').textContent = formatMoney(data.strategy.avgPnl);
+  }
+}
+
+let calibrationChart = null;
+
+function renderMLAccuracy(data) {
+  if (data.error) return;
+  const el = (id) => document.getElementById(id);
+  const cur = data.overall?.currency || '$';
+
+  // --- Overall metrics ---
+  if (data.overall) {
+    const wr = data.overall.winRate;
+    const wrEl = el('ml-win-rate');
+    if (wrEl) {
+      wrEl.textContent = wr.toFixed(1) + '%';
+      wrEl.style.color = wr >= 50 ? 'var(--green)' : 'var(--red)';
+    }
+    const pnlEl = el('ml-total-pnl');
+    if (pnlEl) {
+      pnlEl.textContent = cur + data.overall.totalPnl.toFixed(2);
+      pnlEl.style.color = data.overall.totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    if (el('ml-total-trades')) el('ml-total-trades').textContent = data.overall.totalTrades;
+    if (el('ml-avg-conf') && data.mlConfidence) {
+      el('ml-avg-conf').textContent = data.mlConfidence.approvedAvg.toFixed(1) + '%';
+    }
   }
 
-  // Update AI Feed
-  const feedContainer = document.getElementById('agent-feed');
-  if (data.modelHealth && feedContainer) {
-    feedContainer.innerHTML = `
-      <div class="feed-item">
-        <div class="feed-icon approved">✓</div>
-        <div class="feed-content">
-          <div class="feed-header">
-            <span class="feed-title">System Health OK</span>
-            <span class="feed-time">Just now</span>
-          </div>
-          <div class="feed-desc">Models running. Active predictions: ${data.modelHealth.signalsToday}.</div>
-        </div>
-      </div>
-      <div class="feed-item">
-        <div class="feed-icon approved">✓</div>
-        <div class="feed-content">
-          <div class="feed-header">
-            <span class="feed-title">Risk Limits Validated</span>
-            <span class="feed-time">2 mins ago</span>
-          </div>
-          <div class="feed-desc">Portfolio VaR (${data.risk?.var95?.toFixed(2)}%) within acceptable thresholds.</div>
-        </div>
-      </div>
-    `;
+  // --- Calibration Chart ---
+  const canvas = el('calibration-chart');
+  if (canvas && data.calibration && data.calibration.length > 0) {
+    const ctx = canvas.getContext('2d');
+    const labels = data.calibration.map(c => c.range);
+    const winRates = data.calibration.map(c => c.winRate);
+    const trades = data.calibration.map(c => c.trades);
+    const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    const gridColor = theme === 'light' ? '#E5E7EB' : '#1F1F2E';
+    const textColor = theme === 'light' ? '#6B7280' : '#8B8B9E';
+
+    if (calibrationChart) calibrationChart.destroy();
+
+    calibrationChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Win Rate %',
+            data: winRates,
+            backgroundColor: winRates.map(w => w >= 50 ? 'rgba(0, 230, 118, 0.7)' : 'rgba(255, 82, 82, 0.7)'),
+            borderColor: winRates.map(w => w >= 50 ? 'rgb(0, 230, 118)' : 'rgb(255, 82, 82)'),
+            borderWidth: 1,
+            borderRadius: 4,
+            yAxisID: 'y'
+          },
+          {
+            label: 'Trades',
+            data: trades,
+            type: 'line',
+            borderColor: 'rgba(138, 180, 248, 0.8)',
+            backgroundColor: 'rgba(138, 180, 248, 0.1)',
+            pointBackgroundColor: 'rgba(138, 180, 248, 1)',
+            pointRadius: 4,
+            tension: 0.3,
+            yAxisID: 'y1'
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: true, position: 'top', labels: { boxWidth: 12, padding: 12, color: textColor, font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              afterBody: (items) => {
+                const idx = items[0]?.dataIndex;
+                if (idx !== undefined && data.calibration[idx]) {
+                  const c = data.calibration[idx];
+                  return `${c.wins}W / ${c.losses}L  |  Avg PnL: ${cur}${c.avgPnl.toFixed(2)}`;
+                }
+              }
+            }
+          },
+          annotation: {
+            annotations: {
+              line50: {
+                type: 'line', yMin: 50, yMax: 50, yScaleID: 'y',
+                borderColor: 'rgba(255,255,255,0.2)', borderDash: [4, 4], borderWidth: 1,
+                label: { display: true, content: '50% (random)', position: 'end', font: { size: 10 }, color: textColor }
+              }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 11 } } },
+          y: {
+            position: 'left', min: 0, max: 100,
+            grid: { color: gridColor },
+            ticks: { color: textColor, callback: v => v + '%', font: { size: 11 } },
+            title: { display: true, text: 'Win Rate', color: textColor, font: { size: 11 } }
+          },
+          y1: {
+            position: 'right', min: 0,
+            grid: { display: false },
+            ticks: { color: 'rgba(138, 180, 248, 0.7)', font: { size: 11 } },
+            title: { display: true, text: 'Trades', color: 'rgba(138, 180, 248, 0.7)', font: { size: 11 } }
+          }
+        }
+      }
+    });
+  }
+
+  // --- Exit Reason Breakdown ---
+  const breakdownEl = el('exit-breakdown');
+  if (breakdownEl && data.exitBreakdown && data.exitBreakdown.length > 0) {
+    const reasonColors = {
+      'TRAILING_STOP': 'var(--green)',
+      'EOD': 'var(--blue, #8AB4F8)',
+      'SELL_SIGNAL': '#FFB74D',
+      'STOP_LOSS': 'var(--red)',
+      'SHUTDOWN': '#9E9E9E',
+      'MORNING_GAP_STOP': '#CE93D8',
+      'NATIVE_TRAILING_STOP': 'var(--green)'
+    };
+
+    let html = `<table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <thead><tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+        <th style="text-align:left; padding:6px 8px; color:var(--text-secondary); font-weight:500;">Exit Reason</th>
+        <th style="text-align:center; padding:6px 4px; color:var(--text-secondary); font-weight:500;">W/L</th>
+        <th style="text-align:center; padding:6px 4px; color:var(--text-secondary); font-weight:500;">Win Rate</th>
+        <th style="text-align:right; padding:6px 8px; color:var(--text-secondary); font-weight:500;">PnL</th>
+      </tr></thead><tbody>`;
+
+    // Sort: most trades first
+    const sorted = [...data.exitBreakdown].sort((a, b) => b.total - a.total);
+    for (const item of sorted) {
+      const color = reasonColors[item.reason] || '#9E9E9E';
+      const pnlColor = item.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      const wrColor = item.winRate >= 50 ? 'var(--green)' : 'var(--red)';
+      const label = item.reason.replace(/_/g, ' ');
+      html += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+        <td style="padding:8px; display:flex; align-items:center; gap:6px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:${color}; display:inline-block;"></span>
+          <span style="font-weight:500;">${label}</span>
+        </td>
+        <td style="text-align:center; padding:8px 4px; font-family:'JetBrains Mono',monospace;">${item.wins}/${item.losses}</td>
+        <td style="text-align:center; padding:8px 4px; font-family:'JetBrains Mono',monospace; color:${wrColor}; font-weight:600;">${item.winRate.toFixed(0)}%</td>
+        <td style="text-align:right; padding:8px; font-family:'JetBrains Mono',monospace; color:${pnlColor}; font-weight:600;">${cur}${item.pnl.toFixed(2)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    breakdownEl.innerHTML = html;
   }
 }
 

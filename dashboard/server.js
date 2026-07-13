@@ -1204,6 +1204,136 @@ app.get("/api/analytics", async (_req, res) => {
 });
 
 /**
+ * GET /api/ml-accuracy
+ * ML Model accuracy report — confidence calibration, exit breakdown, overall stats.
+ */
+app.get("/api/ml-accuracy", (_req, res) => {
+  const db = getDB();
+  if (!db) return res.json({ error: "No database available" });
+
+  try {
+    // 1. Overall stats: pair BUY→SELL trades
+    const pairedTrades = db.prepare(`
+      SELECT t1.id, t1.symbol, t1.price as buy_price,
+             t2.price as sell_price, t2.pnl, t2.exit_reason, t2.date as sell_date,
+             t1.quantity
+      FROM trades t1
+      INNER JOIN trades t2 ON t1.symbol = t2.symbol 
+          AND t2.action = 'SELL' 
+          AND t2.id = (SELECT MIN(id) FROM trades WHERE symbol = t1.symbol AND action = 'SELL' AND id > t1.id)
+      WHERE t1.action = 'BUY'
+      ORDER BY t1.id
+    `).all();
+
+    let wins = 0, losses = 0, totalPnl = 0;
+    const byReason = {};
+
+    for (const t of pairedTrades) {
+      const pnl = t.pnl != null ? parseFloat(t.pnl) : (t.sell_price - t.buy_price) * t.quantity;
+      totalPnl += pnl;
+      if (pnl >= 0) wins++; else losses++;
+
+      const reason = t.exit_reason || "UNKNOWN";
+      if (!byReason[reason]) byReason[reason] = { wins: 0, losses: 0, pnl: 0 };
+      byReason[reason].pnl += pnl;
+      if (pnl >= 0) byReason[reason].wins++; else byReason[reason].losses++;
+    }
+
+    // 2. ML Confidence calibration — match BUY ML confidence to trade outcomes
+    const calibrationQuery = db.prepare(`
+      SELECT t.id, t.symbol, t.price as buy_price,
+             t2.price as sell_price, t2.pnl,
+             mv.reason as ml_reason
+      FROM trades t
+      INNER JOIN trades t2 ON t.symbol = t2.symbol 
+          AND t2.action = 'SELL' 
+          AND t2.id = (SELECT MIN(id) FROM trades WHERE symbol = t.symbol AND action = 'SELL' AND id > t.id)
+      LEFT JOIN ml_validations mv ON t.symbol = mv.symbol 
+          AND mv.action = 'BUY'
+          AND mv.id = (SELECT MAX(id) FROM ml_validations WHERE symbol = t.symbol AND action = 'BUY' AND created_at <= t.created_at)
+      WHERE t.action = 'BUY'
+      ORDER BY t.id
+    `).all();
+
+    const buckets = {};
+    for (const row of calibrationQuery) {
+      if (!row.ml_reason || row.pnl == null) continue;
+      const match = row.ml_reason.match(/Confidence:\s*([\d.]+)%/);
+      if (!match) continue;
+      const conf = parseFloat(match[1]);
+      const pnl = parseFloat(row.pnl);
+      const bucket = Math.floor(conf / 5) * 5;
+      const key = `${bucket}-${bucket + 5}`;
+      if (!buckets[key]) buckets[key] = { wins: 0, losses: 0, totalPnl: 0, count: 0 };
+      buckets[key].count++;
+      buckets[key].totalPnl += pnl;
+      if (pnl >= 0) buckets[key].wins++; else buckets[key].losses++;
+    }
+
+    // Convert to sorted array
+    const calibration = Object.keys(buckets).sort().map(key => ({
+      range: key + "%",
+      trades: buckets[key].count,
+      wins: buckets[key].wins,
+      losses: buckets[key].losses,
+      winRate: buckets[key].count > 0 ? (buckets[key].wins / buckets[key].count) * 100 : 0,
+      avgPnl: buckets[key].count > 0 ? buckets[key].totalPnl / buckets[key].count : 0
+    }));
+
+    // 3. Exit reason breakdown array
+    const exitBreakdown = Object.keys(byReason).sort().map(reason => ({
+      reason,
+      wins: byReason[reason].wins,
+      losses: byReason[reason].losses,
+      total: byReason[reason].wins + byReason[reason].losses,
+      winRate: (byReason[reason].wins + byReason[reason].losses) > 0
+        ? (byReason[reason].wins / (byReason[reason].wins + byReason[reason].losses)) * 100 : 0,
+      pnl: byReason[reason].pnl
+    }));
+
+    // 4. Avg ML confidence for approved/rejected
+    let approvedConf = [], rejectedConf = [];
+    try {
+      const approved = db.prepare(`SELECT reason FROM ml_validations WHERE action = 'BUY' AND approved = 1 ORDER BY id DESC LIMIT 500`).all();
+      for (const r of approved) {
+        const m = r.reason.match(/Confidence:\s*([\d.]+)%/);
+        if (m) approvedConf.push(parseFloat(m[1]));
+      }
+      const rejected = db.prepare(`SELECT reason FROM ml_validations WHERE action = 'BUY' AND approved = 0 ORDER BY id DESC LIMIT 500`).all();
+      for (const r of rejected) {
+        const m = r.reason.match(/Confidence:\s*([\d.]+)%/);
+        if (m) rejectedConf.push(parseFloat(m[1]));
+      }
+    } catch (_) {}
+
+    const total = wins + losses;
+    const currency = (process.env.MARKET_TYPE || "US") === "IN" ? "₹" : "$";
+
+    res.json({
+      overall: {
+        totalTrades: total,
+        wins,
+        losses,
+        winRate: total > 0 ? (wins / total) * 100 : 0,
+        totalPnl,
+        currency
+      },
+      exitBreakdown,
+      calibration,
+      mlConfidence: {
+        approvedAvg: approvedConf.length > 0 ? approvedConf.reduce((a, b) => a + b, 0) / approvedConf.length : 0,
+        approvedCount: approvedConf.length,
+        rejectedAvg: rejectedConf.length > 0 ? rejectedConf.reduce((a, b) => a + b, 0) / rejectedConf.length : 0,
+        rejectedCount: rejectedConf.length
+      }
+    });
+  } catch (e) {
+    console.error("ML Accuracy Error", e);
+    res.json({ error: "Failed to compute ML accuracy" });
+  }
+});
+
+/**
  * GET /api/health
  * Health check — returns 200 OK when the server is running.
  */
