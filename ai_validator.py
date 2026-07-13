@@ -137,11 +137,12 @@ class AIValidator:
             
         if decision.action == "HOLD":
             try:
-                prob_success = self.get_ml_confidence(trend_signal, sentiment_score, mode="swing")
-                decision.ml_confidence = prob_success
-                decision.ml_confidence_swing = prob_success
+                prob_day = self.get_ml_confidence(trend_signal_day, sentiment_score, mode="day")
+                prob_swing = self.get_ml_confidence(trend_signal_swing, sentiment_score, mode="swing")
+                decision.ml_confidence = prob_day
+                decision.ml_confidence_swing = prob_swing
                 decision.ai_decision = "GHOST_EVALUATED"
-                decision.ai_reason = f"ML Validator (SWING) evaluated HOLD (Confidence: {prob_success*100:.1f}%)"
+                decision.ai_reason = f"ML Validator evaluated HOLD (Day: {prob_day*100:.1f}%, Swing: {prob_swing*100:.1f}%)"
                 return decision
             except Exception as e:
                 logger.error("ML Validation failed for %s HOLD: %s", symbol, e)
