@@ -188,7 +188,7 @@ class PortfolioTracker:
                         avg_cost = float(old_pos.get("avg_cost", 0.0))
                         pnl = (current_price - avg_cost) * qty
                         
-                        reason = self.pending_reasons.pop(symbol, "NATIVE_TRAILING_STOP")
+                        reason = self.pending_reasons.pop(symbol, "BROKER_SYNC_CLOSE")
                         logger.info("Broker position closed for %s. Recording SELL (reason=%s).", symbol, reason)
                         self.record_trade(
                             symbol=symbol,

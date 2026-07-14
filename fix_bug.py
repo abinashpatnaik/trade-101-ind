@@ -45,7 +45,7 @@ def fix_portfolio_tracker():
                             quantity=qty,
                             price=current_price,
                             pnl=pnl,
-                            exit_reason="NATIVE_TRAILING_STOP"
+                            exit_reason="BROKER_SYNC_CLOSE"
                         )
                 self.open_positions = positions'''
 
@@ -61,7 +61,7 @@ def fix_portfolio_tracker():
                         avg_cost = float(old_pos.get("avg_cost", 0.0))
                         pnl = (current_price - avg_cost) * qty
                         
-                        reason = self.pending_reasons.pop(symbol, "NATIVE_TRAILING_STOP")
+                        reason = self.pending_reasons.pop(symbol, "BROKER_SYNC_CLOSE")
                         logger.info("Broker position closed for %s. Recording SELL (reason=%s).", symbol, reason)
                         self.record_trade(
                             symbol=symbol,
