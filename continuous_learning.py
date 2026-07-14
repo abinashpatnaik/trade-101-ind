@@ -150,5 +150,7 @@ class ContinuousLearning:
                     random_state=42
                 )
                 clf.fit(X, y)
-                joblib.dump(clf, self.model_path)
+                # Atomic write: the trader may reload this file at any moment
+                joblib.dump(clf, self.model_path + ".tmp")
+                os.replace(self.model_path + ".tmp", self.model_path)
                 logger.info(f"Model successfully retrained and saved to {self.model_path}")

@@ -20,7 +20,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from config import config, CUR_SYM
 from db import TradingDB
@@ -88,6 +88,10 @@ class PortfolioTracker:
         # Trade history (in-memory; also persisted to SQLite)
         self.closed_trades: List[TradeRecord] = []
         self._db = TradingDB()
+
+        # Optional hook invoked after every record_trade() — the trader agent
+        # wires this to publish ev:trade on the bus. Must never raise upstream.
+        self.on_trade: Optional[Callable[[TradeRecord], None]] = None
 
         logger.info(
             "PortfolioTracker initialised — daily spend cap: %s%.2f reinvest: %s (db: %s)",
@@ -399,9 +403,15 @@ class PortfolioTracker:
             f"{CUR_SYM}{pnl:.2f}" if pnl is not None else "N/A",
             exit_reason or "N/A",
         )
-        
+
         self._dump_local_positions()
         self._dump_local_summary()
+
+        if self.on_trade is not None:
+            try:
+                self.on_trade(trade)
+            except Exception as exc:
+                logger.warning("on_trade hook failed (ignored): %s", exc)
 
     # ------------------------------------------------------------------
     # Reporting

@@ -102,6 +102,16 @@ class DecisionEngine:
     ... )
     """
 
+    #: Directive keys the strategy agent may override — anything else is ignored.
+    DIRECTIVE_KEYS = frozenset({
+        "buy_threshold",
+        "ml_buy_threshold_delta",
+        "sniper_min_adx",
+        "trailing_gap_multiplier",
+        "position_size_multiplier",
+        "max_open_positions",
+    })
+
     def __init__(self) -> None:
         self._risk = config.risk
         self._sig = config.signal
@@ -109,12 +119,44 @@ class DecisionEngine:
         # Cooldown: {symbol: timestamp} — prevents re-buying a stock too soon after a loss
         self._sell_cooldowns: Dict[str, float] = {}
         self._cooldown_seconds: int = int(os.getenv("SELL_COOLDOWN_MINUTES", "30")) * 60
-        
+        # Strategy-agent parameter overlay; empty dict = exact default behavior
+        self._directive: Dict[str, float] = {}
+
         self.ml_thresholds: Dict[str, Dict[str, float]] = {"day": {}, "swing": {}}
         self._thresholds_mtime: Dict[str, float] = {"day": 0.0, "swing": 0.0}
         self._load_ml_thresholds()
-                    
+
         logger.debug("DecisionEngine initialised (cooldown=%ds).", self._cooldown_seconds)
+
+    # ------------------------------------------------------------------
+    # Strategy directive overlay
+    # ------------------------------------------------------------------
+
+    def apply_directive(self, params: Dict) -> None:
+        """
+        Overlay regime parameters published by the strategy agent.
+
+        Unknown keys are dropped. An empty/missing directive leaves the
+        engine in its exact default (config-driven) behavior.
+        """
+        cleaned = {k: v for k, v in (params or {}).items() if k in self.DIRECTIVE_KEYS}
+        if cleaned != self._directive:
+            logger.info("Strategy directive applied: %s", cleaned)
+        self._directive = cleaned
+
+    def clear_directive(self) -> None:
+        if self._directive:
+            logger.info("Strategy directive cleared — reverting to config defaults.")
+        self._directive = {}
+
+    def _buy_threshold(self) -> float:
+        return float(self._directive.get("buy_threshold", self._sig.buy_threshold))
+
+    def _sniper_min_adx(self) -> float:
+        return float(self._directive.get("sniper_min_adx", 25.0))
+
+    def _max_open_positions(self) -> int:
+        return int(self._directive.get("max_open_positions", self._risk.max_open_positions))
 
     def _load_ml_thresholds(self) -> None:
         """Loads ML thresholds from disk, reloading if modified."""
@@ -146,14 +188,14 @@ class DecisionEngine:
         
         # 1. Per-symbol threshold (training symbols only)
         if clean_sym in thresholds:
-            return thresholds[clean_sym]
-        
+            base = thresholds[clean_sym]
         # 2. Global dynamic threshold (covers sector-scanner picks)
-        if "_GLOBAL_" in thresholds:
-            return thresholds["_GLOBAL_"]
-        
+        elif "_GLOBAL_" in thresholds:
+            base = thresholds["_GLOBAL_"]
         # 3. Static fallback
-        return self._sig.ml_buy_threshold
+        else:
+            base = self._sig.ml_buy_threshold
+        return base + float(self._directive.get("ml_buy_threshold_delta", 0.0))
 
     def register_cooldown(self, symbol: str, is_loss: bool) -> None:
         """
@@ -185,6 +227,15 @@ class DecisionEngine:
             + self._sent.sentiment_weight * sentiment_score
         )
         return float(max(-1.0, min(1.0, raw)))
+
+    def compute_classic_score(
+        self,
+        overall_trend: float,
+        sentiment_score: float,
+    ) -> float:
+        """Public alias of the classic trend+sentiment score (used by the
+        vetting agent's backtest simulator)."""
+        return self._compute_combined_score(overall_trend, sentiment_score)
 
     def _compute_quantity(
         self,
@@ -224,6 +275,9 @@ class DecisionEngine:
         price_qty = max_notional / current_price
         qty = min(atr_qty, price_qty)
 
+        # Strategy-directive sizing (e.g. half-size in volatile regimes)
+        qty *= float(self._directive.get("position_size_multiplier", 1.0))
+
         import config
         if config.ACTIVE_MARKET == "IN":
             import math
@@ -236,7 +290,7 @@ class DecisionEngine:
 
     def _has_capacity(self, open_positions: Dict) -> bool:
         """Return True if the portfolio can take on another position."""
-        return len(open_positions) < self._risk.max_open_positions
+        return len(open_positions) < self._max_open_positions()
 
     def _can_afford(
         self,
@@ -355,7 +409,7 @@ class DecisionEngine:
                 trend_signal.overall_trend, sentiment_score
             )
             confidence = round(abs(combined_score), 4)
-            buy_condition = combined_score >= self._sig.buy_threshold
+            buy_condition = combined_score >= self._buy_threshold()
             sell_condition = combined_score <= self._sig.sell_threshold
             logger.debug(
                 "Decision input — %s: trend=%.4f sentiment=%.4f combined=%.4f "
@@ -364,7 +418,7 @@ class DecisionEngine:
                 trend_signal.overall_trend,
                 sentiment_score,
                 combined_score,
-                self._sig.buy_threshold,
+                self._buy_threshold(),
                 self._sig.sell_threshold,
             )
 
@@ -404,11 +458,12 @@ class DecisionEngine:
             # Only trade in clear trends (ADX > 25). Protects against
             # whipsaw losses in choppy/sideways markets.
             adx = getattr(trend_signal, 'adx', 0.0)
-            if not is_ai_driver and adx > 0 and adx < 25:
+            min_adx = self._sniper_min_adx()
+            if not is_ai_driver and adx > 0 and adx < min_adx:
                 logger.info(
-                    "BUY blocked for %s — ADX=%.1f (weak trend, need >25). "
+                    "BUY blocked for %s — ADX=%.1f (weak trend, need >%.0f). "
                     "Protecting capital by avoiding choppy market.",
-                    symbol, adx,
+                    symbol, adx, min_adx,
                 )
                 return Decision(
                     action="HOLD",
@@ -592,8 +647,11 @@ class DecisionEngine:
                 current_price * (1.0 + self._risk.take_profit_pct), 4
             )
             
-            # Dynamic trailing stop pct (same ATR basis, bounded 1% to 4%)
-            dynamic_trailing_stop_pct = max(0.01, min(0.04, atr_pct))
+            # Dynamic trailing stop pct (same ATR basis, bounded 1% to 4%),
+            # scaled by the strategy directive (wider in trends, tighter in ranges)
+            trailing_mult = float(self._directive.get("trailing_gap_multiplier", 1.0))
+            dynamic_trailing_stop_pct = max(0.01, min(0.04, atr_pct)) * trailing_mult
+            dynamic_trailing_stop_pct = max(0.005, min(0.06, dynamic_trailing_stop_pct))
 
             reason = (
                 f"BUY signal — combined_score={combined_score:.3f} "
@@ -701,7 +759,7 @@ class DecisionEngine:
             reason_str = (
                 f"No signal — combined_score={combined_score:.3f} is within "
                 f"hold band [{self._sig.sell_threshold:.2f}, "
-                f"{self._sig.buy_threshold:.2f}]."
+                f"{self._buy_threshold():.2f}]."
             )
 
         return Decision(

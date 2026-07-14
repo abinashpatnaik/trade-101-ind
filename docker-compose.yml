@@ -1,15 +1,52 @@
 version: '3.8'
 
+# ---------------------------------------------------------------------------
+# Multi-agent trading stack (see agents/__init__.py for the architecture).
+# One shared image; each service runs one agent via `command:`.
+# Trader container names (in-trading-agent / us-trading-agent) are preserved —
+# dashboard/server.js health checks depend on them.
+# ---------------------------------------------------------------------------
+
+x-agent-base: &agent-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  volumes:
+    - ./:/app
+    - ./logs:/app/logs
+    - ./data:/app/data
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+
 services:
 
-  # Indian Market Agent (Zerodha)
+  redis:
+    image: redis:7-alpine
+    container_name: t101-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # =========================================================================
+  # INDIA (NSE / Zerodha)
+  # =========================================================================
+
   agent-in:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *agent-base
     container_name: in-trading-agent
+    command: ["python", "-m", "agents.trader"]
     environment:
       - TRADING_MARKET=IN
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=trader
       - KITE_API_KEY=${KITE_API_KEY}
       - KITE_API_SECRET=${KITE_API_SECRET}
       - KITE_USER_ID=${KITE_USER_ID}
@@ -25,21 +62,82 @@ services:
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
       - TZ=Asia/Kolkata
       - DASHBOARD_HOST=dashboard-in
-      - OBSERVE_ONLY=false
+      - OBSERVE_ONLY=${OBSERVE_ONLY:-false}
+
+  orchestrator-in:
+    <<: *agent-base
+    container_name: in-orchestrator
+    command: ["python", "-m", "agents.orchestrator"]
+    environment:
+      - TRADING_MARKET=IN
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=orchestrator
+      - TZ=Asia/Kolkata
+      - CONTAINER_TRADER=in-trading-agent
+      - CONTAINER_SCANNER=in-scanner
+      - CONTAINER_VETTING=in-vetting
+      - CONTAINER_STRATEGY=in-strategy
+      - CONTAINER_TRAINER=in-trainer
     volumes:
       - ./:/app
       - ./logs:/app/logs
       - ./data:/app/data
-    restart: unless-stopped
+      - /var/run/docker.sock:/var/run/docker.sock
 
-  # US Market Agent (Alpaca)
+  scanner-in:
+    <<: *agent-base
+    container_name: in-scanner
+    command: ["python", "-m", "agents.scanner"]
+    environment:
+      - TRADING_MARKET=IN
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=scanner
+      - EOD_API_KEY=${EOD_API_KEY}
+      - TZ=Asia/Kolkata
+
+  vetting-in:
+    <<: *agent-base
+    container_name: in-vetting
+    command: ["python", "-m", "agents.vetting"]
+    environment:
+      - TRADING_MARKET=IN
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=vetting
+      - TZ=Asia/Kolkata
+
+  strategy-in:
+    <<: *agent-base
+    container_name: in-strategy
+    command: ["python", "-m", "agents.strategy"]
+    environment:
+      - TRADING_MARKET=IN
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=strategy
+      - TZ=Asia/Kolkata
+
+  trainer-in:
+    <<: *agent-base
+    container_name: in-trainer
+    command: ["python", "-m", "agents.trainer"]
+    environment:
+      - TRADING_MARKET=IN
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=trainer
+      - EOD_API_KEY=${EOD_API_KEY}
+      - TZ=Asia/Kolkata
+
+  # =========================================================================
+  # US (NASDAQ / Alpaca)
+  # =========================================================================
+
   agent-us:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *agent-base
     container_name: us-trading-agent
+    command: ["python", "-m", "agents.trader"]
     environment:
       - TRADING_MARKET=US
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=trader
       - APCA_API_KEY_ID=${APCA_API_KEY_ID}
       - APCA_API_SECRET_KEY=${APCA_API_SECRET_KEY}
       - TRADING_MODE=${TRADING_MODE:-paper}
@@ -52,13 +150,74 @@ services:
       - REPORT_RECIPIENT=${REPORT_RECIPIENT}
       - TZ=America/New_York
       - DASHBOARD_HOST=dashboard-us
+      - OBSERVE_ONLY=${OBSERVE_ONLY:-false}
+
+  orchestrator-us:
+    <<: *agent-base
+    container_name: us-orchestrator
+    command: ["python", "-m", "agents.orchestrator"]
+    environment:
+      - TRADING_MARKET=US
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=orchestrator
+      - TZ=America/New_York
+      - CONTAINER_TRADER=us-trading-agent
+      - CONTAINER_SCANNER=us-scanner
+      - CONTAINER_VETTING=us-vetting
+      - CONTAINER_STRATEGY=us-strategy
+      - CONTAINER_TRAINER=us-trainer
     volumes:
       - ./:/app
       - ./logs:/app/logs
       - ./data:/app/data
-    restart: unless-stopped
+      - /var/run/docker.sock:/var/run/docker.sock
 
-  # Web Dashboard (US)
+  scanner-us:
+    <<: *agent-base
+    container_name: us-scanner
+    command: ["python", "-m", "agents.scanner"]
+    environment:
+      - TRADING_MARKET=US
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=scanner
+      - EOD_API_KEY=${EOD_API_KEY}
+      - TZ=America/New_York
+
+  vetting-us:
+    <<: *agent-base
+    container_name: us-vetting
+    command: ["python", "-m", "agents.vetting"]
+    environment:
+      - TRADING_MARKET=US
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=vetting
+      - TZ=America/New_York
+
+  strategy-us:
+    <<: *agent-base
+    container_name: us-strategy
+    command: ["python", "-m", "agents.strategy"]
+    environment:
+      - TRADING_MARKET=US
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=strategy
+      - TZ=America/New_York
+
+  trainer-us:
+    <<: *agent-base
+    container_name: us-trainer
+    command: ["python", "-m", "agents.trainer"]
+    environment:
+      - TRADING_MARKET=US
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=trainer
+      - EOD_API_KEY=${EOD_API_KEY}
+      - TZ=America/New_York
+
+  # =========================================================================
+  # Dashboards (unchanged)
+  # =========================================================================
+
   dashboard-us:
     build:
       context: ./dashboard
@@ -80,7 +239,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
-  # Web Dashboard (IN)
   dashboard-in:
     build:
       context: ./dashboard
@@ -101,3 +259,6 @@ services:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+
+volumes:
+  redis-data:

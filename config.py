@@ -146,6 +146,58 @@ class AIConfig:
 
 
 @dataclass
+class BusConfig:
+    """Redis message-bus settings shared by all agents."""
+    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://redis:6379/0"))
+    heartbeat_period_seconds: int = 30
+    heartbeat_ttl_seconds: int = 90
+    # New BUYs are suppressed after the bus has been unreachable this long
+    # (blocklist/vetting data may be stale — fail toward not entering).
+    buy_suppress_after_seconds: int = 90
+
+
+@dataclass
+class VettingConfig:
+    """Profit-vetting agent settings (backtest screen + live-accuracy blocklist)."""
+    backtest_lookback_period: str = "10d"
+    backtest_interval: str = "5m"
+    # Block a symbol when its simulated total return is below this threshold
+    ev_threshold_pct: float = 0.0
+    # Live-accuracy blocklist
+    accuracy_lookback_sessions: int = 5
+    accuracy_window_trades: int = 10
+    min_trades_to_judge: int = 3
+    min_hit_rate: float = 0.40
+    consecutive_stop_losses_to_block: int = 2
+
+
+@dataclass
+class StrategyConfig:
+    """Market-regime strategy agent settings."""
+    index_symbol: str = "^NSEI"          # Overridden per market profile
+    classify_interval_minutes: int = 15
+    adx_trending_threshold: float = 25.0
+    atr_volatile_pct: float = 0.025      # Daily ATR% above this => VOLATILE
+    # Require this many consecutive agreeing reads before switching regime
+    hysteresis_reads: int = 2
+    # A directive older than this is ignored by the trader
+    directive_stale_minutes: int = 30
+
+
+@dataclass
+class OrchestratorConfig:
+    """Primary-agent supervision settings."""
+    tick_seconds: int = 20
+    train_daily_minutes_before_open: int = 90
+    strategy_minutes_before_open: int = 10
+    intraday_scan_interval_minutes: int = 60
+    max_restarts_per_agent_per_day: int = 3
+    # Suppress trader restarts for this long after session close
+    # (the trader exits by design post-session; docker revives it).
+    trader_restart_suppress_seconds: int = 300
+
+
+@dataclass
 class Config:
     """Master configuration object."""
     kite: KiteConfig
@@ -159,6 +211,10 @@ class Config:
     signal: SignalConfig
     agent: AgentConfig
     ai: AIConfig
+    bus: BusConfig = field(default_factory=BusConfig)
+    vetting: VettingConfig = field(default_factory=VettingConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
 
     eod_api_key: str = field(default_factory=lambda: os.getenv("EOD_API_KEY", ""))
     gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
@@ -208,7 +264,8 @@ def get_india_config() -> Config:
         sentiment=SentimentConfig(),
         signal=SignalConfig(),
         agent=AgentConfig(),
-        ai=AIConfig()
+        ai=AIConfig(),
+        strategy=StrategyConfig(index_symbol="^NSEI"),
     )
 
 
@@ -243,7 +300,8 @@ def get_us_config() -> Config:
         sentiment=SentimentConfig(),
         signal=SignalConfig(),
         agent=AgentConfig(),
-        ai=AIConfig()
+        ai=AIConfig(),
+        strategy=StrategyConfig(index_symbol="SPY"),
     )
 
 
