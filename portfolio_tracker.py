@@ -67,7 +67,7 @@ class PortfolioTracker:
         self._risk = config.risk
         self._wallet = config.wallet
 
-        is_simulated = os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
+        is_simulated = os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true"
         # Portfolio state
         self.portfolio_value: float = 100000.0 if is_simulated else 0.0      # Total NAV (INR)
         self.cash: float = 100000.0 if is_simulated else 0.0                 # Available funds (INR)
@@ -99,7 +99,7 @@ class PortfolioTracker:
 
     @property
     def is_simulated(self) -> bool:
-        return os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
+        return os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true"
 
     def set_pending_reason(self, symbol: str, reason: str) -> None:
         self.pending_reasons[symbol] = reason
@@ -162,7 +162,7 @@ class PortfolioTracker:
             Connected IBKRConnector instance.
         """
         try:
-            is_simulated = os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
+            is_simulated = os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true"
             
             if is_simulated:
                 # Bypass broker sync for simulated environments that lack paper trading (like Zerodha)
