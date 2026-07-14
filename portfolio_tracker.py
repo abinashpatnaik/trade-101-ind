@@ -72,6 +72,7 @@ class PortfolioTracker:
         self.portfolio_value: float = 100000.0 if is_simulated else 0.0      # Total NAV (INR)
         self.cash: float = 100000.0 if is_simulated else 0.0                 # Available funds (INR)
         self.open_positions: Dict[str, Dict] = {}
+        self.pending_reasons: Dict[str, str] = {}
         self.daily_pnl: float = 0.0            # P&L since session start (INR)
 
         # Session tracking
@@ -95,6 +96,13 @@ class PortfolioTracker:
     # ------------------------------------------------------------------
     # Database helpers
     # ------------------------------------------------------------------
+
+    @property
+    def is_simulated(self) -> bool:
+        return os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
+
+    def set_pending_reason(self, symbol: str, reason: str) -> None:
+        self.pending_reasons[symbol] = reason
 
     def _persist_trade(self, trade: TradeRecord) -> None:
         """Write a single trade record to the SQLite database."""
@@ -169,8 +177,8 @@ class PortfolioTracker:
                 self.cash = summary.get("AvailableFunds", self.cash)
                 self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
             if positions is not None:
-                # Detect natively closed positions (e.g., via Alpaca Trailing Stop)
-                for symbol, old_pos in self.open_positions.items():
+                # Detect natively closed positions (or fulfilled agent sell orders)
+                for symbol, old_pos in list(self.open_positions.items()):
                     if symbol not in positions:
                         current_price = ibkr_connector.get_current_price(symbol)
                         if current_price is None:
@@ -180,15 +188,33 @@ class PortfolioTracker:
                         avg_cost = float(old_pos.get("avg_cost", 0.0))
                         pnl = (current_price - avg_cost) * qty
                         
-                        logger.info("Broker natively closed position for %s (e.g. Trailing Stop). Recording SELL.", symbol)
+                        reason = self.pending_reasons.pop(symbol, "NATIVE_TRAILING_STOP")
+                        logger.info("Broker position closed for %s. Recording SELL (reason=%s).", symbol, reason)
                         self.record_trade(
                             symbol=symbol,
                             action="SELL",
                             quantity=qty,
                             price=current_price,
                             pnl=pnl,
-                            exit_reason="NATIVE_TRAILING_STOP"
+                            exit_reason=reason
                         )
+                
+                # Detect natively opened positions (or fulfilled agent buy orders)
+                for symbol, pos in list(positions.items()):
+                    if symbol not in self.open_positions:
+                        reason = self.pending_reasons.pop(symbol, None)
+                        current_price = float(pos.get("avg_cost", 0.0))
+                        qty = float(pos.get("quantity", 0))
+                        logger.info("Broker new position detected for %s. Recording BUY.", symbol)
+                        self.record_trade(
+                            symbol=symbol,
+                            action="BUY",
+                            quantity=qty,
+                            price=current_price,
+                            pnl=None,
+                            exit_reason=reason
+                        )
+
                 self.open_positions = positions
 
             # Capture session-start NAV on the first update each trading day.

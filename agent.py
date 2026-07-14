@@ -248,14 +248,18 @@ class TradingAgent:
                             # tiny negatives are tick-gap slippage, not real losses.
                             if exit_trigger == "TRAILING_STOP" and pnl < 0:
                                 pnl = 0.0
-                            self.portfolio.record_trade(
-                                symbol=symbol,
-                                action="SELL",
-                                quantity=qty,
-                                price=price,
-                                pnl=pnl,
-                                exit_reason=exit_trigger,
-                            )
+                            if self.portfolio.is_simulated:
+                                self.portfolio.record_trade(
+                                    symbol=symbol,
+                                    action="SELL",
+                                    quantity=qty,
+                                    price=price,
+                                    pnl=pnl,
+                                    exit_reason=exit_trigger,
+                                )
+                                self.portfolio.open_positions.pop(symbol, None)
+                            else:
+                                self.portfolio.set_pending_reason(symbol, exit_trigger)
                             # Register a cooldown to prevent immediate whipsaw re-buys
                             self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
             
@@ -440,14 +444,19 @@ class TradingAgent:
                             pnl = (current_price - avg_cost) * qty
                             exit_reason = "SELL_SIGNAL"
 
-                        self.portfolio.record_trade(
-                            symbol=symbol,
-                            action=decision.action,
-                            quantity=decision.quantity,
-                            price=current_price,
-                            pnl=pnl,
-                            exit_reason=exit_reason,
-                        )
+                        if self.portfolio.is_simulated:
+                            self.portfolio.record_trade(
+                                symbol=symbol,
+                                action=decision.action,
+                                quantity=decision.quantity,
+                                price=current_price,
+                                pnl=pnl,
+                                exit_reason=exit_reason,
+                            )
+                            if decision.action == "SELL":
+                                self.portfolio.open_positions.pop(symbol, None)
+                        else:
+                            self.portfolio.set_pending_reason(symbol, exit_reason or "BUY")
 
                         if decision.action == "SELL" and pnl is not None:
                             self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
@@ -497,14 +506,18 @@ class TradingAgent:
                         # tiny negatives are tick-gap slippage, not real losses.
                         if exit_trigger == "TRAILING_STOP" and pnl < 0:
                             pnl = 0.0
-                        self.portfolio.record_trade(
-                            symbol=symbol,
-                            action="SELL",
-                            quantity=qty,
-                            price=current_price,
-                            pnl=pnl,
-                            exit_reason=exit_trigger,
-                        )
+                        if self.portfolio.is_simulated:
+                            self.portfolio.record_trade(
+                                symbol=symbol,
+                                action="SELL",
+                                quantity=qty,
+                                price=current_price,
+                                pnl=pnl,
+                                exit_reason=exit_trigger,
+                            )
+                            self.portfolio.open_positions.pop(symbol, None)
+                        else:
+                            self.portfolio.set_pending_reason(symbol, exit_trigger)
                         # Register a cooldown to prevent immediate whipsaw re-buys
                         self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
 
@@ -615,14 +628,18 @@ class TradingAgent:
                         success = self.executor.close_position(symbol, qty)
                         if success:
                             pnl = (current_price - avg_cost) * qty
-                            self.portfolio.record_trade(
-                                symbol=symbol,
-                                action="SELL",
-                                quantity=qty,
-                                price=current_price,
-                                pnl=pnl,
-                                exit_reason="MORNING_GAP_STOP",
-                            )
+                            if self.portfolio.is_simulated:
+                                self.portfolio.record_trade(
+                                    symbol=symbol,
+                                    action="SELL",
+                                    quantity=qty,
+                                    price=current_price,
+                                    pnl=pnl,
+                                    exit_reason="MORNING_GAP_STOP",
+                                )
+                                self.portfolio.open_positions.pop(symbol, None)
+                            else:
+                                self.portfolio.set_pending_reason(symbol, "MORNING_GAP_STOP")
                             logger.info(
                                 "Morning gap-stop sold %s x %.4f @ %.4f (PnL=%.2f)",
                                 symbol, qty, current_price, pnl,
@@ -745,14 +762,18 @@ class TradingAgent:
                 if success:
                     avg_cost = float(position.get("avg_cost", current_price))
                     pnl = (current_price - avg_cost) * qty if current_price > 0 else None
-                    self.portfolio.record_trade(
-                        symbol=symbol,
-                        action="SELL",
-                        quantity=qty,
-                        price=current_price,
-                        pnl=pnl,
-                        exit_reason=reason,
-                    )
+                    if self.portfolio.is_simulated:
+                        self.portfolio.record_trade(
+                            symbol=symbol,
+                            action="SELL",
+                            quantity=qty,
+                            price=current_price,
+                            pnl=pnl,
+                            exit_reason=reason,
+                        )
+                        self.portfolio.open_positions.pop(symbol, None)
+                    else:
+                        self.portfolio.set_pending_reason(symbol, reason)
                     logger.info("Closed %s x %d @ %.4f (reason=%s)", symbol, qty, current_price, reason)
 
                     # Notify learning engine for EOD/shutdown closes
