@@ -497,6 +497,13 @@ class OrderExecutor:
                 quantity=quantity,
                 outsideRth=outsideRth,
             )
+            if not order_id:
+                logger.error(
+                    "close_position(): broker rejected/failed to place SELL for %s "
+                    "(qty=%.4f) — leaving position tracked as open for retry.",
+                    symbol, quantity,
+                )
+                return False
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
             logger.info(

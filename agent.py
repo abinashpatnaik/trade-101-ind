@@ -242,7 +242,14 @@ class TradingAgent:
                             if config.agent.observe_only:
                                 logger.info("[OBSERVE MODE] Would close position for %s instantly (reason: %s), skipping.", symbol, exit_trigger)
                             else:
-                                self.executor.close_position(symbol, qty)
+                                closed = self.executor.close_position(symbol, qty)
+                                if not closed:
+                                    logger.warning(
+                                        "INSTANT exit for %s (%s) was rejected by the broker — "
+                                        "position remains open, will retry.",
+                                        symbol, exit_trigger,
+                                    )
+                                    return
                             pnl = (price - avg_cost) * qty
                             # Profit-lock exits intend break-even or better;
                             # tiny negatives are tick-gap slippage, not real losses.
@@ -500,7 +507,14 @@ class TradingAgent:
                         if config.agent.observe_only:
                             logger.info("[OBSERVE MODE] Would close position for %s (reason: %s), skipping.", symbol, exit_trigger)
                         else:
-                            self.executor.close_position(symbol, qty)
+                            closed = self.executor.close_position(symbol, qty)
+                            if not closed:
+                                logger.warning(
+                                    "Software exit for %s (%s) was rejected by the broker — "
+                                    "position remains open, will retry.",
+                                    symbol, exit_trigger,
+                                )
+                                return
                         pnl = (current_price - avg_cost) * qty
                         # Profit-lock exits intend break-even or better;
                         # tiny negatives are tick-gap slippage, not real losses.
@@ -643,6 +657,12 @@ class TradingAgent:
                             logger.info(
                                 "Morning gap-stop sold %s x %.4f @ %.4f (PnL=%.2f)",
                                 symbol, qty, current_price, pnl,
+                            )
+                        else:
+                            logger.warning(
+                                "Morning gap-down SELL for %s was rejected by the broker — "
+                                "position remains open.",
+                                symbol,
                             )
                     except Exception as exc:
                         logger.error(
@@ -793,6 +813,12 @@ class TradingAgent:
                         )
                     except Exception as _le:
                         logger.debug("Learning engine update (EOD close) failed: %s", _le)
+                else:
+                    logger.warning(
+                        "EOD/shutdown SELL for %s (reason=%s) was rejected by the broker — "
+                        "position remains open overnight.",
+                        symbol, reason,
+                    )
 
             except Exception as exc:
                 logger.error(
@@ -964,6 +990,12 @@ class TradingAgent:
                                                         self.portfolio.record_trade(
                                                             symbol=symbol, action="SELL", quantity=qty, price=current_price,
                                                             pnl=pnl, exit_reason="PRE_MARKET_DUMP"
+                                                        )
+                                                    else:
+                                                        logger.warning(
+                                                            "PRE-MARKET DUMP SELL for %s was rejected by the broker — "
+                                                            "position remains open.",
+                                                            symbol,
                                                         )
                             except Exception as e:
                                 logger.error("Pre-market protection loop encountered error: %s", e)
