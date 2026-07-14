@@ -164,10 +164,13 @@ class AlpacaConnector:
             available_funds = float(account.cash)
             daily_pnl = float(account.equity) - float(account.last_equity) if account.last_equity else 0.0
 
+            buying_power = float(account.buying_power)
+
             result = {
                 "NetLiquidation": net_liquidation,
                 "AvailableFunds": available_funds,
                 "DailyPnL": daily_pnl,
+                "BuyingPower": buying_power,
             }
             logger.debug("Alpaca Account summary: %s", result)
             return result

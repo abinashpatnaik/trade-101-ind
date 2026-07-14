@@ -71,6 +71,7 @@ class PortfolioTracker:
         # Portfolio state
         self.portfolio_value: float = 100000.0 if is_simulated else 0.0      # Total NAV (INR)
         self.cash: float = 100000.0 if is_simulated else 0.0                 # Available funds (INR)
+        self.buying_power: float = 100000.0 if is_simulated else 0.0         # Buying power
         self.open_positions: Dict[str, Dict] = {}
         self.pending_reasons: Dict[str, str] = {}
         self.daily_pnl: float = 0.0            # P&L since session start (INR)
@@ -162,6 +163,7 @@ class PortfolioTracker:
             Connected IBKRConnector instance.
         """
         try:
+            summary = None
             is_simulated = os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
             
             if is_simulated:
@@ -173,9 +175,7 @@ class PortfolioTracker:
                 summary = ibkr_connector.get_account_summary()
                 positions = ibkr_connector.get_positions()
 
-                self.portfolio_value = summary.get("NetLiquidation", self.portfolio_value)
-                self.cash = summary.get("AvailableFunds", self.cash)
-                self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
+                pass # Moved summary sync to end of update block
             if positions is not None:
                 # Detect natively closed positions (or fulfilled agent sell orders)
                 for symbol, old_pos in list(self.open_positions.items()):
@@ -216,6 +216,12 @@ class PortfolioTracker:
                         )
 
                 self.open_positions = positions
+
+            if not is_simulated and summary:
+                self.portfolio_value = summary.get("NetLiquidation", self.portfolio_value)
+                self.cash = summary.get("AvailableFunds", self.cash)
+                self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
+                self.buying_power = summary.get("BuyingPower", getattr(self, "buying_power", self.portfolio_value))
 
             # Capture session-start NAV on the first update each trading day.
             today = str(date.today())
@@ -423,6 +429,7 @@ class PortfolioTracker:
         return {
             "portfolio_value": round(self.portfolio_value, 2),
             "cash": round(self.cash, 2),
+            "buying_power": round(getattr(self, "buying_power", self.portfolio_value), 2),
             "daily_pnl": round(self.daily_pnl, 2),
             "daily_loss_pct": round(daily_loss_pct, 3),
             "open_positions_count": len(self.open_positions),
