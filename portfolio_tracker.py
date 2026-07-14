@@ -73,6 +73,7 @@ class PortfolioTracker:
         self.cash: float = 100000.0 if is_simulated else 0.0                 # Available funds (INR)
         self.buying_power: float = 100000.0 if is_simulated else 0.0         # Buying power
         self.open_positions: Dict[str, Dict] = {}
+        self._is_first_update: bool = True
         self.pending_reasons: Dict[str, str] = {}
         self.daily_pnl: float = 0.0            # P&L since session start (INR)
 
@@ -175,47 +176,50 @@ class PortfolioTracker:
                 summary = ibkr_connector.get_account_summary()
                 positions = ibkr_connector.get_positions()
 
-                pass # Moved summary sync to end of update block
-            if positions is not None:
-                # Detect natively closed positions (or fulfilled agent sell orders)
-                for symbol, old_pos in list(self.open_positions.items()):
-                    if symbol not in positions:
-                        current_price = ibkr_connector.get_current_price(symbol)
-                        if current_price is None:
-                            current_price = float(old_pos.get("avg_cost", 0.0))
+                if positions is not None:
+                    if getattr(self, "_is_first_update", True):
+                        self.open_positions = positions
+                        self._is_first_update = False
+                    else:
+                        # Detect natively closed positions (or fulfilled agent sell orders)
+                        for symbol, old_pos in list(self.open_positions.items()):
+                            if symbol not in positions:
+                                current_price = ibkr_connector.get_current_price(symbol)
+                                if current_price is None:
+                                    current_price = float(old_pos.get("avg_cost", 0.0))
+                                
+                                qty = float(old_pos.get("quantity", 0))
+                                avg_cost = float(old_pos.get("avg_cost", 0.0))
+                                pnl = (current_price - avg_cost) * qty
+                                
+                                reason = self.pending_reasons.pop(symbol, "BROKER_SYNC_CLOSE")
+                                logger.info("Broker position closed for %s. Recording SELL (reason=%s).", symbol, reason)
+                                self.record_trade(
+                                    symbol=symbol,
+                                    action="SELL",
+                                    quantity=qty,
+                                    price=current_price,
+                                    pnl=pnl,
+                                    exit_reason=reason
+                                )
                         
-                        qty = float(old_pos.get("quantity", 0))
-                        avg_cost = float(old_pos.get("avg_cost", 0.0))
-                        pnl = (current_price - avg_cost) * qty
-                        
-                        reason = self.pending_reasons.pop(symbol, "BROKER_SYNC_CLOSE")
-                        logger.info("Broker position closed for %s. Recording SELL (reason=%s).", symbol, reason)
-                        self.record_trade(
-                            symbol=symbol,
-                            action="SELL",
-                            quantity=qty,
-                            price=current_price,
-                            pnl=pnl,
-                            exit_reason=reason
-                        )
-                
-                # Detect natively opened positions (or fulfilled agent buy orders)
-                for symbol, pos in list(positions.items()):
-                    if symbol not in self.open_positions:
-                        reason = self.pending_reasons.pop(symbol, None)
-                        current_price = float(pos.get("avg_cost", 0.0))
-                        qty = float(pos.get("quantity", 0))
-                        logger.info("Broker new position detected for %s. Recording BUY.", symbol)
-                        self.record_trade(
-                            symbol=symbol,
-                            action="BUY",
-                            quantity=qty,
-                            price=current_price,
-                            pnl=None,
-                            exit_reason=reason
-                        )
+                        # Detect natively opened positions (or fulfilled agent buy orders)
+                        for symbol, pos in list(positions.items()):
+                            if symbol not in self.open_positions:
+                                reason = self.pending_reasons.pop(symbol, None)
+                                current_price = float(pos.get("avg_cost", 0.0))
+                                qty = float(pos.get("quantity", 0))
+                                logger.info("Broker new position detected for %s. Recording BUY.", symbol)
+                                self.record_trade(
+                                    symbol=symbol,
+                                    action="BUY",
+                                    quantity=qty,
+                                    price=current_price,
+                                    pnl=0.0,
+                                    exit_reason=reason
+                                )
 
-                self.open_positions = positions
+                        self.open_positions = positions
 
             if not is_simulated and summary:
                 self.portfolio_value = summary.get("NetLiquidation", self.portfolio_value)
