@@ -178,6 +178,22 @@ class AlpacaConnector:
             logger.error("Failed to get Alpaca account summary: %s", exc)
             return {}
 
+    def is_margin_account(self) -> bool:
+        """
+        True if this account trades on margin (and is therefore subject to
+        the Pattern Day Trader rule). Cash accounts are PDT-exempt — Alpaca
+        leaves ``pattern_day_trader``/``daytrade_count`` as None for them and
+        sets ``multiplier`` to 1 (vs 2/4 for margin).
+        """
+        if not self.trading_client:
+            return False
+        try:
+            account = self.trading_client.get_account()
+            return account.pattern_day_trader is not None or float(account.multiplier) > 1.0
+        except Exception as exc:
+            logger.warning("Failed to determine Alpaca account type: %s — assuming margin (safer).", exc)
+            return True
+
     def get_positions(self) -> Optional[Dict[str, Dict]]:
         if not self.trading_client:
             return None

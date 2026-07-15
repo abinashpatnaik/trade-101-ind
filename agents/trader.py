@@ -141,15 +141,11 @@ class TradingAgent:
         self._trading_db = TradingDB()
         self._current_signals: Dict[str, Dict] = {}
 
-        # US regulatory: sub-$25K margin accounts get PDT-flagged at 4 day
-        # trades per 5 business days. Entries are gated on available slots.
+        # US regulatory: sub-$25K MARGIN accounts get PDT-flagged at 4 day
+        # trades per 5 business days. Cash accounts are exempt. Resolved
+        # after broker connect (needs a live account query) — see
+        # _maybe_enable_pdt_guard().
         self._pdt_guard = None
-        if ACTIVE_MARKET == "US":
-            from agents.pdt_guard import PDTGuard
-
-            self._pdt_guard = PDTGuard(
-                self._trading_db, max_day_trades=config.risk.max_day_trades_per_5d
-            )
 
         if config.ai.enabled and (
             self.ai_validator.model_day is None or self.ai_validator.model_swing is None
@@ -399,6 +395,27 @@ class TradingAgent:
         if self.broker and self.broker.is_connected():
             self.broker.disconnect()
             logger.info("Disconnected from broker.")
+
+    def _maybe_enable_pdt_guard(self) -> None:
+        """Enable the PDT guard only for real margin accounts — cash
+        accounts are exempt from the rule entirely and gating them blocks
+        trading for no regulatory reason."""
+        if ACTIVE_MARKET != "US" or self.broker is None:
+            return
+        is_margin = getattr(self.broker, "is_margin_account", lambda: True)()
+        if is_margin:
+            from agents.pdt_guard import PDTGuard
+
+            self._pdt_guard = PDTGuard(
+                self._trading_db, max_day_trades=config.risk.max_day_trades_per_5d
+            )
+            logger.info(
+                "PDT guard ENABLED — margin account detected (max %d day-trades/5 business days).",
+                config.risk.max_day_trades_per_5d,
+            )
+        else:
+            self._pdt_guard = None
+            logger.info("PDT guard SKIPPED — cash account (PDT rule doesn't apply).")
 
     # ------------------------------------------------------------------
     # Per-symbol processing
@@ -1049,6 +1066,7 @@ class TradingAgent:
         if not self._connect_broker():
             logger.critical("Cannot establish broker connection — aborting agent run.")
             return
+        self._maybe_enable_pdt_guard()
 
         # --- Step 3: Main scan loop ---
         self._running = True
