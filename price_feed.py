@@ -74,6 +74,9 @@ class PriceFeed:
         symbol = symbol.strip().upper()
         if ACTIVE_MARKET == "US":
             return symbol.replace(".", "-") # e.g. BRK.B -> BRK-B for Yahoo
+        if symbol.startswith("^"):
+            # Index tickers (e.g. ^NSEI for Nifty 50) are unsuffixed on Yahoo.
+            return symbol
         if not (symbol.endswith(".NS") or symbol.endswith(".BO")):
             return symbol + ".NS"
         return symbol
