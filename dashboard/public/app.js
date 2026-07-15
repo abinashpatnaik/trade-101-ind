@@ -1,964 +1,796 @@
-let currentMarket = "US"; // Default, gets updated dynamically
+/* ==========================================================================
+   Trading Dashboard — frontend
+   Vanilla JS + Chart.js. Poll cadence: 5s core, 30s heavy. Prices stream
+   over SSE (/api/stream) and patch the tape + positions in place.
+   ========================================================================== */
 
-const formatMoney = (val) => new Intl.NumberFormat(currentMarket === 'IN' ? 'en-IN' : 'en-US', { 
-  style: 'currency', 
-  currency: currentMarket === 'IN' ? 'INR' : 'USD', 
-  maximumFractionDigits: 2 
-}).format(val);
-const formatPct = (val) => (val > 0 ? '+' : '') + parseFloat(val).toFixed(2) + '%';
-const formatNum = (val) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(val);
+"use strict";
 
-let state = {
-  navHistory: [],
-  signals: [],
-  sigPage: 1,
-  sigFilter: 'ALL', // ALL, BUY, SELL, HOLD, GATED
-  sigSortColumn: 'combinedScore',
-  sigSortDesc: true,
-};
+let MARKET = "US";
 
-function applyThemeToCharts(theme) {
-  const gridColor = theme === 'light' ? '#E5E7EB' : '#1F1F2E';
-  const textColor = theme === 'light' ? '#6B7280' : '#8B8B9E';
-  
-  Chart.defaults.color = textColor;
-  
-  if (charts.nav) {
-    if (charts.nav.options.scales.x) {
-      charts.nav.options.scales.x.grid.color = gridColor;
-      if (charts.nav.options.scales.x.ticks) charts.nav.options.scales.x.ticks.color = textColor;
-    }
-    if (charts.nav.options.scales.y) {
-      charts.nav.options.scales.y.grid.color = gridColor;
-      if (charts.nav.options.scales.y.ticks) charts.nav.options.scales.y.ticks.color = textColor;
-    }
-    charts.nav.update();
-  }
-  if (charts.sector) {
-    if (charts.sector.options.plugins.legend.labels) {
-      charts.sector.options.plugins.legend.labels.color = textColor;
-    }
-    charts.sector.update();
-  }
-  if (charts.stockDetail) {
-    if (charts.stockDetail.options.scales.x) {
-      charts.stockDetail.options.scales.x.grid.color = gridColor;
-      if (charts.stockDetail.options.scales.x.ticks) charts.stockDetail.options.scales.x.ticks.color = textColor;
-    }
-    if (charts.stockDetail.options.scales.y) {
-      charts.stockDetail.options.scales.y.grid.color = gridColor;
-      if (charts.stockDetail.options.scales.y.ticks) charts.stockDetail.options.scales.y.ticks.color = textColor;
-    }
-    charts.stockDetail.update();
-  }
+/* ------------------------- formatters ---------------------------------- */
+
+const fmtMoney = (v) =>
+  new Intl.NumberFormat(MARKET === "IN" ? "en-IN" : "en-US", {
+    style: "currency",
+    currency: MARKET === "IN" ? "INR" : "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(+v) ? +v : 0);
+
+const fmtSigned = (v) => `${+v >= 0 ? "+" : ""}${fmtMoney(v)}`;
+const fmtPct = (v, dp = 1) => `${(+v).toFixed(dp)}%`;
+const fmtSignedPct = (v, dp = 2) => `${+v >= 0 ? "+" : ""}${(+v).toFixed(dp)}%`;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------- theme --------------------------------------- */
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("dash-theme", theme);
+  $("icon-sun").style.display = theme === "dark" ? "" : "none";
+  $("icon-moon").style.display = theme === "dark" ? "none" : "";
+  restyleCharts();
 }
 
 function initTheme() {
-  const savedTheme = localStorage.getItem('theme') || 'dark';
-  document.documentElement.setAttribute('data-theme', savedTheme);
-  document.getElementById('theme-icon-sun').style.display = savedTheme === 'light' ? 'none' : 'block';
-  document.getElementById('theme-icon-moon').style.display = savedTheme === 'light' ? 'block' : 'none';
-  // Charts are initialized later, so applyThemeToCharts won't error, but won't do anything yet.
-}
-
-function toggleTheme() {
-  const currentTheme = document.documentElement.getAttribute('data-theme');
-  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', newTheme);
-  localStorage.setItem('theme', newTheme);
-  
-  document.getElementById('theme-icon-sun').style.display = newTheme === 'light' ? 'none' : 'block';
-  document.getElementById('theme-icon-moon').style.display = newTheme === 'light' ? 'block' : 'none';
-  
-  applyThemeToCharts(newTheme);
-}
-
-// Initialize theme immediately
-initTheme();
-
-async function fetchDashboardData() {
-  const syncIcon = document.getElementById('sync-icon');
-  if (syncIcon) syncIcon.classList.add('spinning');
-
-  try {
-    const [portRes, posRes, sigRes, tradesRes, analyticsRes, tickerRes, healthRes, mlAccRes] = await Promise.all([
-      fetch('/api/portfolio').catch(() => null),
-      fetch('/api/positions').catch(() => null),
-      fetch('/api/signals').catch(() => null),
-      fetch('/api/trades').catch(() => null),
-      fetch('/api/analytics').catch(() => null),
-      fetch('/api/ticker').catch(() => null),
-      fetch('/api/apps-health').catch(() => null),
-      fetch('/api/ml-accuracy').catch(() => null)
-    ]);
-
-    let healthData = null;
-    if (healthRes && healthRes.ok) healthData = await healthRes.json();
-    
-    if (portRes && portRes.ok) {
-      const data = await portRes.json();
-      if (data.market) {
-        currentMarket = data.market;
-        const flagEl = document.getElementById('market-flag');
-        if (flagEl) {
-          flagEl.textContent = currentMarket === 'IN' ? '🇮🇳' : '🇺🇸';
-        }
-        document.title = `Alpha Trader Dashboard - ${currentMarket === 'IN' ? 'Indian' : 'US'} Market`;
-      }
-      renderPortfolio(data, healthData);
-    }
-    if (posRes && posRes.ok) renderPositions(await posRes.json());
-    if (sigRes && sigRes.ok) {
-      state.signals = await sigRes.json();
-      renderSignals();
-    }
-    if (tradesRes && tradesRes.ok) renderTrades(await tradesRes.json());
-    if (analyticsRes && analyticsRes.ok) renderAnalytics(await analyticsRes.json());
-    if (tickerRes && tickerRes.ok) renderTicker(await tickerRes.json());
-    if (mlAccRes && mlAccRes.ok) renderMLAccuracy(await mlAccRes.json());
-
-    const lastUpdated = document.getElementById('last-updated');
-    if (lastUpdated) {
-      lastUpdated.textContent = 'Live • ' + new Date().toLocaleTimeString();
-    }
-  } catch (e) {
-    console.error("Dashboard data fetch error", e);
-  } finally {
-    if (syncIcon) {
-      setTimeout(() => syncIcon.classList.remove('spinning'), 500);
-    }
-  }
-}
-
-function renderPortfolio(data, healthData) {
-  document.getElementById('val-nav').textContent = formatMoney(data.nav);
-  const pnlEl = document.getElementById('val-pnl');
-  pnlEl.textContent = `${formatMoney(data.dailyPnl)} (${data.dailyPnlPct.toFixed(2)}%) Today`;
-  pnlEl.className = data.dailyPnl >= 0 ? 'summary-change up' : 'summary-change down';
-  
-  document.getElementById('val-cash').textContent = formatMoney(data.cash);
-  
-  if (data.buyingPower !== undefined) {
-    document.getElementById('val-bp').textContent = formatMoney(data.buyingPower);
-  }
-  
-  document.getElementById('val-positions').textContent = data.openPositions;
-  
-  // Market Badge
-  const marketBadge = document.getElementById('badge-market');
-  if (marketBadge) {
-    if (data.marketOpen) {
-      marketBadge.className = 'pill-badge active';
-      marketBadge.textContent = 'Market Open';
-    } else {
-      marketBadge.className = 'pill-badge offline';
-      if (data.nextOpen) {
-        const d = new Date(data.nextOpen);
-        const options = { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-        marketBadge.textContent = `Market Closed (Opens: ${d.toLocaleString(undefined, options)})`;
-      } else {
-        marketBadge.textContent = 'Market Closed';
-      }
-    }
-  }
-
-  // Agent Badge
-  const agentBadge = document.getElementById('badge-agent');
-  if (agentBadge) {
-    let status = healthData ? healthData.trading_agent : data.agentStatus;
-    if (status === 'running') {
-      agentBadge.className = 'pill-badge active';
-      agentBadge.textContent = 'Agent Online';
-    } else if (status === 'sleeping') {
-      agentBadge.className = 'pill-badge';
-      agentBadge.style.color = 'var(--signal-orange)';
-      agentBadge.style.borderColor = 'rgba(255, 165, 2, 0.3)';
-      agentBadge.textContent = 'Agent Sleeping';
-    } else {
-      agentBadge.className = 'pill-badge offline';
-      agentBadge.textContent = 'Agent Offline';
-    }
-  }
-}
-
-function renderPositions(positions) {
-  const container = document.getElementById('table-positions');
-  if (!positions || positions.length === 0) {
-    container.innerHTML = '<tr><td colspan="5" class="empty-state">No open positions</td></tr>';
-    return;
-  }
-  
-  let html = '';
-  positions.forEach(p => {
-    const isUp = p.pnl >= 0;
-    const colorClass = isUp ? 'status-buy' : 'status-sell';
-    html += `
-      <tr>
-        <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${p.symbol}')">${p.symbol}</span></td>
-        <td class="mono td-right">${p.quantity}</td>
-        <td class="mono td-right" id="pos-price-${p.symbol}">${formatMoney(p.currentPrice)}</td>
-        <td class="mono td-right ${colorClass}" id="pos-pnl-cell-${p.symbol}" data-entry="${p.entryPrice}" data-qty="${p.quantity}">
-          <span id="pos-pnl-${p.symbol}">${formatMoney(p.pnl)}</span><br>
-          <span style="font-size: 11px;" id="pos-pnlpct-${p.symbol}">${p.pnlPct.toFixed(2)}%</span>
-        </td>
-        <td class="td-right">
-          <div style="font-size: 11px; color: var(--text-secondary);">TP: ${p.takeProfit ? formatMoney(p.takeProfit) : '-'}</div>
-          <div style="font-size: 11px; color: var(--text-secondary);">Trail: ${p.trailingStop ? formatMoney(p.trailingStop) : '-'}</div>
-        </td>
-      </tr>
-    `;
+  const saved = localStorage.getItem("dash-theme");
+  const theme = saved || "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+  $("icon-sun").style.display = theme === "dark" ? "" : "none";
+  $("icon-moon").style.display = theme === "dark" ? "none" : "";
+  $("theme-toggle").addEventListener("click", () => {
+    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    applyTheme(next);
   });
-  container.innerHTML = html;
 }
 
-function setSort(col) {
-  if (state.sigSortColumn === col) {
-    state.sigSortDesc = !state.sigSortDesc;
-  } else {
-    state.sigSortColumn = col;
-    state.sigSortDesc = true;
-  }
-  renderSignals();
+/* ------------------------- chips ---------------------------------------- */
+
+function setChip(id, text, tone) {
+  const el = $(id);
+  if (!el) return;
+  el.hidden = false;
+  el.querySelector("span:last-child").textContent = text;
+  el.classList.remove("is-good", "is-warn", "is-bad", "is-info");
+  if (tone) el.classList.add(`is-${tone}`);
 }
 
-function changePage(delta) {
-  state.sigPage += delta;
-  renderSignals();
+/* ------------------------- charts ---------------------------------------- */
+
+let navChart = null;
+let pnlChart = null;
+let calibChart = null;
+let stockChart = null;
+let navRange = "1d";
+let lastNavRows = [];
+let lastPnlRows = [];
+let lastCalib = null;
+
+function chartDefaults() {
+  Chart.defaults.color = cssVar("--muted");
+  Chart.defaults.borderColor = cssVar("--grid");
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  Chart.defaults.font.size = 11;
 }
 
-function renderSignals() {
-  const container = document.getElementById('table-signals');
-  let filtered = state.signals;
-  
-  if (state.sigFilter !== 'ALL') {
-    if (state.sigFilter === 'GATED') {
-      filtered = filtered.filter(s => s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48));
-    } else {
-      filtered = filtered.filter(s => s.signal === state.sigFilter && !(s.signal === 'HOLD' && s.holdReason && s.combinedScore >= (s.buyThreshold || 0.48)));
-    }
-  }
-
-  // Sorting
-  filtered.sort((a, b) => {
-    let valA = a[state.sigSortColumn];
-    let valB = b[state.sigSortColumn];
-    
-    if (valA === undefined || valA === null) valA = '';
-    if (valB === undefined || valB === null) valB = '';
-
-    if (valA < valB) return state.sigSortDesc ? 1 : -1;
-    if (valA > valB) return state.sigSortDesc ? -1 : 1;
-    return 0;
-  });
-
-  // Update headers UI
-  const headers = ['symbol', 'signal', 'mlConfidence', 'mlConfidenceSwing', 'price'];
-  headers.forEach(h => {
-    const span = document.getElementById('sort-' + h);
-    if (span) {
-      if (state.sigSortColumn === h) {
-        span.innerText = state.sigSortDesc ? ' ↓' : ' ↑';
-      } else {
-        span.innerText = ' ↕';
-      }
-    }
-  });
-
-  // Pagination
-  const totalPages = Math.ceil(filtered.length / 10) || 1;
-  if (state.sigPage > totalPages) state.sigPage = totalPages;
-  if (state.sigPage < 1) state.sigPage = 1;
-
-  const startIdx = (state.sigPage - 1) * 10;
-  const pageSignals = filtered.slice(startIdx, startIdx + 10);
-
-  // Update Pagination Controls UI
-  const btnPrev = document.getElementById('btn-prev');
-  const btnNext = document.getElementById('btn-next');
-  const pageInd = document.getElementById('page-indicator');
-  if (btnPrev) btnPrev.disabled = state.sigPage === 1;
-  if (btnNext) btnNext.disabled = state.sigPage === totalPages;
-  if (pageInd) pageInd.innerText = `Page ${state.sigPage} of ${totalPages} (${filtered.length} total)`;
-
-  if (filtered.length === 0) {
-    container.innerHTML = '<tr><td colspan="6" class="empty-state">No signals match filter</td></tr>';
-    return;
-  }
-  
-  let html = '';
-  pageSignals.forEach(s => {
-    const rawSignal = s.signal || 'HOLD';
-    const isGated = rawSignal === 'HOLD' && s.holdReason && s.mlConfidence >= (s.buyThreshold || 0.48);
-    
-    let shortReason = s.holdReason;
-    if (isGated && s.holdReason) {
-      if (s.holdReason.includes("ADX=")) {
-        const m = s.holdReason.match(/ADX=([\d.]+)/);
-        shortReason = m ? `ADX: ${m[1]} < 25` : "Low ADX < 25";
-      } else if (s.holdReason.includes("volume is only")) {
-        const m = s.holdReason.match(/([\d.]+)x average/);
-        shortReason = m ? `Vol: ${m[1]}x < 1.5x` : "Low Vol < 1.5x";
-      } else if (s.holdReason.includes("cooldown")) {
-        const m = s.holdReason.match(/cooldown for ([\d.]+) more minutes/);
-        shortReason = m ? `Cooldown: ${m[1]}m` : "Cooldown";
-      } else if (s.holdReason.includes("Max deployment")) {
-        const m = s.holdReason.match(/deployment (\d+)% reached/);
-        shortReason = m ? `Max Deployment: ${m[1]}%` : "Max Deployment";
-      } else if (s.holdReason.includes("spend cap")) {
-        const m = s.holdReason.match(/cap [£$€₹]?([\d.]+)/);
-        shortReason = m ? `Daily Cap: ${m[1]}` : "Daily Cap";
-      } else if (s.holdReason.includes("already held")) {
-        shortReason = "Already Held";
-      } else if (s.holdReason.includes("max open positions")) {
-        shortReason = "Max Positions";
-      }
-    }
-
-    let displaySignal = isGated ? 'GATED' : rawSignal;
-    let badgeClass = isGated ? 'gated' : rawSignal.toLowerCase();
-
-    // Check if WARMING or SELL (Not Held)
-    if (rawSignal === 'HOLD') {
-      if (s.holdReason && s.holdReason.includes('SELL signal') && s.holdReason.includes('not held')) {
-        displaySignal = 'SELL (Not Held)';
-        badgeClass = 'sell';
-      } else if (!isGated && s.mlConfidence && s.buyThreshold) {
-        const diff = s.buyThreshold - s.mlConfidence;
-        if (diff > 0 && diff <= 0.05) {
-          displaySignal = 'WARMING';
-          badgeClass = 'warming';
-        }
-      }
-    }
-
-    if (isGated && shortReason) {
-      displaySignal += ` (${shortReason})`;
-    }
-    
-    // ML Confidence progress bar
-    let mlHtml = '-';
-    if (s.mlConfidence) {
-      const upConf = s.mlConfidence * 100;
-      const downConf = 100 - upConf;
-      mlHtml = `
-        <div style="width: 100px;">
-          <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px;">
-            <span style="color: var(--signal-green); font-weight: 600;">▲ ${upConf.toFixed(0)}%</span>
-            <span style="color: var(--signal-red); font-weight: 600;">${downConf.toFixed(0)}% ▼</span>
-          </div>
-          <div class="progress-wrap" style="display: flex;">
-            <div class="progress-bar" style="width: ${upConf}%; background-color: var(--signal-green); border-radius: 0;"></div>
-            <div class="progress-bar" style="width: ${downConf}%; background-color: var(--signal-red); border-radius: 0;"></div>
-          </div>
-        </div>
-      `;
-    }
-
-    // Swing Confidence progress bar (Show for all signals)
-    let swingHtml = '-';
-    if (s.mlConfidenceSwing) {
-      const upConf = s.mlConfidenceSwing * 100;
-      const downConf = 100 - upConf;
-      swingHtml = `
-        <div style="width: 100px;">
-          <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px;">
-            <span style="color: var(--signal-green); font-weight: 600;">▲ ${upConf.toFixed(0)}%</span>
-            <span style="color: var(--signal-red); font-weight: 600;">${downConf.toFixed(0)}% ▼</span>
-          </div>
-          <div class="progress-wrap" style="display: flex;">
-            <div class="progress-bar" style="width: ${upConf}%; background-color: var(--signal-green); border-radius: 0;"></div>
-            <div class="progress-bar" style="width: ${downConf}%; background-color: var(--signal-red); border-radius: 0;"></div>
-          </div>
-        </div>
-      `;
-    }
-
-    let thresholdHtml = '-';
-    if (s.buyThreshold) {
-      const targetPct = (s.buyThreshold * 100).toFixed(1);
-      thresholdHtml = `
-        <div style="width: 100px;">
-          <div style="font-size: 10px; color: var(--text-secondary); margin-bottom: 2px; text-align: right;">&ge; ${targetPct}%</div>
-          <div class="progress-wrap" style="background-color: var(--card-border);">
-            <div class="progress-bar" style="width: ${targetPct}%; background-color: var(--text-secondary); border-radius: 4px;"></div>
-          </div>
-        </div>
-      `;
-    }
-
-    html += `
-      <tr>
-        <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${s.symbol}')">${s.symbol}</span></td>
-        <td><span class="badge-outline ${badgeClass}">${displaySignal}</span></td>
-        <td>${mlHtml}</td>
-        <td>${swingHtml}</td>
-        <td>${thresholdHtml}</td>
-        <td class="mono td-right">${formatMoney(s.price)}</td>
-      </tr>
-    `;
-  });
-  container.innerHTML = html;
+function baseScales(isTime) {
+  return {
+    x: {
+      type: isTime ? "time" : "category",
+      grid: { display: false },
+      border: { color: cssVar("--baseline") },
+      ticks: { maxTicksLimit: 7, color: cssVar("--muted") },
+    },
+    y: {
+      grid: { color: cssVar("--grid") },
+      border: { display: false },
+      ticks: { maxTicksLimit: 6, color: cssVar("--muted") },
+    },
+  };
 }
 
-function setSignalFilter(filter) {
-  state.sigFilter = filter;
-  state.sigPage = 1;
-  document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.classList.remove('active');
-    if (btn.innerText.toUpperCase() === filter) btn.classList.add('active');
-  });
-  renderSignals();
+function tooltipStyle() {
+  return {
+    backgroundColor: cssVar("--surface-2"),
+    titleColor: cssVar("--ink"),
+    bodyColor: cssVar("--ink-2"),
+    borderColor: cssVar("--baseline"),
+    borderWidth: 1,
+    padding: 10,
+    displayColors: false,
+  };
 }
 
-function renderTrades(trades) {
-  const container = document.getElementById('table-trades');
-  if (!trades || trades.length === 0) {
-    container.innerHTML = '<tr><td colspan="4" class="empty-state">No recent trades</td></tr>';
-    return;
-  }
-  
-  let html = '';
-  trades.slice(0, 10).forEach(t => {
-    const actionClass = t.action === 'BUY' ? 'status-buy' : 'status-sell';
-    let detailsHtml = '';
-    if (t.action === 'BUY') {
-      detailsHtml = `<div>Entry: ${formatMoney(t.price)}</div><div style="font-size: 11px; color: var(--text-secondary);">Qty: ${t.quantity}</div>`;
-    } else {
-      const pnl = parseFloat(t.pnl) || 0;
-      const qty = parseFloat(t.quantity) || 1;
-      const entryPrice = parseFloat(t.price) - (pnl / qty);
-      const pnlColor = pnl >= 0 ? 'var(--signal-green)' : 'var(--signal-red)';
-      const pnlSign = pnl >= 0 ? '+' : '';
-      const exitReasonStr = t.exit_reason ? `<span style="margin-left: 8px; font-weight: normal; font-size: 10px; padding: 2px 4px; background: rgba(255,255,255,0.1); border-radius: 4px;">${t.exit_reason.replace('_', ' ')}</span>` : '';
-      detailsHtml = `
-        <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 2px;">Entry: ${formatMoney(entryPrice)} &rarr; Exit: ${formatMoney(t.price)}</div>
-        <div style="color: ${pnlColor}; font-weight: 600; font-size: 12px; display: flex; align-items: center; justify-content: flex-end;">
-          PnL: ${pnlSign}${formatMoney(pnl)}
-          ${exitReasonStr}
-        </div>
-      `;
-    }
-
-    html += `
-      <tr>
-        <td style="color: var(--text-secondary); font-size: 11px;">${t.time}</td>
-        <td style="font-weight: 600;"><span class="clickable-symbol" onclick="showStockDetails('${t.symbol}')">${t.symbol}</span></td>
-        <td><span class="${actionClass}">${t.action}</span></td>
-        <td class="mono td-right">${detailsHtml}</td>
-      </tr>
-    `;
-  });
-  container.innerHTML = html;
-}
-
-let charts = {};
-
-function initCharts() {
-  Chart.defaults.color = '#8B8B9E';
-  Chart.defaults.font.family = 'Inter';
-  
-  // NAV Chart
-  const navCtx = document.getElementById('navChart');
-  if (navCtx) {
-    charts.nav = new Chart(navCtx, {
-      type: 'line',
-      data: {
-        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-        datasets: [{
-          label: 'Portfolio NAV',
-          data: [98000, 99500, 99000, 101000, 102500], // Dummy initial
-          borderColor: '#00E5A3',
-          backgroundColor: 'rgba(0, 229, 163, 0.1)',
-          borderWidth: 2,
-          fill: true,
-          tension: 0,
-          pointRadius: function(ctx) {
-            return ctx.chart.data.datasets[0].data.length < 2 ? 4 : 0;
-          },
-          pointHoverRadius: 6
-        }]
+function renderNavChart(rows) {
+  lastNavRows = rows;
+  const ctx = $("nav-chart");
+  if (!ctx) return;
+  if (navChart) navChart.destroy();
+  const s1 = cssVar("--s1");
+  navChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [{
+        label: "NAV",
+        data: rows.map((r) => ({ x: r.date || r.timestamp, y: r.nav })),
+        borderColor: s1,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHitRadius: 12,
+        tension: 0.25,
+        fill: true,
+        backgroundColor: (c) => {
+          const g = c.chart.ctx.createLinearGradient(0, 0, 0, c.chart.height || 280);
+          g.addColorStop(0, s1 + "33");
+          g.addColorStop(1, s1 + "00");
+          return g;
+        },
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...tooltipStyle(), callbacks: { label: (i) => ` ${fmtMoney(i.parsed.y)}` } },
       },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: {
-          mode: 'index',
-          intersect: false,
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            enabled: true,
-            callbacks: {
-              label: function(context) {
-                let label = context.dataset.label || '';
-                if (label) {
-                  label += ': ';
-                }
-                if (context.parsed.y !== null) {
-                  label += new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.parsed.y);
-                }
-                return label;
-              }
-            }
-          }
-        },
-        scales: {
-          x: { 
-            type: 'time',
-            time: {
-              unit: 'minute',
-              displayFormats: { minute: 'HH:mm', hour: 'HH:mm', day: 'MMM d' }
+      scales: baseScales(true),
+    },
+  });
+  // Accessible table fallback
+  const tbl = $("nav-table");
+  if (tbl) {
+    const step = Math.max(1, Math.floor(rows.length / 12));
+    tbl.innerHTML =
+      "<thead><tr><th scope='col'>Time</th><th scope='col' class='right'>NAV</th></tr></thead><tbody>" +
+      rows.filter((_, i) => i % step === 0)
+        .map((r) => `<tr><td>${esc(new Date(r.date || r.timestamp).toLocaleString())}</td><td class="right num">${fmtMoney(r.nav)}</td></tr>`)
+        .join("") + "</tbody>";
+  }
+}
+
+function renderPnlChart(rows) {
+  lastPnlRows = rows;
+  const ctx = $("pnl-chart");
+  if (!ctx) return;
+  if (pnlChart) pnlChart.destroy();
+  const up = cssVar("--up");
+  const down = cssVar("--down");
+  pnlChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: rows.map((r) => r.date.slice(5)),
+      datasets: [{
+        label: "Realized P&L",
+        data: rows.map((r) => r.pnl),
+        backgroundColor: rows.map((r) => (r.pnl >= 0 ? up : down)),
+        borderRadius: 4,
+        maxBarThickness: 26,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...tooltipStyle(),
+          callbacks: {
+            label: (i) => {
+              const r = rows[i.dataIndex];
+              return ` ${fmtSigned(r.pnl)}  ·  ${r.wins}W / ${r.losses}L`;
             },
-            grid: { display: false, color: '#1F1F2E' }, 
-            ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0 } 
           },
-          y: { grid: { color: '#1F1F2E' }, ticks: {} }
-        }
-      }
-    });
-  }
-
-  // Sector chart was removed
-
-  // Apply theme to charts
-  applyThemeToCharts(document.documentElement.getAttribute('data-theme') || 'dark');
-
-  // Load initial NAV history
-  fetchNavHistory('1d');
-}
-
-async function fetchNavHistory(range) {
-  try {
-    const res = await fetch(`/api/nav-history?range=${range}`);
-    if (res.ok && charts.nav) {
-      const data = await res.json();
-      
-      // Pass data as {x, y} objects for the time scale
-      charts.nav.data.labels = []; // Clear categorical labels
-      charts.nav.data.datasets[0].data = data.map(d => ({
-        x: new Date(d.date).getTime(),
-        y: d.nav
-      }));
-
-      // Force exactly 24 hours window for '1d'
-      if (range === '1d') {
-        const now = Date.now();
-        charts.nav.options.scales.x.min = now - (24 * 60 * 60 * 1000);
-        charts.nav.options.scales.x.max = now;
-      } else {
-        delete charts.nav.options.scales.x.min;
-        delete charts.nav.options.scales.x.max;
-      }
-
-      charts.nav.update();
-      
-      // Update active button
-      document.querySelectorAll('#nav-time-toggles button').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.getAttribute('onclick').includes(`'${range}'`)) {
-          btn.classList.add('active');
-        }
-      });
-    }
-  } catch (e) {
-    console.error("Failed to fetch nav history", e);
-  }
-}
-
-function renderAnalytics(data) {
-  // Update Strategy Analytics
-  if (data.strategy) {
-    const el = (id) => document.getElementById(id);
-    if (el('val-winrate')) el('val-winrate').textContent = data.strategy.winRate.toFixed(1) + '%';
-    if (el('val-profitfactor')) el('val-profitfactor').textContent = data.strategy.profitFactor.toFixed(2);
-    if (el('val-totaltrades')) el('val-totaltrades').textContent = data.strategy.totalTrades;
-    if (el('val-avgpnl')) el('val-avgpnl').textContent = formatMoney(data.strategy.avgPnl);
-  }
-}
-
-let calibrationChart = null;
-
-function renderMLAccuracy(data) {
-  if (data.error) return;
-  const el = (id) => document.getElementById(id);
-  const cur = data.overall?.currency || '$';
-
-  // --- Overall metrics ---
-  if (data.overall) {
-    const wr = data.overall.winRate;
-    const wrEl = el('ml-win-rate');
-    if (wrEl) {
-      wrEl.textContent = wr.toFixed(1) + '%';
-      wrEl.style.color = wr >= 50 ? 'var(--green)' : 'var(--red)';
-    }
-    const pnlEl = el('ml-total-pnl');
-    if (pnlEl) {
-      pnlEl.textContent = cur + data.overall.totalPnl.toFixed(2);
-      pnlEl.style.color = data.overall.totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
-    }
-    if (el('ml-total-trades')) el('ml-total-trades').textContent = data.overall.totalTrades;
-    if (el('ml-avg-conf') && data.mlConfidence) {
-      el('ml-avg-conf').textContent = data.mlConfidence.approvedAvg.toFixed(1) + '%';
-    }
-  }
-
-  // --- Calibration Chart ---
-  const canvas = el('calibration-chart');
-  if (canvas && data.calibration && data.calibration.length > 0) {
-    const ctx = canvas.getContext('2d');
-    const labels = data.calibration.map(c => c.range);
-    const winRates = data.calibration.map(c => c.winRate);
-    const trades = data.calibration.map(c => c.trades);
-    const theme = document.documentElement.getAttribute('data-theme') || 'dark';
-    const gridColor = theme === 'light' ? '#E5E7EB' : '#1F1F2E';
-    const textColor = theme === 'light' ? '#6B7280' : '#8B8B9E';
-
-    if (calibrationChart) calibrationChart.destroy();
-
-    calibrationChart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'Win Rate %',
-            data: winRates,
-            backgroundColor: winRates.map(w => w >= 50 ? 'rgba(0, 230, 118, 0.7)' : 'rgba(255, 82, 82, 0.7)'),
-            borderColor: winRates.map(w => w >= 50 ? 'rgb(0, 230, 118)' : 'rgb(255, 82, 82)'),
-            borderWidth: 1,
-            borderRadius: 4,
-            yAxisID: 'y'
-          },
-          {
-            label: 'Trades',
-            data: trades,
-            type: 'line',
-            borderColor: 'rgba(138, 180, 248, 0.8)',
-            backgroundColor: 'rgba(138, 180, 248, 0.1)',
-            pointBackgroundColor: 'rgba(138, 180, 248, 1)',
-            pointRadius: 4,
-            tension: 0.3,
-            yAxisID: 'y1'
-          }
-        ]
+        },
       },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { display: true, position: 'top', labels: { boxWidth: 12, padding: 12, color: textColor, font: { size: 11 } } },
-          tooltip: {
-            callbacks: {
-              afterBody: (items) => {
-                const idx = items[0]?.dataIndex;
-                if (idx !== undefined && data.calibration[idx]) {
-                  const c = data.calibration[idx];
-                  return `${c.wins}W / ${c.losses}L  |  Avg PnL: ${cur}${c.avgPnl.toFixed(2)}`;
-                }
-              }
-            }
-          },
-          annotation: {
-            annotations: {
-              line50: {
-                type: 'line', yMin: 50, yMax: 50, yScaleID: 'y',
-                borderColor: 'rgba(255,255,255,0.2)', borderDash: [4, 4], borderWidth: 1,
-                label: { display: true, content: '50% (random)', position: 'end', font: { size: 10 }, color: textColor }
-              }
-            }
-          }
+      scales: {
+        ...baseScales(false),
+        y: { ...baseScales(false).y, grid: { color: cssVar("--grid") } },
+      },
+    },
+  });
+  const tbl = $("pnl-table");
+  if (tbl) {
+    tbl.innerHTML =
+      "<thead><tr><th scope='col'>Date</th><th scope='col' class='right'>P&L</th><th scope='col' class='right'>Wins</th><th scope='col' class='right'>Losses</th></tr></thead><tbody>" +
+      rows.map((r) =>
+        `<tr><td>${esc(r.date)}</td><td class="right num"><span class="${r.pnl >= 0 ? "up" : "down"}">${fmtSigned(r.pnl)}</span></td><td class="right num">${r.wins}</td><td class="right num">${r.losses}</td></tr>`
+      ).join("") + "</tbody>";
+  }
+}
+
+function renderCalibChart(calib) {
+  // calib: [{range: "55-60%", trades, wins, losses, winRate, avgPnl}, …]
+  lastCalib = calib;
+  const ctx = $("calib-chart");
+  if (!ctx || !Array.isArray(calib) || !calib.length) return;
+  if (calibChart) calibChart.destroy();
+  const buckets = [...calib].sort((a, b) => parseInt(a.range) - parseInt(b.range));
+  const actual = buckets.map((b) => b.winRate ?? 0);
+  const expected = buckets.map((b) => {
+    const [lo, hi] = b.range.replace("%", "").split("-").map(Number);
+    return (lo + (hi || lo)) / 2;
+  });
+  calibChart = new Chart(ctx, {
+    data: {
+      labels: buckets.map((b) => b.range),
+      datasets: [
+        {
+          type: "bar",
+          label: "Actual win rate",
+          data: actual,
+          backgroundColor: cssVar("--s1"),
+          borderRadius: 4,
+          maxBarThickness: 30,
         },
-        scales: {
-          x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 11 } } },
-          y: {
-            position: 'left', min: 0, max: 100,
-            grid: { color: gridColor },
-            ticks: { color: textColor, callback: v => v + '%', font: { size: 11 } },
-            title: { display: true, text: 'Win Rate', color: textColor, font: { size: 11 } }
-          },
-          y1: {
-            position: 'right', min: 0,
-            grid: { display: false },
-            ticks: { color: 'rgba(138, 180, 248, 0.7)', font: { size: 11 } },
-            title: { display: true, text: 'Trades', color: 'rgba(138, 180, 248, 0.7)', font: { size: 11 } }
-          }
-        }
-      }
-    });
-  }
-
-  // --- Exit Reason Breakdown ---
-  const breakdownEl = el('exit-breakdown');
-  if (breakdownEl && data.exitBreakdown && data.exitBreakdown.length > 0) {
-    const reasonColors = {
-      'TRAILING_STOP': 'var(--green)',
-      'EOD': 'var(--blue, #8AB4F8)',
-      'SELL_SIGNAL': '#FFB74D',
-      'STOP_LOSS': 'var(--red)',
-      'SHUTDOWN': '#9E9E9E',
-      'MORNING_GAP_STOP': '#CE93D8',
-      'NATIVE_TRAILING_STOP': 'var(--green)'
-    };
-
-    let html = `<table style="width:100%; border-collapse:collapse; font-size:13px;">
-      <thead><tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
-        <th style="text-align:left; padding:6px 8px; color:var(--text-secondary); font-weight:500;">Exit Reason</th>
-        <th style="text-align:center; padding:6px 4px; color:var(--text-secondary); font-weight:500;">W/L</th>
-        <th style="text-align:center; padding:6px 4px; color:var(--text-secondary); font-weight:500;">Win Rate</th>
-        <th style="text-align:right; padding:6px 8px; color:var(--text-secondary); font-weight:500;">PnL</th>
-      </tr></thead><tbody>`;
-
-    // Sort: most trades first
-    const sorted = [...data.exitBreakdown].sort((a, b) => b.total - a.total);
-    for (const item of sorted) {
-      const color = reasonColors[item.reason] || '#9E9E9E';
-      const pnlColor = item.pnl >= 0 ? 'var(--green)' : 'var(--red)';
-      const wrColor = item.winRate >= 50 ? 'var(--green)' : 'var(--red)';
-      const label = item.reason.replace(/_/g, ' ');
-      html += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
-        <td style="padding:8px; display:flex; align-items:center; gap:6px;">
-          <span style="width:8px; height:8px; border-radius:50%; background:${color}; display:inline-block;"></span>
-          <span style="font-weight:500;">${label}</span>
-        </td>
-        <td style="text-align:center; padding:8px 4px; font-family:'JetBrains Mono',monospace;">${item.wins}/${item.losses}</td>
-        <td style="text-align:center; padding:8px 4px; font-family:'JetBrains Mono',monospace; color:${wrColor}; font-weight:600;">${item.winRate.toFixed(0)}%</td>
-        <td style="text-align:right; padding:8px; font-family:'JetBrains Mono',monospace; color:${pnlColor}; font-weight:600;">${cur}${item.pnl.toFixed(2)}</td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
-    breakdownEl.innerHTML = html;
-  }
-}
-
-// Modal Logic
-function closeStockModal() {
-  document.getElementById('stockModal').classList.remove('open');
-}
-
-async function showStockDetails(symbol) {
-  try {
-    const res = await fetch(`/api/stock/${symbol}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    
-    document.getElementById('modal-title').textContent = symbol;
-    document.getElementById('modal-bought').textContent = formatMoney(data.summary.totalBought);
-    document.getElementById('modal-sold').textContent = formatMoney(data.summary.totalSold);
-    
-    const pnlEl = document.getElementById('modal-pnl');
-    pnlEl.textContent = formatMoney(data.summary.totalPnl);
-    pnlEl.style.color = data.summary.totalPnl >= 0 ? 'var(--signal-green)' : 'var(--signal-red)';
-    
-    // Render Trades
-    const tbody = document.getElementById('modal-trades-body');
-    if (!data.trades || data.trades.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No transactions</td></tr>';
-    } else {
-      let thtml = '';
-      data.trades.forEach(t => {
-        const actionClass = t.action === 'BUY' ? 'status-buy' : 'status-sell';
-        thtml += `
-          <tr>
-            <td style="color: var(--text-secondary); font-size: 12px;">${t.date} ${t.time}</td>
-            <td><span class="${actionClass}">${t.action}</span></td>
-            <td class="mono td-right">${formatMoney(t.price)}</td>
-            <td class="mono td-right">${t.quantity}</td>
-          </tr>
-        `;
-      });
-      tbody.innerHTML = thtml;
-    }
-    
-    // Render Chart
-    const ctx = document.getElementById('stockDetailChart');
-    if (charts.stockDetail) charts.stockDetail.destroy();
-    
-    if (data.chartData && data.chartData.length > 0) {
-      charts.stockDetail = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: data.chartData.map(d => d.date),
-          datasets: [{
-            label: 'Price',
-            data: data.chartData.map(d => d.price),
-            borderColor: '#3742FA',
-            backgroundColor: 'rgba(55, 66, 250, 0.1)',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.1,
-            pointRadius: 0
-          }]
+        {
+          type: "line",
+          label: "Perfect calibration",
+          data: expected,
+          borderColor: cssVar("--muted"),
+          borderDash: [5, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
         },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { grid: { display: false, color: '#1F1F2E' }, ticks: {} },
-            y: { grid: { color: '#1F1F2E' }, ticks: {} }
-          }
-        }
-      });
-      applyThemeToCharts(document.documentElement.getAttribute('data-theme') || 'dark');
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          labels: { boxWidth: 10, boxHeight: 10, color: cssVar("--ink-2") },
+        },
+        tooltip: { ...tooltipStyle(), callbacks: { label: (i) => ` ${i.dataset.label}: ${i.parsed.y.toFixed(0)}%` } },
+      },
+      scales: {
+        ...baseScales(false),
+        y: { ...baseScales(false).y, min: 0, max: 100, ticks: { callback: (v) => v + "%" } },
+      },
+    },
+  });
+}
+
+function restyleCharts() {
+  chartDefaults();
+  if (lastNavRows.length) renderNavChart(lastNavRows);
+  if (lastPnlRows.length) renderPnlChart(lastPnlRows);
+  if (lastCalib) renderCalibChart(lastCalib);
+}
+
+/* ------------------------- header / session ------------------------------ */
+
+function renderHeader(portfolio, fleet, strategy) {
+  if (portfolio) {
+    const agentTone = portfolio.agentStatus === "running" ? "good" : portfolio.agentStatus === "sleeping" ? "warn" : "bad";
+    setChip("chip-agent", `Agent ${portfolio.agentStatus || "offline"}`, agentTone);
+    $("last-updated").textContent = new Date().toLocaleTimeString();
+  }
+  const session = fleet?.session;
+  if (session) {
+    const tones = { OPEN: "good", NEAR_CLOSE: "warn", PRE_MARKET: "info", CLOSED: null };
+    let label = `Session ${session.state.replace("_", " ").toLowerCase()}`;
+    if (session.state === "CLOSED" && session.seconds_to_open > 0) {
+      const h = Math.floor(session.seconds_to_open / 3600);
+      const m = Math.round((session.seconds_to_open % 3600) / 60);
+      label += ` · opens in ${h}h ${m}m`;
     }
-    
-    document.getElementById('stockModal').classList.add('open');
-  } catch (e) {
-    console.error("Failed to load stock details", e);
+    if (session.state === "OPEN" && session.minutes_remaining > 0) {
+      label += ` · ${Math.round(session.minutes_remaining)}m left`;
+    }
+    setChip("chip-session", label, tones[session.state]);
+  } else if (portfolio) {
+    setChip("chip-session", portfolio.marketOpen ? "Session open" : "Session closed", portfolio.marketOpen ? "good" : null);
+  }
+  if (strategy?.available) {
+    const tones = { TRENDING: "good", RANGING: "info", VOLATILE: "warn" };
+    setChip("chip-regime", `Regime ${strategy.regime.toLowerCase()}`, tones[strategy.regime] || "info");
   }
 }
 
+/* ------------------------- KPI tiles ------------------------------------ */
 
-// -----------------------------------------------------------------------------
-// Live Ticker (UDP -> SSE)
-// -----------------------------------------------------------------------------
+function renderKpis(p, analytics) {
+  if (!p) return;
+  $("kpi-nav").textContent = fmtMoney(p.nav);
+  const dp = +p.dailyPnl || 0;
+  const dpp = +p.dailyPnlPct || 0;
+  $("kpi-nav-sub").textContent = `${fmtSigned(dp)} today`;
+  $("kpi-nav-sub").className = `sub ${dp >= 0 ? "up" : "down"}`;
+
+  $("kpi-daypnl").textContent = fmtSigned(dp);
+  $("kpi-daypnl").className = `value num ${dp >= 0 ? "up" : "down"}`;
+  $("kpi-daypnl-sub").textContent = `${fmtSignedPct(dpp)} of NAV`;
+
+  $("kpi-cash").textContent = fmtMoney(p.cash);
+  $("kpi-cash-sub").textContent = `buying power ${fmtMoney(p.buyingPower)}`;
+
+  $("kpi-positions").textContent = p.openPositions;
+  $("kpi-positions-sub").textContent = `${p.tradesToday || 0} trades today`;
+
+  const wr = analytics?.strategy?.winRate ?? p.winRate ?? 0;
+  $("kpi-winrate").textContent = fmtPct(wr);
+  const pf = analytics?.strategy?.profitFactor;
+  $("kpi-winrate-sub").textContent = pf != null ? `profit factor ${(+pf).toFixed(2)}` : "";
+
+  const lt = +p.lifetimeRealizedPnl || 0;
+  $("kpi-lifetime").textContent = fmtSigned(lt);
+  $("kpi-lifetime").className = `value num ${lt >= 0 ? "up" : "down"}`;
+}
+
+/* ------------------------- ticker tape ---------------------------------- */
 
 const livePrices = {};
 
-function setupLiveTicker() {
-  const source = new EventSource('/api/stream');
-  
-  source.onmessage = function(event) {
-    try {
-      const data = JSON.parse(event.data);
-      if (!data.symbol || !data.price) return;
-      
-      const prevPrice = livePrices[data.symbol] || data.price;
-      livePrices[data.symbol] = data.price;
-      
-      // Update all instances of this symbol in the marquee
-      const tickerContent = document.getElementById('ticker-content');
-      if (tickerContent) {
-        // SSE will target all duplicate nodes (due to marquee)
-        const nodes = Array.from(tickerContent.querySelectorAll(`[id^="live-tick-${data.symbol}"]`));
-        
-        if (nodes.length === 0) {
-          // If it doesn't exist, prepend it to the beginning of the marquee
-          let el = document.createElement('span');
-          el.id = `live-tick-${data.symbol}-0`;
-          el.className = 'ticker-item';
-          tickerContent.prepend(el);
-          nodes.push(el);
-          
-          const loadingEl = Array.from(tickerContent.children).find(c => c.textContent.includes('Loading'));
-          if (loadingEl) loadingEl.remove();
-        }
-        
-        const isUp = data.price >= prevPrice;
-        const arrow = isUp ? '▲' : '▼';
-        
-        nodes.forEach(el => {
-          if (data.price !== prevPrice) {
-            el.classList.remove('flash-green', 'flash-red');
-            void el.offsetWidth; // Reflow
-            el.classList.add(isUp ? 'flash-green' : 'flash-red');
-          }
-          el.innerHTML = `<strong>${data.symbol}</strong> ${formatMoney(data.price)} ${arrow}`;
-        });
-      }
-
-      // Update positions table
-      const posPriceEl = document.getElementById(`pos-price-${data.symbol}`);
-      if (posPriceEl) {
-        if (data.price !== prevPrice) {
-          posPriceEl.classList.remove('flash-green', 'flash-red');
-          void posPriceEl.offsetWidth; // Reflow
-          posPriceEl.classList.add(data.price >= prevPrice ? 'flash-green' : 'flash-red');
-        }
-        posPriceEl.innerHTML = formatMoney(data.price);
-
-        const posPnlCell = document.getElementById(`pos-pnl-cell-${data.symbol}`);
-        const posPnlEl = document.getElementById(`pos-pnl-${data.symbol}`);
-        const posPnlPctEl = document.getElementById(`pos-pnlpct-${data.symbol}`);
-
-        if (posPnlCell && posPnlEl && posPnlPctEl) {
-          const entryPrice = parseFloat(posPnlCell.getAttribute('data-entry'));
-          const qty = parseFloat(posPnlCell.getAttribute('data-qty'));
-          
-          if (!isNaN(entryPrice) && !isNaN(qty) && qty > 0) {
-            const mktValue = data.price * qty;
-            const costValue = entryPrice * qty;
-            const pnl = mktValue - costValue;
-            const pnlPct = (pnl / costValue) * 100;
-            
-            posPnlEl.innerHTML = formatMoney(pnl);
-            posPnlPctEl.innerHTML = pnlPct.toFixed(2) + '%';
-            
-            posPnlCell.classList.remove('status-buy', 'status-sell');
-            posPnlCell.classList.add(pnl >= 0 ? 'status-buy' : 'status-sell');
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error parsing live tick:", err);
-    }
+function renderTape(items) {
+  const track = $("tape-track");
+  if (!track || !items?.length) return;
+  const cell = (t) => {
+    const chg = +(t.change ?? t.changePercent) || 0;
+    const dir = chg >= 0 ? "up" : "down";
+    const arrow = chg >= 0 ? "▲" : "▼";
+    return `<span class="tape-item" data-sym="${esc(t.symbol)}">
+      <span class="sym">${esc(t.symbol)}</span>
+      <span class="num price">${fmtMoney(livePrices[t.symbol] ?? t.price)}</span>
+      <span class="chg ${dir} num">${arrow} ${Math.abs(chg).toFixed(2)}%</span>
+    </span>`;
   };
-  
-  source.onerror = function() {
-    console.log("Live ticker SSE connection lost. Reconnecting...");
-  };
+  const half = items.map(cell).join("");
+  track.innerHTML = half + half; // duplicated for the seamless loop
+  $("tape-summary").textContent =
+    "Watchlist: " + items.map((t) => `${t.symbol} ${fmtMoney(t.price)}`).join(", ");
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  initCharts();
-  setupLiveTicker();
-  fetchDashboardData();
-  setInterval(fetchDashboardData, 5000);
-});
+function patchTapePrice(symbol, price, wentUp) {
+  document.querySelectorAll(`.tape-item[data-sym="${CSS.escape(symbol)}"] .price`).forEach((el) => {
+    el.textContent = fmtMoney(price);
+    el.classList.remove("flash-up", "flash-down");
+    void el.offsetWidth;
+    el.classList.add(wentUp ? "flash-up" : "flash-down");
+  });
+}
 
-function renderTicker(data) {
-  const container = document.getElementById('ticker-content');
-  if (!data || !data.ticker || data.ticker.length === 0) {
-    if (container.children.length === 0 || container.innerHTML.includes('Loading')) {
-      container.innerHTML = '<span class="ticker-item">No ticker data available</span>';
-    }
+/* ------------------------- positions ------------------------------------ */
+
+function renderPositions(positions) {
+  const body = $("positions-body");
+  if (!body) return;
+  if (!positions?.length) {
+    body.innerHTML = `<tr><td colspan="6" class="empty">No open positions</td></tr>`;
     return;
   }
-  
-  // Remove "Loading" text if present
-  const loadingEl = Array.from(container.children).find(c => c.textContent.includes('Loading'));
-  if (loadingEl) loadingEl.remove();
+  body.innerHTML = positions.map((p) => {
+    const dir = p.pnl >= 0 ? "up" : "down";
+    const arrow = p.pnl >= 0 ? "▲" : "▼";
+    return `<tr>
+      <td><button type="button" class="symbol-btn" data-stock="${esc(p.symbol)}">${esc(p.symbol)}</button></td>
+      <td class="right num">${p.quantity}</td>
+      <td class="right num">${fmtMoney(p.entryPrice)}</td>
+      <td class="right num live-price" data-sym="${esc(p.symbol)}">${fmtMoney(p.currentPrice)}</td>
+      <td class="right num live-pnl" data-sym="${esc(p.symbol)}" data-entry="${p.entryPrice}" data-qty="${p.quantity}">
+        <span class="${dir}">${arrow} ${fmtSigned(p.pnl)} (${fmtSignedPct(p.pnlPct)})</span>
+      </td>
+      <td class="right num">${fmtMoney(p.trailingStop ?? p.stopLoss)}</td>
+    </tr>`;
+  }).join("");
+}
 
-  // Create two copies for seamless marquee
-  const items = [...data.ticker, ...data.ticker];
-  
-  // Only recreate innerHTML if we have an empty container or a totally different count.
-  // Otherwise, intelligently update existing spans to not break CSS scroll animation or SSE classes.
-  if (container.children.length !== items.length) {
-    let html = '';
-    items.forEach((t, i) => {
-      const rawChange = t.change !== undefined ? t.change : t.changePercent;
-      let changePct = parseFloat(rawChange);
-      if (isNaN(changePct)) changePct = 0;
-      
-      const isUp = changePct >= 0;
-      const arrow = isUp ? '▲' : '▼';
-      const cls = isUp ? 'up' : 'down';
-      
-      // We append index to ID to allow duplicates in the marquee
-      html += `<span id="live-tick-${t.symbol}-${i}" class="ticker-item ${cls}"><strong>${t.symbol}</strong> ${formatMoney(t.price)} ${arrow} ${Math.abs(changePct).toFixed(2)}%</span>`;
-    });
-    container.innerHTML = html;
+function patchPositionPrice(symbol, price, wentUp) {
+  const priceEl = document.querySelector(`.live-price[data-sym="${CSS.escape(symbol)}"]`);
+  if (!priceEl) return;
+  priceEl.textContent = fmtMoney(price);
+  priceEl.classList.remove("flash-up", "flash-down");
+  void priceEl.offsetWidth;
+  priceEl.classList.add(wentUp ? "flash-up" : "flash-down");
+
+  const pnlEl = document.querySelector(`.live-pnl[data-sym="${CSS.escape(symbol)}"]`);
+  if (!pnlEl) return;
+  const entry = parseFloat(pnlEl.dataset.entry);
+  const qty = parseFloat(pnlEl.dataset.qty);
+  if (!Number.isFinite(entry) || !Number.isFinite(qty) || qty <= 0) return;
+  const pnl = (price - entry) * qty;
+  const pct = ((price - entry) / entry) * 100;
+  const dir = pnl >= 0 ? "up" : "down";
+  const arrow = pnl >= 0 ? "▲" : "▼";
+  pnlEl.innerHTML = `<span class="${dir}">${arrow} ${fmtSigned(pnl)} (${fmtSignedPct(pct)})</span>`;
+}
+
+function renderPending(orders) {
+  const body = $("pending-body");
+  if (!body) return;
+  if (!orders?.length) {
+    body.innerHTML = `<tr><td colspan="5" class="empty">None</td></tr>`;
+    return;
+  }
+  body.innerHTML = orders.map((o) => `<tr>
+    <td>${esc(o.symbol)}</td>
+    <td class="right num">${o.quantity}</td>
+    <td class="right num">${fmtMoney(o.entryPrice)}</td>
+    <td class="right num">${o.stopLoss ? fmtMoney(o.stopLoss) : "—"}</td>
+    <td class="right num">${o.trailingPct ? fmtPct(o.trailingPct * 100, 1) : "—"}</td>
+  </tr>`).join("");
+}
+
+/* ------------------------- vetting --------------------------------------- */
+
+function renderVetting(v) {
+  if (!v) return;
+  const approvedEl = $("vetting-approved");
+  const blockedEl = $("vetting-blocked");
+  const blocklistEl = $("vetting-blocklist");
+  const when = $("vetting-when");
+
+  const vetted = v.vetted;
+  if (vetted?.approved?.length) {
+    approvedEl.innerHTML = vetted.approved
+      .map((s) => `<span class="chip is-good"><span class="dot" aria-hidden="true"></span>${esc(s)}</span>`)
+      .join("");
+    if (when) when.textContent = `· ${esc(vetted.source || "")} ${vetted.session_date || ""}`;
   } else {
-    // Intelligently update text
-    items.forEach((t, i) => {
-      const el = document.getElementById(`live-tick-${t.symbol}-${i}`);
-      if (el) {
-        // Only update if SSE hasn't flashed it very recently (prevent race condition overwrites)
-        if (el.classList.contains('flash-green') || el.classList.contains('flash-red')) return;
+    approvedEl.innerHTML = `<span class="empty">Waiting for pre-market vetting…</span>`;
+  }
 
-        const rawChange = t.change !== undefined ? t.change : t.changePercent;
-        let changePct = parseFloat(rawChange);
-        if (isNaN(changePct)) changePct = 0;
-        
-        const isUp = changePct >= 0;
-        const arrow = isUp ? '▲' : '▼';
-        
-        el.className = `ticker-item ${isUp ? 'up' : 'down'}`;
-        el.innerHTML = `<strong>${t.symbol}</strong> ${formatMoney(t.price)} ${arrow} ${Math.abs(changePct).toFixed(2)}%`;
-      }
+  const blocked = Object.entries(vetted?.blocked || {});
+  const reportBlocked = Object.entries(v.report?.results || {})
+    .filter(([, r]) => r.verdict === "FAIL")
+    .map(([sym, r]) => [sym, r.reason || `net return ${r.total_return_pct}% over ${r.n_trades} trades`]);
+  const combined = blocked.length ? blocked : reportBlocked;
+  blockedEl.innerHTML = combined.length
+    ? combined.map(([sym, why]) => `<div class="block-item"><span class="badge blocked">${esc(sym)}</span><span class="why">${esc(why)}</span></div>`).join("")
+    : `<p class="empty">None blocked</p>`;
+
+  const bl = Object.entries(v.blocklist || {});
+  blocklistEl.innerHTML = bl.length
+    ? bl.map(([sym, info]) => `<div class="block-item"><span class="badge blocked">${esc(sym)}</span><span class="why">${esc(info.reason || "")} · until ${esc((info.until || "").slice(11, 16) || "next open")}</span></div>`).join("")
+    : `<p class="empty">Nothing blocked in-session</p>`;
+}
+
+/* ------------------------- signals --------------------------------------- */
+
+const sigState = { rows: [], filter: "ALL", sort: "mlConfidence", dir: -1, page: 1, perPage: 10 };
+
+function recommendation(s) {
+  const score = s.combinedScore ?? s.mlConfidence ?? 0;
+  const thr = s.buyThreshold ?? 0.6;
+  if (s.signal === "BUY") return { label: "BUY", cls: "buy" };
+  if (s.signal === "SELL") return { label: "SELL", cls: "sell" };
+  if (s.holdReason) return { label: "GATED", cls: "gated", why: s.holdReason };
+  if (score >= thr - 0.05 && score < thr) return { label: "WARMING", cls: "warm" };
+  return { label: "HOLD", cls: "" };
+}
+
+function confBar(v) {
+  const pct = Math.max(0, Math.min(100, (+v || 0) * 100));
+  return `<div class="conf"><div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div><span class="pct num">${pct.toFixed(0)}%</span></div>`;
+}
+
+function renderSignals() {
+  const body = $("signals-body");
+  if (!body) return;
+  let rows = [...sigState.rows];
+
+  if (sigState.filter !== "ALL") {
+    rows = rows.filter((s) => {
+      const rec = recommendation(s);
+      if (sigState.filter === "BUY") return rec.label === "BUY";
+      if (sigState.filter === "SELL") return rec.label === "SELL";
+      if (sigState.filter === "WARM") return rec.label === "WARMING";
+      if (sigState.filter === "GATED") return rec.label === "GATED";
+      return true;
     });
   }
+  rows.sort((a, b) => {
+    const av = a[sigState.sort] ?? 0;
+    const bv = b[sigState.sort] ?? 0;
+    return (av > bv ? 1 : av < bv ? -1 : 0) * sigState.dir;
+  });
+
+  const pages = Math.max(1, Math.ceil(rows.length / sigState.perPage));
+  sigState.page = Math.min(sigState.page, pages);
+  const slice = rows.slice((sigState.page - 1) * sigState.perPage, sigState.page * sigState.perPage);
+
+  body.innerHTML = slice.length
+    ? slice.map((s) => {
+        const rec = recommendation(s);
+        const why = rec.why ? ` title="${esc(rec.why)}"` : "";
+        return `<tr>
+          <td><button type="button" class="symbol-btn" data-stock="${esc(s.symbol)}">${esc(s.symbol)}</button></td>
+          <td><span class="badge ${rec.cls}"${why}>${rec.label}</span>${rec.why ? `<div class="why" style="font-size:0.7rem;color:var(--muted);margin-top:2px;max-width:260px;">${esc(rec.why.slice(0, 90))}</div>` : ""}</td>
+          <td>${confBar(s.mlConfidence)}</td>
+          <td>${confBar(s.mlConfidenceSwing)}</td>
+          <td class="right num">${s.buyThreshold != null ? (s.buyThreshold * 100).toFixed(0) + "%" : "—"}</td>
+          <td class="right num">${fmtMoney(s.price)}</td>
+        </tr>`;
+      }).join("")
+    : `<tr><td colspan="6" class="empty">No signals match this filter</td></tr>`;
+
+  $("sig-page").textContent = `Page ${sigState.page} of ${pages}`;
+  $("sig-prev").disabled = sigState.page <= 1;
+  $("sig-next").disabled = sigState.page >= pages;
 }
+
+function initSignalControls() {
+  document.querySelectorAll(".filters button[data-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".filters button[data-filter]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+      btn.setAttribute("aria-pressed", "true");
+      sigState.filter = btn.dataset.filter;
+      sigState.page = 1;
+      renderSignals();
+    });
+  });
+  document.querySelectorAll("#signals-table th button[data-sort]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const col = btn.dataset.sort;
+      if (sigState.sort === col) sigState.dir *= -1;
+      else { sigState.sort = col; sigState.dir = -1; }
+      document.querySelectorAll("#signals-table th").forEach((th) => th.setAttribute("aria-sort", "none"));
+      btn.closest("th").setAttribute("aria-sort", sigState.dir === -1 ? "descending" : "ascending");
+      document.querySelectorAll("#signals-table th button span").forEach((sp) => (sp.textContent = ""));
+      btn.querySelector("span").textContent = sigState.dir === -1 ? "▼" : "▲";
+      renderSignals();
+    });
+  });
+  $("sig-prev").addEventListener("click", () => { sigState.page--; renderSignals(); });
+  $("sig-next").addEventListener("click", () => { sigState.page++; renderSignals(); });
+}
+
+/* ------------------------- trades ---------------------------------------- */
+
+function renderTrades(trades) {
+  const body = $("trades-body");
+  if (!body) return;
+  if (!trades?.length) {
+    body.innerHTML = `<tr><td colspan="4" class="empty">No recent trades</td></tr>`;
+    return;
+  }
+  body.innerHTML = trades.slice(0, 30).map((t) => {
+    const isBuy = t.action === "BUY";
+    let detail;
+    if (isBuy) {
+      detail = `<span class="num">Entry ${fmtMoney(t.price)} · qty ${t.quantity}</span>`;
+    } else {
+      const pnl = parseFloat(t.pnl) || 0;
+      const dir = pnl >= 0 ? "up" : "down";
+      const arrow = pnl >= 0 ? "▲" : "▼";
+      const reason = t.exit_reason ? ` <span class="badge" style="font-size:0.65rem;">${esc(String(t.exit_reason).replace(/_/g, " "))}</span>` : "";
+      detail = `<span class="num ${dir}">${arrow} ${fmtSigned(pnl)}</span> <span class="num" style="color:var(--muted)">@ ${fmtMoney(t.price)}</span>${reason}`;
+    }
+    return `<tr>
+      <td class="num" style="color:var(--muted)">${esc(t.date ? `${t.date.slice(5)} ` : "")}${esc(t.time || "")}</td>
+      <td><button type="button" class="symbol-btn" data-stock="${esc(t.symbol)}">${esc(t.symbol)}</button></td>
+      <td><span class="badge ${isBuy ? "buy" : "sell"}">${esc(t.action)}</span></td>
+      <td class="right">${detail}</td>
+    </tr>`;
+  }).join("");
+}
+
+/* ------------------------- fleet ------------------------------------------ */
+
+function renderFleet(fleet) {
+  const grid = $("fleet-grid");
+  if (!grid) return;
+  if (!fleet?.available || !fleet.agents?.length) {
+    grid.innerHTML = `<span class="empty">Bus unavailable</span>`;
+    return;
+  }
+  grid.innerHTML = fleet.agents.map((a) => {
+    const cls = !a.alive ? "down" : a.status === "busy" ? "busy" : "alive";
+    const state = !a.alive ? "down" : a.status;
+    return `<div class="agent ${cls}"><span class="dot" aria-hidden="true"></span>${esc(a.name)}<span class="state">${esc(state)}</span></div>`;
+  }).join("");
+}
+
+function renderExitReasons(breakdown) {
+  // breakdown: [{reason, wins, losses, total, winRate, pnl}, …]
+  const body = $("exit-body");
+  if (!body) return;
+  if (!Array.isArray(breakdown) || !breakdown.length) {
+    body.innerHTML = `<tr><td colspan="4" class="empty">No closed trades yet</td></tr>`;
+    return;
+  }
+  const rows = [...breakdown].sort((a, b) => b.pnl - a.pnl);
+  body.innerHTML = rows.map((d) => {
+    const dir = d.pnl >= 0 ? "up" : "down";
+    return `<tr>
+      <td>${esc(String(d.reason).replace(/_/g, " "))}</td>
+      <td class="right num">${d.wins}</td>
+      <td class="right num">${d.losses}</td>
+      <td class="right num"><span class="${dir}">${fmtSigned(d.pnl)}</span></td>
+    </tr>`;
+  }).join("");
+}
+
+/* ------------------------- logs -------------------------------------------- */
+
+function renderLogs(lines) {
+  const box = $("log-box");
+  if (!box || !Array.isArray(lines)) return;
+  box.textContent = lines.join("\n");
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ------------------------- stock modal -------------------------------------- */
+
+async function openStockModal(symbol) {
+  const modal = $("stock-modal");
+  $("modal-title").textContent = symbol;
+  modal.classList.add("open");
+  modal.querySelector(".modal-close").focus();
+  try {
+    const res = await fetch(api(`/api/stock/${encodeURIComponent(symbol)}`));
+    const data = await res.json();
+    if (stockChart) stockChart.destroy();
+    const rows = (data.chartData || []).filter((d) => d.price != null);
+    stockChart = new Chart($("stock-chart"), {
+      type: "line",
+      data: {
+        datasets: [{
+          label: symbol,
+          data: rows.map((d) => ({ x: d.date, y: d.price })),
+          borderColor: cssVar("--s1"),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: false }, tooltip: { ...tooltipStyle(), callbacks: { label: (i) => ` ${fmtMoney(i.parsed.y)}` } } },
+        scales: baseScales(true),
+      },
+    });
+    const s = data.summary || {};
+    $("modal-bought").textContent = fmtMoney(s.totalBought || 0);
+    $("modal-sold").textContent = fmtMoney(s.totalSold || 0);
+    const pnl = s.totalPnl || 0;
+    $("modal-pnl").textContent = fmtSigned(pnl);
+    $("modal-pnl").className = `value num ${pnl >= 0 ? "up" : "down"}`;
+    const trades = data.trades || [];
+    $("modal-trades").innerHTML = trades.length
+      ? trades.slice(0, 25).map((t) => `<tr>
+          <td class="num">${esc(t.date)}</td>
+          <td><span class="badge ${t.action === "BUY" ? "buy" : "sell"}">${esc(t.action)}</span></td>
+          <td class="right num">${fmtMoney(t.price)}</td>
+          <td class="right num">${t.quantity}</td>
+        </tr>`).join("")
+      : `<tr><td colspan="4" class="empty">No transactions</td></tr>`;
+  } catch {
+    $("modal-trades").innerHTML = `<tr><td colspan="4" class="empty">Failed to load</td></tr>`;
+  }
+}
+
+function initModal() {
+  const modal = $("stock-modal");
+  modal.querySelector(".modal-close").addEventListener("click", () => modal.classList.remove("open"));
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.classList.remove("open"); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") modal.classList.remove("open"); });
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-stock]");
+    if (btn) openStockModal(btn.dataset.stock);
+  });
+}
+
+/* ------------------------- SSE live stream ----------------------------------- */
+
+function initStream() {
+  let source;
+  const connect = () => {
+    source = new EventSource(new URL("/api/stream", location.origin).href);
+    source.onopen = () => setChip("chip-live", "Live feed", "good");
+    source.onerror = () => setChip("chip-live", "Feed reconnecting", "warn");
+    source.onmessage = (event) => {
+      try {
+        const tick = JSON.parse(event.data);
+        if (!tick.symbol || !tick.price) return;
+        const prev = livePrices[tick.symbol] ?? tick.price;
+        livePrices[tick.symbol] = tick.price;
+        if (tick.price === prev) return;
+        const wentUp = tick.price > prev;
+        patchTapePrice(tick.symbol, tick.price, wentUp);
+        patchPositionPrice(tick.symbol, tick.price, wentUp);
+      } catch { /* malformed tick — skip */ }
+    };
+  };
+  connect();
+}
+
+/* ------------------------- range toggles -------------------------------------- */
+
+function initRangeToggles() {
+  document.querySelectorAll(".range-toggles button[data-range]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      document.querySelectorAll(".range-toggles button[data-range]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+      btn.setAttribute("aria-pressed", "true");
+      navRange = btn.dataset.range;
+      await refreshNav();
+    });
+  });
+}
+
+/* ------------------------- fetch cycles ----------------------------------------- */
+
+/* Resolve against origin so pages opened as http://user:pass@host still work
+   (credentialed base URLs make relative fetch() throw). */
+const api = (p) => new URL(p, location.origin).href;
+const getJSON = (url) => fetch(api(url)).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+
+async function refreshNav() {
+  const nav = await getJSON(`/api/nav-history?range=${navRange}`);
+  if (nav?.history?.length) renderNavChart(nav.history);
+  else if (Array.isArray(nav) && nav.length) renderNavChart(nav);
+}
+
+async function refreshCore() {
+  const [portfolio, positions, signals, trades, analytics, fleet, strategy] = await Promise.all([
+    getJSON("/api/portfolio"),
+    getJSON("/api/positions"),
+    getJSON("/api/signals"),
+    getJSON("/api/trades"),
+    getJSON("/api/analytics"),
+    getJSON("/api/fleet"),
+    getJSON("/api/strategy"),
+  ]);
+  renderHeader(portfolio, fleet, strategy);
+  renderKpis(portfolio, analytics);
+  renderPositions(positions);
+  renderTrades(trades);
+  renderFleet(fleet);
+  if (Array.isArray(signals)) {
+    sigState.rows = signals;
+    renderSignals();
+  }
+}
+
+async function refreshSlow() {
+  const [ticker, vetting, pending, dailyPnl, mlAcc, logs] = await Promise.all([
+    getJSON("/api/ticker"),
+    getJSON("/api/vetting"),
+    getJSON("/api/pending-orders"),
+    getJSON("/api/daily-pnl"),
+    getJSON("/api/ml-accuracy"),
+    getJSON("/api/logs"),
+  ]);
+  if (ticker?.ticker) renderTape(ticker.ticker);
+  renderVetting(vetting);
+  renderPending(pending);
+  if (Array.isArray(dailyPnl) && dailyPnl.length) renderPnlChart(dailyPnl);
+  if (mlAcc && !mlAcc.error) {
+    renderCalibChart(mlAcc.calibration);
+    renderExitReasons(mlAcc.exitBreakdown);
+  }
+  renderLogs(logs);
+}
+
+/* ------------------------- boot -------------------------------------------------- */
+
+document.addEventListener("DOMContentLoaded", async () => {
+  initTheme();
+  chartDefaults();
+  initSignalControls();
+  initRangeToggles();
+  initModal();
+  initStream();
+
+  const cfg = await getJSON("/api/market-config");
+  if (cfg?.market) MARKET = cfg.market;
+  $("market-tag").textContent = MARKET === "IN" ? "NSE · India" : "NASDAQ · US";
+  $("footer-market").textContent = MARKET === "IN" ? "Indian market (₹)" : "US market ($)";
+
+  await Promise.all([refreshCore(), refreshSlow(), refreshNav()]);
+  setInterval(refreshCore, 5000);
+  setInterval(refreshSlow, 30000);
+  setInterval(refreshNav, 60000);
+});

@@ -233,6 +233,7 @@ services:
       - MARKET_TYPE=US
       - TRADING_MODE=${TRADING_MODE:-paper}
       - TRADING_DB_PATH=/data/trading_US.db
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./logs:/logs
       - ./data:/data
@@ -254,6 +255,7 @@ services:
       - MARKET_TYPE=IN
       - TRADING_MODE=${TRADING_MODE:-paper}
       - TRADING_DB_PATH=/data/trading_IN.db
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./logs:/logs
       - ./data:/data

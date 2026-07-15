@@ -32,6 +32,42 @@ const IBKR_GATEWAY = process.env.IBKR_GATEWAY_URL || "https://localhost:5000";
 const MARKET_TYPE = (process.env.MARKET_TYPE || "IN").toUpperCase();
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DB_PATH = process.env.TRADING_DB_PATH || "/data/trading.db";
+const REDIS_URL = process.env.REDIS_URL || "redis://redis:6379/0";
+const REDIS_NS = `t101:${MARKET_TYPE}`;
+
+// ---------------------------------------------------------------------------
+// Redis (agent bus) — read-only consumer for fleet/strategy/vetting state.
+// Fully optional: every endpoint degrades to {available:false} without it.
+// ---------------------------------------------------------------------------
+
+let _redis = null;
+
+async function getRedis() {
+  if (_redis && _redis.isOpen) return _redis;
+  try {
+    const { createClient } = require("redis");
+    const client = createClient({
+      url: REDIS_URL,
+      socket: { connectTimeout: 2000, reconnectStrategy: (r) => Math.min(r * 500, 5000) },
+    });
+    client.on("error", (e) => console.error("redis:", e.message));
+    await client.connect();
+    _redis = client;
+    return _redis;
+  } catch (e) {
+    console.error("Redis unavailable:", e.message);
+    return null;
+  }
+}
+
+async function redisJson(client, key) {
+  try {
+    const raw = await client.get(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // SQLite Database
@@ -331,6 +367,34 @@ function getSystemStatus() {
 
 app.get("/api/market-config", (req, res) => {
   res.json({ market: MARKET_TYPE });
+});
+
+// ---------------------------------------------------------------------------
+// Live tick stream (SSE) — registered BEFORE the auth middleware on purpose:
+// EventSource can't show a basic-auth prompt and closes permanently on 401.
+// The stream carries only {symbol, price} ticks of public securities.
+// ---------------------------------------------------------------------------
+
+let sseClients = [];
+
+app.get("/api/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  res.write(": connected\n\n");
+
+  sseClients.push(res);
+
+  // Periodic comment keeps idle connections alive through proxies
+  const keepAlive = setInterval(() => {
+    try { res.write(": ping\n\n"); } catch { /* closed */ }
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    sseClients = sseClients.filter((client) => client !== res);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1334,6 +1398,127 @@ app.get("/api/ml-accuracy", (_req, res) => {
 });
 
 /**
+ * GET /api/fleet
+ * Agent fleet health from the Redis bus: session state + per-agent heartbeats.
+ */
+const FLEET_AGENTS = ["orchestrator", "trader", "scanner", "vetting", "strategy", "trainer"];
+
+app.get("/api/fleet", async (_req, res) => {
+  const client = await getRedis();
+  if (!client) return res.json({ available: false, agents: [], session: null });
+  try {
+    const session = await redisJson(client, `${REDIS_NS}:state:session`);
+    const halt = await redisJson(client, `${REDIS_NS}:state:halt`);
+    const agents = [];
+    for (const name of FLEET_AGENTS) {
+      const hb = await redisJson(client, `${REDIS_NS}:hb:${name}`);
+      agents.push({
+        name,
+        alive: hb !== null,          // heartbeat keys expire after 90s
+        status: hb?.status || "down",
+        detail: hb?.detail || "",
+        ts: hb?.ts || null,
+      });
+    }
+    res.json({ available: true, session, halt, agents });
+  } catch (e) {
+    console.error("fleet error:", e.message);
+    res.json({ available: false, agents: [], session: null });
+  }
+});
+
+/**
+ * GET /api/strategy
+ * Current market-regime directive published by the strategy agent.
+ */
+app.get("/api/strategy", async (_req, res) => {
+  const client = await getRedis();
+  if (!client) return res.json({ available: false });
+  const strategy = await redisJson(client, `${REDIS_NS}:state:strategy`);
+  res.json(strategy ? { available: true, ...strategy } : { available: false });
+});
+
+/**
+ * GET /api/vetting
+ * Profit-vetting output: today's approved/blocked targets, the live-accuracy
+ * blocklist, and the per-symbol backtest report file.
+ */
+app.get("/api/vetting", async (_req, res) => {
+  const out = { available: false, vetted: null, blocklist: {}, report: null };
+  const client = await getRedis();
+  if (client) {
+    try {
+      out.vetted = await redisJson(client, `${REDIS_NS}:state:vetted_targets`);
+      const rawBlock = await client.hGetAll(`${REDIS_NS}:state:blocklist`);
+      for (const [sym, val] of Object.entries(rawBlock || {})) {
+        try { out.blocklist[sym] = JSON.parse(val); } catch { /* skip */ }
+      }
+      out.available = true;
+    } catch (e) {
+      console.error("vetting redis error:", e.message);
+    }
+  }
+  try {
+    const reportPath = path.join(__dirname, "..", "data", `vetting_report_${MARKET_TYPE}.json`);
+    if (fs.existsSync(reportPath)) {
+      out.report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+      out.available = true;
+    }
+  } catch (e) {
+    console.error("vetting report error:", e.message);
+  }
+  res.json(out);
+});
+
+/**
+ * GET /api/pending-orders
+ * Active bracket/trailing-stop trackers from the executor's state file.
+ */
+app.get("/api/pending-orders", (_req, res) => {
+  try {
+    const dataPath = path.join(__dirname, "..", "data", `executor_state_${MARKET_TYPE}.json`);
+    if (!fs.existsSync(dataPath)) return res.json([]);
+    const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+    const orders = state.open_orders || {};
+    res.json(Object.values(orders).map((o) => ({
+      symbol: o.symbol,
+      quantity: o.quantity,
+      entryPrice: o.entry_price,
+      stopLoss: o.stop_loss_price,
+      trailingPct: o.initial_trailing_pct,
+      fractional: !!o.is_fractional,
+    })));
+  } catch (e) {
+    console.error("pending-orders error:", e.message);
+    res.json([]);
+  }
+});
+
+/**
+ * GET /api/daily-pnl
+ * Realized P&L per session (last 30 sessions with closed trades).
+ */
+app.get("/api/daily-pnl", (_req, res) => {
+  const db = getDB();
+  if (!db) return res.json([]);
+  try {
+    const rows = db.prepare(`
+      SELECT date,
+             ROUND(SUM(pnl), 2) AS pnl,
+             SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins,
+             SUM(CASE WHEN pnl <= 0 THEN 1 ELSE 0 END) AS losses
+      FROM trades
+      WHERE action = 'SELL' AND pnl IS NOT NULL
+      GROUP BY date ORDER BY date DESC LIMIT 30
+    `).all();
+    res.json(rows.reverse());
+  } catch (e) {
+    console.error("daily-pnl error:", e.message);
+    res.json([]);
+  }
+});
+
+/**
  * GET /api/health
  * Health check — returns 200 OK when the server is running.
  */
@@ -1351,24 +1536,9 @@ if (fs.existsSync(STATIC_DIR)) {
 }
 
 // ---------------------------------------------------------------------------
+// UDP receiver — trader agents send {symbol, price} datagrams to :4000,
+// broadcast to every connected SSE client (route registered near the top).
 // ---------------------------------------------------------------------------
-// UDP to SSE Live Ticker Stream
-// ---------------------------------------------------------------------------
-
-let sseClients = [];
-
-app.get("/api/stream", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  sseClients.push(res);
-
-  req.on("close", () => {
-    sseClients = sseClients.filter((client) => client !== res);
-  });
-});
 
 const udpServer = dgram.createSocket("udp4");
 udpServer.on("message", (msg) => {
