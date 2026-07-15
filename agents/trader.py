@@ -1124,10 +1124,14 @@ class TradingAgent:
                         break
                     self._process_symbol(symbol)
 
-                # Dump signals for dashboard
+                # Dump signals for dashboard (and prune rows from previous
+                # sessions so stale hold-reasons never surface in the UI)
                 try:
                     signals_list = list(self._current_signals.values())
                     self._trading_db.upsert_signals(signals_list)
+                    pruned = self._trading_db.delete_stale_signals(max_age_hours=24)
+                    if pruned:
+                        logger.info("Pruned %d stale signal row(s) from previous sessions.", pruned)
                 except Exception as exc:
                     logger.error("Failed to dump signals to DB: %s", exc, exc_info=True)
 
