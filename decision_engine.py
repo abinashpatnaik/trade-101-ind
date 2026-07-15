@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from config import config, ACTIVE_MARKET
+from trading_costs import round_trip_cost_pct
 from trend_engine import TrendSignal
 
 logger = logging.getLogger(__name__)
@@ -457,9 +458,11 @@ class DecisionEngine:
             # --- Sniper Mode: ADX trend strength filter ---
             # Only trade in clear trends (ADX > 25). Protects against
             # whipsaw losses in choppy/sideways markets.
+            # Applies in EVERY mode: the ML driver picks candidates, but a
+            # trade still needs trend + volume confirmation (AND, not OR).
             adx = getattr(trend_signal, 'adx', 0.0)
             min_adx = self._sniper_min_adx()
-            if not is_ai_driver and adx > 0 and adx < min_adx:
+            if adx > 0 and adx < min_adx:
                 logger.info(
                     "BUY blocked for %s — ADX=%.1f (weak trend, need >%.0f). "
                     "Protecting capital by avoiding choppy market.",
@@ -482,7 +485,7 @@ class DecisionEngine:
             # Only trade when volume is above average (>1.5x). Low volume
             # moves often reverse — high volume confirms conviction.
             vol_ratio = getattr(trend_signal, 'volume_ratio', 1.0)
-            if not is_ai_driver and vol_ratio > 0 and vol_ratio < 1.5:
+            if vol_ratio > 0 and vol_ratio < 1.5:
                 logger.info(
                     "BUY blocked for %s — volume_ratio=%.2f (need >1.5x avg). "
                     "No market conviction behind this move.",
@@ -618,6 +621,35 @@ class DecisionEngine:
             if remaining_budget < float("inf") and current_price > 0:
                 budget_qty = max(1, int(remaining_budget / current_price))
                 quantity = min(quantity, budget_qty)
+
+            # --- Cost gate: the expected move must clear round-trip friction ---
+            # Expected move proxy is 2×ATR (the same scale the stop uses); the
+            # trade must offer at least min_edge_multiple × estimated cost, or
+            # the position's edge is smaller than what the broker/exchange take.
+            notional = quantity * current_price
+            cost_pct = round_trip_cost_pct(notional, overnight=False)
+            expected_move_pct = (trend_signal.atr * 2.0) / current_price if current_price > 0 else 0.0
+            required_pct = self._sig.min_edge_multiple * cost_pct
+            if notional > 0 and expected_move_pct < required_pct:
+                logger.info(
+                    "BUY blocked for %s — expected move %.2f%% < %.1fx round-trip "
+                    "cost %.2f%% (notional=%.0f). Edge smaller than friction.",
+                    symbol, expected_move_pct * 100, self._sig.min_edge_multiple,
+                    cost_pct * 100, notional,
+                )
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"BUY signal (score={combined_score:.3f}) but expected move "
+                        f"{expected_move_pct*100:.2f}% is below {self._sig.min_edge_multiple:.0f}x "
+                        f"round-trip cost {cost_pct*100:.2f}% — not worth the friction."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
+                )
 
             if not self._can_afford(quantity, current_price, available_funds):
                 return Decision(

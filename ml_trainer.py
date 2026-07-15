@@ -137,13 +137,17 @@ def train_model():
         future_periods=5,
         target_return=0.01
     )
-    # Train DAY model (5m bars, 60 days, >0.2% in 12 periods)
+    # Train DAY model (5m bars, 60 days, >0.75% within 36 periods / 3 hours).
+    # Cost-aware label: the old +0.2%/1h target taught the model to find
+    # moves SMALLER than round-trip friction (~0.25-1% on small accounts) —
+    # a perfectly accurate model would still lose money. The label must be a
+    # move worth taking after costs.
     day_success = _train_single_model(
         mode="day",
         period="60d",
         interval="5m",
-        future_periods=12,
-        target_return=0.002
+        future_periods=36,
+        target_return=0.0075
     )
     return swing_success and day_success
 

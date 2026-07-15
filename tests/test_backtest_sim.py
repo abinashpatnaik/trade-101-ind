@@ -42,12 +42,15 @@ def _pos(entry=100.0, stop=97.5, target=1099.0, trail=0.015, high=None):
 
 
 def _params():
-    # IN-market values (config loads IN in tests): stop 2.5%, lock +0.5%, gap base 1.0%
+    # IN-market values: stop 2.5%, lock +0.5%, gap base 1.0%.
+    # Cost pinned to 0 here — these tests pin the trailing GEOMETRY;
+    # cost-floor behavior has its own tests below.
     return SimParams(
         stop_loss_pct=0.025,
         take_profit_pct=9.99,
         profit_lock_threshold=0.005,
         trailing_gap_base=0.010,
+        round_trip_cost_pct=0.0,
     )
 
 
@@ -159,3 +162,34 @@ def test_verdict_threshold():
     r = SimResult(symbol="X", n_trades=3, total_return_pct=0.5)
     assert verdict(r) == "PASS"
     assert verdict(r, ev_threshold_pct=1.0) == "FAIL"
+
+
+# ----------------------------------------------------------------------
+# Cost-awareness
+# ----------------------------------------------------------------------
+
+def test_cost_floor_lifts_breakeven():
+    """With costs, the profit-lock floor sits at entry×(1+cost): a pullback
+    to gross break-even exits ABOVE entry, not at it."""
+    params = _params()
+    params.round_trip_cost_pct = 0.005  # 0.5%
+    pos = _pos(trail=0.015)
+    assert simulate_exit(pos, 102.0, params) is None  # armed, high=102
+    # gap=base*0.50 -> trigger=max(102*0.9925, 100*1.005)=101.235; price
+    # 100.9 <= trigger -> exits while still above the NET break-even.
+    assert simulate_exit(pos, 100.9, params) == "TRAILING_STOP"
+
+
+def test_returns_are_net_of_costs(engines):
+    de, te = engines
+    df = load_fixture("uptrend")
+    gross = replay("X.NS", df, de, te, SimParams(round_trip_cost_pct=0.0))
+    net = replay("X.NS", df, de, te, SimParams(round_trip_cost_pct=0.01))
+    assert gross.n_trades >= 1 and net.n_trades >= 1
+    # Every net trade is shaved by 1% (cost floor may also shift exits, so
+    # only the direction is pinned, not the exact delta).
+    assert net.total_return_pct < gross.total_return_pct
+
+
+def test_default_cost_is_nonzero():
+    assert SimParams().round_trip_cost_pct > 0.001  # slippage floor at minimum

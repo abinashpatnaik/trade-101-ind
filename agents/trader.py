@@ -141,6 +141,16 @@ class TradingAgent:
         self._trading_db = TradingDB()
         self._current_signals: Dict[str, Dict] = {}
 
+        # US regulatory: sub-$25K margin accounts get PDT-flagged at 4 day
+        # trades per 5 business days. Entries are gated on available slots.
+        self._pdt_guard = None
+        if ACTIVE_MARKET == "US":
+            from agents.pdt_guard import PDTGuard
+
+            self._pdt_guard = PDTGuard(
+                self._trading_db, max_day_trades=config.risk.max_day_trades_per_5d
+            )
+
         if config.ai.enabled and (
             self.ai_validator.model_day is None or self.ai_validator.model_swing is None
         ):
@@ -510,6 +520,18 @@ class TradingAgent:
                 decision.action = "HOLD"
                 decision.reason = "Bus stale — new entries suppressed (fail-safe)"
                 decision.quantity = 0
+            if (
+                decision.action == "BUY"
+                and self._pdt_guard is not None
+                and not self._pdt_guard.can_open_new_position()
+            ):
+                decision.action = "HOLD"
+                decision.reason = (
+                    "PDT guard: day-trade budget exhausted (max "
+                    f"{config.risk.max_day_trades_per_5d}/5 business days) — "
+                    "entry blocked so protective exits can't get stuck."
+                )
+                decision.quantity = 0
 
             # --- 4.7 Continuous Learning Log ---
             self.continuous_learning.log_daily_features(
@@ -567,6 +589,8 @@ class TradingAgent:
                 else:
                     success = self.executor.execute(decision, symbol, current_price)
                     if success and decision.action in ("BUY", "SELL"):
+                        if decision.action == "BUY" and self._pdt_guard is not None:
+                            self._pdt_guard.note_buy(symbol)
                         pnl: Optional[float] = None
                         exit_reason: Optional[str] = None
 
@@ -843,24 +867,14 @@ class TradingAgent:
             if qty <= 0:
                 continue
 
-            # --- OVERNIGHT HOLD LOGIC ---
+            # --- OVERNIGHT HOLD: ML-swing conviction ONLY ---
+            # Losers are cut same-day: holding a losing day-trade into
+            # delivery adds the DP charge (~0.8% on small positions) and
+            # overnight gap risk to a trade that is already negative. Only
+            # positions the SWING model actively likes stay overnight.
             if reason == "EOD" and self._evaluate_ml_hold(symbol):
                 logger.info("ML model predicts overnight swing. Holding %s overnight.", symbol)
                 continue
-
-            # --- HOLD LOSERS OVERNIGHT ---
-            if reason == "EOD":
-                current_price = self.price_feed.get_current_price(symbol) or 0.0
-                avg_cost = float(position.get("avg_cost", current_price))
-                if current_price > 0 and avg_cost > 0:
-                    pnl_pct = (current_price - avg_cost) / avg_cost
-                    if pnl_pct < 0:
-                        logger.info(
-                            "HOLD OVERNIGHT (negative PnL): %s at %.2f%% "
-                            "(entry=%.4f, current=%.4f). Will check gap in morning.",
-                            symbol, pnl_pct * 100, avg_cost, current_price,
-                        )
-                        continue
 
             try:
                 current_price = self.price_feed.get_current_price(symbol) or 0.0

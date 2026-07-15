@@ -95,6 +95,21 @@ class VettingAgent(BaseAgent):
     # (a) Backtest screen
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _median_daily_turnover(df) -> float:
+        """Median of per-day traded value (Close × Volume summed per session).
+        Returns None when the frame is unusable — absence of evidence never
+        blocks."""
+        try:
+            if df is None or df.empty or "Volume" not in df.columns:
+                return None
+            per_day = (df["Close"] * df["Volume"]).groupby(df.index.date).sum()
+            if per_day.empty:
+                return None
+            return float(per_day.median())
+        except Exception:
+            return None
+
     def _load_nominations(self) -> List[str]:
         targets_file = os.path.join(_DATA_DIR, f"daily_targets_{self.market}.json")
         try:
@@ -137,6 +152,21 @@ class VettingAgent(BaseAgent):
                         period=cfg.backtest_lookback_period,
                         interval=cfg.backtest_interval,
                     )
+
+                    # --- Liquidity screen (before the backtest) ---
+                    # Illiquid names carry spreads the slippage model can't
+                    # see; median daily traded value must clear the floor.
+                    turnover = self._median_daily_turnover(df)
+                    if turnover is not None and turnover < cfg.min_daily_turnover:
+                        reason = (
+                            f"illiquid: median daily turnover "
+                            f"{turnover:,.0f} < {cfg.min_daily_turnover:,.0f}"
+                        )
+                        blocked[symbol] = reason
+                        report[symbol] = {"verdict": "FAIL", "reason": reason}
+                        self.logger.info("BLOCKED %s — %s", symbol, reason)
+                        continue
+
                     result = replay(symbol, df, self.decision_engine, self.trend_engine, params)
                 except Exception as exc:
                     self.logger.warning("Vet replay failed for %s (PASS by default): %s", symbol, exc)

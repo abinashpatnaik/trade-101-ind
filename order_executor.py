@@ -24,6 +24,7 @@ from typing import Dict, Optional
 
 from config import config
 from decision_engine import Decision
+from trading_costs import round_trip_cost_pct
 from zerodha_connector import ZerodhaConnector as IBKRConnector
 
 logger = logging.getLogger(__name__)
@@ -439,9 +440,13 @@ class OrderExecutor:
 
             trailing_stop_trigger = self._trailing_high[symbol] * (1.0 - trail_gap)
 
-            # CRITICAL: Never let the trailing stop go below entry price.
-            # Once we've been in profit, we MUST exit at break-even or better.
-            trailing_stop_trigger = max(trailing_stop_trigger, order.entry_price)
+            # CRITICAL: Never let the trailing stop go below the NET break-even.
+            # Gross break-even is a guaranteed net loss after round-trip costs,
+            # so the floor sits at entry × (1 + estimated cost).
+            cost_pct = round_trip_cost_pct(order.entry_price * order.quantity, overnight=False)
+            trailing_stop_trigger = max(
+                trailing_stop_trigger, order.entry_price * (1.0 + cost_pct)
+            )
 
             if current_price <= trailing_stop_trigger:
                 actual_pnl_positive = current_price >= order.entry_price

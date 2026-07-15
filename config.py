@@ -73,10 +73,16 @@ class RiskConfig:
     max_open_positions: int = 3
     allow_short_selling: bool = False
     trailing_stop_pct: float = field(default_factory=lambda: float(os.getenv("TRAILING_STOP_PCT", "0.015")))
-    # Profit-lock trailing stop: minimum CURRENT gain to activate
-    profit_lock_threshold: float = 0.005    # +0.5% (US default, floor for ATR-dynamic)
+    # Profit-lock trailing stop: minimum CURRENT gain to activate.
+    # Small-account tuning: locking gains below round-trip cost converts
+    # gross wins into net losses, so the floor sits above typical friction.
+    profit_lock_threshold: float = 0.0075   # +0.75% (US default, floor for ATR-dynamic)
     # Base trailing gap for small gains (widest gap in the graduated table)
     trailing_gap_base: float = 0.008        # 0.8% (US default)
+    # US regulatory: max same-day round trips per rolling 5 business days for
+    # sub-$25K margin accounts (Pattern Day Trader rule). Entries are blocked
+    # when no day-trade slot is available so protective exits never get stuck.
+    max_day_trades_per_5d: int = field(default_factory=lambda: int(os.getenv("MAX_DAY_TRADES_5D", "3")))
 
 
 @dataclass
@@ -119,6 +125,9 @@ class SignalConfig:
     buy_threshold: float = 0.48
     sell_threshold: float = -0.35
     ml_buy_threshold: float = 0.55
+    # Cost gate: expected move (2×ATR as % of price) must be at least this
+    # multiple of the estimated round-trip cost, or the BUY is blocked.
+    min_edge_multiple: float = field(default_factory=lambda: float(os.getenv("MIN_EDGE_MULTIPLE", "2.0")))
 
 
 @dataclass
@@ -169,6 +178,10 @@ class VettingConfig:
     min_trades_to_judge: int = 3
     min_hit_rate: float = 0.40
     consecutive_stop_losses_to_block: int = 2
+    # Liquidity screen: block symbols whose MEDIAN daily traded value over the
+    # backtest lookback is below this (illiquid names = wide spreads that the
+    # slippage model can't capture). Overridden per market profile.
+    min_daily_turnover: float = 50_000_000.0
 
 
 @dataclass
@@ -256,16 +269,20 @@ def get_india_config() -> Config:
         ),
         risk=RiskConfig(
             stop_loss_pct=0.025,            # -2.5% hard stop floor (ATR-dynamic widens further)
-            profit_lock_threshold=0.005,    # +0.5% before profit-lock activates
+            profit_lock_threshold=0.010,    # +1.0% before profit-lock activates (covers IN friction)
             trailing_gap_base=0.010,        # 1.0% trailing gap (IN mid-caps are more volatile)
+            # Small-account concentration: 2 larger positions amortise the
+            # fixed DP charge far better than 3 tiny ones.
+            max_open_positions=2,
         ),
-        wallet=WalletConfig(min_trade_value=1000.0),
+        wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
         signal=SignalConfig(),
         agent=AgentConfig(),
         ai=AIConfig(),
         strategy=StrategyConfig(index_symbol="^NSEI"),
+        vetting=VettingConfig(min_daily_turnover=50_000_000.0),   # ₹5 crore/day median
     )
 
 
@@ -302,6 +319,7 @@ def get_us_config() -> Config:
         agent=AgentConfig(),
         ai=AIConfig(),
         strategy=StrategyConfig(index_symbol="SPY"),
+        vetting=VettingConfig(min_daily_turnover=5_000_000.0),    # $5M/day median
     )
 
 

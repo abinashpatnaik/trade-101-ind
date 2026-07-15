@@ -27,8 +27,11 @@ def _index():
 def _frame(closes: np.ndarray, volumes: np.ndarray) -> pd.DataFrame:
     closes = np.asarray(closes, dtype=float)
     opens = np.concatenate([[closes[0]], closes[:-1]])
-    highs = np.maximum(opens, closes) * 1.001
-    lows = np.minimum(opens, closes) * 0.999
+    # ±0.3% intrabar range: realistic 5m volatility for a liquid mover, and
+    # enough ATR that the decision engine's cost gate (expected move >= 2x
+    # round-trip cost) doesn't block every synthetic entry.
+    highs = np.maximum(opens, closes) * 1.003
+    lows = np.minimum(opens, closes) * 0.997
     return pd.DataFrame(
         {
             "Open": opens,

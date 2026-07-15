@@ -103,11 +103,10 @@ def test_sniper_adx_gate_override(engine):
 def test_max_open_positions_override(engine):
     positions = {
         "TCS.NS": {"quantity": 1, "avg_cost": 100.0, "market_value": 100.0},
-        "INFY.NS": {"quantity": 1, "avg_cost": 100.0, "market_value": 100.0},
     }
-    # Default max is 3 → third position allowed
+    # IN default max is 2 → second position allowed
     assert _decide(engine, portfolio=_portfolio(open_positions=positions)).action == "BUY"
-    engine.apply_directive({"max_open_positions": 2})
+    engine.apply_directive({"max_open_positions": 1})
     capped = _decide(engine, portfolio=_portfolio(open_positions=positions))
     assert capped.action == "HOLD"
     assert "max open positions" in capped.reason

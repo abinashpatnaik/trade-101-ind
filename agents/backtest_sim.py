@@ -27,8 +27,15 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from config import config
+from trading_costs import round_trip_cost_pct as _rt_cost
 
 logger = logging.getLogger(__name__)
+
+
+def _default_cost_pct() -> float:
+    """Representative round-trip cost for a typical small-account position
+    (2× the market's min trade value, same-day)."""
+    return _rt_cost(config.wallet.min_trade_value * 2, overnight=False)
 
 
 @dataclass
@@ -38,6 +45,9 @@ class SimParams:
     take_profit_pct: float = field(default_factory=lambda: config.risk.take_profit_pct)
     profit_lock_threshold: float = field(default_factory=lambda: config.risk.profit_lock_threshold)
     trailing_gap_base: float = field(default_factory=lambda: config.risk.trailing_gap_base)
+    # Deducted from every simulated trade so verdicts are NET of friction;
+    # also lifts the profit-lock floor to entry×(1+cost) like the live executor.
+    round_trip_cost_pct: float = field(default_factory=_default_cost_pct)
     warmup_bars: int = 50
     max_window_bars: int = 200
 
@@ -121,8 +131,9 @@ def simulate_exit(
             trail_gap = base_gap
 
         trigger = pos.high_water * (1.0 - trail_gap)
-        # Never let the trailing stop go below entry — break-even or better
-        trigger = max(trigger, pos.entry_price)
+        # Never let the trailing stop go below NET break-even (entry + costs),
+        # mirroring the live executor's cost-aware floor.
+        trigger = max(trigger, pos.entry_price * (1.0 + params.round_trip_cost_pct))
 
         if current_price <= trigger:
             return "TRAILING_STOP" if current_price >= pos.entry_price else "STOP_LOSS"
@@ -178,6 +189,9 @@ def replay(
 
     def _close_position(pos: _Position, ts, price: float, reason: str) -> None:
         ret = ((price / pos.entry_price) - 1.0) * 100.0 if pos.entry_price > 0 else 0.0
+        # Net of estimated round-trip friction — a gross win smaller than
+        # costs is a loss and must count as one.
+        ret -= params.round_trip_cost_pct * 100.0
         result.trades.append(
             SimTrade(
                 entry_ts=str(pos.entry_ts),
