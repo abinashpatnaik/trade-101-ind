@@ -161,6 +161,7 @@ def replay(
     decision_engine,
     trend_engine,
     params: Optional[SimParams] = None,
+    ai_validator=None,
 ) -> SimResult:
     """
     Replay OHLCV bars through entry logic + exit math.
@@ -169,6 +170,12 @@ def replay(
     DatetimeIndex (5m bars expected). ``decision_engine`` /``trend_engine``
     are live instances — the decision engine's current strategy directive
     (if any) is honored automatically.
+
+    ``ai_validator``: when supplied (and its models are loaded), each bar's
+    entry decision is scored with the SAME ML model the live system uses, so
+    the screen tests the live ML-driven path instead of the classic trend path.
+    When None (or models unavailable) ML confidence is 0.0 → classic path,
+    preserving the original deterministic behavior.
     """
     params = params or SimParams()
     result = SimResult(symbol=symbol)
@@ -238,14 +245,24 @@ def replay(
         if signal is None:
             continue
 
+        # Score the bar with the live ML model when available, so the screen
+        # matches the live AI-driven entry path. Sentiment stays 0.0 (no
+        # point-in-time historical news in a replay). Falls back to 0.0 (classic
+        # path) when no validator/model is present.
+        if ai_validator is not None:
+            ml_day = ai_validator.get_ml_confidence(signal, 0.0, "day")
+            ml_swing = ai_validator.get_ml_confidence(signal, 0.0, "swing")
+        else:
+            ml_day = ml_swing = 0.0
+
         decision = decision_engine.make_decision(
             symbol=symbol,
             trend_signal=signal,
             sentiment_score=0.0,      # deterministic — no live news in a replay
             current_price=price,
             portfolio=sim_portfolio,
-            ml_confidence_day=0.0,    # forces the classic (non-AI-driver) path
-            ml_confidence_swing=0.0,
+            ml_confidence_day=ml_day,
+            ml_confidence_swing=ml_swing,
         )
         if decision.action != "BUY":
             continue
@@ -270,14 +287,21 @@ def replay(
     return result
 
 
-def verdict(result: SimResult, ev_threshold_pct: float = 0.0) -> str:
+def verdict(result: SimResult, ev_threshold_pct: float = 0.0, min_trades: int = 0) -> str:
     """
-    'FAIL' (block the symbol) only when the replay actually traded and lost.
-    Zero trades or data errors are neutral PASSes — never block trading on
-    absence of evidence.
+    'FAIL' (block the symbol) when the replay demonstrably fails the screen.
+
+    - Data errors are always neutral PASSes (never block on missing data).
+    - A symbol that traded is blocked when its net EV is below the threshold.
+    - When ``min_trades`` > 0, a symbol that produced FEWER than ``min_trades``
+      backtest trades is also blocked: with too little evidence we decline to
+      approve rather than passing on absence of evidence. ``min_trades`` = 0
+      preserves the original "zero trades is a neutral PASS" behavior.
     """
     if result.error is not None:
         return "PASS"
     if result.n_trades >= 1 and result.total_return_pct < ev_threshold_pct:
+        return "FAIL"
+    if min_trades > 0 and result.n_trades < min_trades:
         return "FAIL"
     return "PASS"
