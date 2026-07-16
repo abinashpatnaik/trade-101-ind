@@ -63,6 +63,10 @@ class OrderExecutor:
         self._ibkr = ibkr
         self._open_orders: Dict[str, OpenOrder] = {}
         self._trailing_high: Dict[str, float] = {}
+        # Real broker fill prices from the most recent close_position() calls,
+        # keyed by symbol. Consumed once by the caller so the recorded SELL uses
+        # the actual fill price instead of a stale market quote.
+        self._last_fill_price: Dict[str, float] = {}
         self._load_state()
         logger.debug("OrderExecutor initialised (trailing_stop=%.2f%%).", self._trailing_stop_pct * 100)
 
@@ -511,9 +515,21 @@ class OrderExecutor:
                 return False
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
+
+            # Capture the real average fill price so the recorded SELL reflects
+            # where the order actually executed — not a live quote fetched later
+            # at broker-sync time (which can drift far from the fill and produce
+            # nonsensical PnL, e.g. a "STOP_LOSS" that shows a profit).
+            get_fill = getattr(self._ibkr, "get_order_fill_price", None)
+            if callable(get_fill):
+                fill_price = get_fill(order_id)
+                if fill_price and fill_price > 0:
+                    self._last_fill_price[symbol] = fill_price
+
             logger.info(
-                "Position closed for %s: qty=%.4f order_id=%s",
+                "Position closed for %s: qty=%.4f order_id=%s fill=%s",
                 symbol, quantity, order_id,
+                f"{self._last_fill_price.get(symbol):.4f}" if symbol in self._last_fill_price else "unknown",
             )
             return True
         except Exception as exc:
@@ -521,6 +537,15 @@ class OrderExecutor:
                 "close_position() failed for %s: %s", symbol, exc, exc_info=True
             )
             return False
+
+    def pop_fill_price(self, symbol: str) -> Optional[float]:
+        """
+        Return and clear the real fill price captured by the most recent
+        ``close_position(symbol)`` call, or ``None`` if unavailable (e.g. the
+        broker did not report a fill in time, or the connector lacks fill-price
+        support). Callers fall back to another authoritative source when ``None``.
+        """
+        return self._last_fill_price.pop(symbol, None)
 
     def sync_positions(self, open_positions: dict, broker: IBKRConnector) -> None:
         """

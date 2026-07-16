@@ -373,7 +373,10 @@ class TradingAgent:
                             )
                             self.portfolio.open_positions.pop(symbol, None)
                         else:
-                            self.portfolio.set_pending_reason(symbol, exit_trigger)
+                            self.portfolio.set_pending_reason(
+                                symbol, exit_trigger,
+                                self.executor.pop_fill_price(symbol),
+                            )
                     self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
                 finally:
                     self._exiting.discard(symbol)
@@ -421,8 +424,15 @@ class TradingAgent:
     # Per-symbol processing
     # ------------------------------------------------------------------
 
-    def _process_symbol(self, symbol: str) -> None:
-        """Full analysis + execution pipeline for a single ticker."""
+    def _process_symbol(self, symbol: str, buy_eligible: bool = True) -> None:
+        """Full analysis + execution pipeline for a single ticker.
+
+        When *buy_eligible* is False the symbol is managed for EXITS only: BUY
+        signals are vetoed so the agent never opens or adds to a position that
+        is not in today's vetted targets. Held positions that dropped off the
+        approved list are still scanned (buy_eligible=False) so their
+        stop-loss / trailing / sell logic keeps running.
+        """
         try:
             is_held = symbol in self.portfolio.open_positions
             is_blocked = symbol in self._blocklist
@@ -520,6 +530,14 @@ class TradingAgent:
             )
 
             # --- 4.6 Vetting blocklist + stale-bus BUY gates ---
+            if decision.action == "BUY" and not buy_eligible:
+                logger.info(
+                    "BUY vetoed for %s — not in today's vetted targets "
+                    "(held position, exit-only management).", symbol,
+                )
+                decision.action = "HOLD"
+                decision.reason = "Not in today's approved targets — exit-only"
+                decision.quantity = 0
             if decision.action == "BUY" and is_blocked:
                 logger.info(
                     "BUY vetoed for %s — on vetting blocklist (%s).",
@@ -707,7 +725,10 @@ class TradingAgent:
                                 )
                                 self.portfolio.open_positions.pop(symbol, None)
                             else:
-                                self.portfolio.set_pending_reason(symbol, exit_trigger)
+                                self.portfolio.set_pending_reason(
+                                    symbol, exit_trigger,
+                                    self.executor.pop_fill_price(symbol),
+                                )
                         self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
                     finally:
                         self._exiting.discard(symbol)
@@ -807,7 +828,10 @@ class TradingAgent:
                                     )
                                     self.portfolio.open_positions.pop(symbol, None)
                                 else:
-                                    self.portfolio.set_pending_reason(symbol, "MORNING_GAP_STOP")
+                                    self.portfolio.set_pending_reason(
+                                        symbol, "MORNING_GAP_STOP",
+                                        self.executor.pop_fill_price(symbol),
+                                    )
                             logger.info(
                                 "Morning gap-stop sold %s x %.4f @ %.4f (PnL=%.2f)",
                                 symbol, qty, current_price, pnl,
@@ -923,7 +947,9 @@ class TradingAgent:
                             )
                             self.portfolio.open_positions.pop(symbol, None)
                         else:
-                            self.portfolio.set_pending_reason(symbol, reason)
+                            self.portfolio.set_pending_reason(
+                                symbol, reason, self.executor.pop_fill_price(symbol),
+                            )
                     logger.info("Closed %s x %d @ %.4f (reason=%s)", symbol, qty, current_price, reason)
 
                     # Notify learning engine for EOD/shutdown closes
@@ -1038,11 +1064,13 @@ class TradingAgent:
                                                         symbol, qty, outsideRth=True
                                                     )
                                                     if success:
-                                                        pnl = (current_price - avg_cost) * qty
+                                                        fill_price = self.executor.pop_fill_price(symbol)
+                                                        exit_price = fill_price if fill_price else current_price
+                                                        pnl = (exit_price - avg_cost) * qty
                                                         with self._positions_lock:
                                                             self.portfolio.record_trade(
                                                                 symbol=symbol, action="SELL",
-                                                                quantity=qty, price=current_price,
+                                                                quantity=qty, price=exit_price,
                                                                 pnl=pnl, exit_reason="PRE_MARKET_DUMP",
                                                             )
                                                     else:
@@ -1130,17 +1158,28 @@ class TradingAgent:
                 # d. Per-symbol scan (vetted targets → file → config universe)
                 daily_targets = [] if skip_scanning else self._effective_targets()
 
+                # Always exit-manage open positions, even if they dropped off
+                # today's vetted targets (or during the EOD buffer). Buys stay
+                # gated to daily_targets; held-but-unapproved names are scanned
+                # for exits only (buy_eligible=False).
+                target_set = set(daily_targets)
+                held_only = [
+                    s for s in self.portfolio.open_positions.keys() if s not in target_set
+                ]
+                scan_set = list(daily_targets) + held_only
+
                 logger.info(
-                    "--- Scan loop | %s | %d tickers | %.1f min remaining ---",
+                    "--- Scan loop | %s | %d targets (+%d held-only) | %.1f min remaining ---",
                     self.session.get_session_date(),
                     len(daily_targets),
+                    len(held_only),
                     self.session.minutes_remaining(),
                 )
 
-                for symbol in daily_targets:
+                for symbol in scan_set:
                     if self._shutdown_requested:
                         break
-                    self._process_symbol(symbol)
+                    self._process_symbol(symbol, buy_eligible=(symbol in target_set))
 
                 # Dump signals for dashboard (and prune rows from previous
                 # sessions so stale hold-reasons never surface in the UI)

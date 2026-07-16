@@ -75,6 +75,10 @@ class PortfolioTracker:
         self.open_positions: Dict[str, Dict] = {}
         self._is_first_update: bool = True
         self.pending_reasons: Dict[str, str] = {}
+        # Real broker fill prices for pending exits, keyed by symbol. Set at
+        # trigger time alongside the reason so the recorded SELL uses the actual
+        # fill rather than a live quote fetched later at sync time.
+        self.pending_fill_prices: Dict[str, float] = {}
         self.daily_pnl: float = 0.0            # P&L since session start (INR)
 
         # Session tracking
@@ -107,8 +111,50 @@ class PortfolioTracker:
     def is_simulated(self) -> bool:
         return os.getenv("PAPER_TRADING_ENABLED", "false").lower() == "true" and os.getenv("TRADING_MARKET", "IN").upper() == "IN"
 
-    def set_pending_reason(self, symbol: str, reason: str) -> None:
+    def set_pending_reason(
+        self, symbol: str, reason: str, fill_price: Optional[float] = None
+    ) -> None:
         self.pending_reasons[symbol] = reason
+        if fill_price is not None and fill_price > 0:
+            self.pending_fill_prices[symbol] = fill_price
+        else:
+            self.pending_fill_prices.pop(symbol, None)
+
+    def _reconcile_daily_pnl(self, broker_day_pnl: Optional[float]) -> None:
+        """
+        Warn when our recorded realised P&L diverges from the broker's Day P&L.
+
+        Only meaningful when the account is FLAT (no open positions), because the
+        broker's Day P&L (equity vs. prior close) includes unrealised P&L on any
+        open position while our recorded figure is realised-only. Divergence when
+        flat means the trade log is mis-recording exits (e.g. fabricated fills) or
+        some closes were recorded with an unknown P&L.
+        """
+        if broker_day_pnl is None or self.open_positions:
+            return
+        try:
+            mode = os.getenv("TRADING_MODE", "paper").lower()
+            stats = self._db.get_realized_pnl(since_date=str(date.today()), mode=mode)
+        except Exception as exc:
+            logger.debug("Daily P&L reconciliation query failed: %s", exc)
+            return
+
+        recorded = float(stats.get("realizedPnl", 0.0))
+        unknown = int(stats.get("unknownCount", 0))
+        # Tolerate rounding + real friction (fees/spread already in broker P&L).
+        tolerance = 0.02 + 0.10 * abs(broker_day_pnl)
+        if unknown > 0 or abs(recorded - broker_day_pnl) > tolerance:
+            logger.warning(
+                "DAILY PnL RECONCILE MISMATCH: recorded realised=%s%.2f vs broker Day PnL=%s%.2f "
+                "(diff=%s%.2f, %d close(s) with unknown fill). Trade-log P&L may be unreliable.",
+                CUR_SYM, recorded, CUR_SYM, broker_day_pnl,
+                CUR_SYM, recorded - broker_day_pnl, unknown,
+            )
+        else:
+            logger.debug(
+                "Daily P&L reconciled: recorded=%s%.2f ~= broker=%s%.2f (diff=%s%.2f).",
+                CUR_SYM, recorded, CUR_SYM, broker_day_pnl, CUR_SYM, recorded - broker_day_pnl,
+            )
 
     def _persist_trade(self, trade: TradeRecord) -> None:
         """Write a single trade record to the SQLite database."""
@@ -188,21 +234,53 @@ class PortfolioTracker:
                         # Detect natively closed positions (or fulfilled agent sell orders)
                         for symbol, old_pos in list(self.open_positions.items()):
                             if symbol not in positions:
-                                current_price = ibkr_connector.get_current_price(symbol)
-                                if current_price is None:
-                                    current_price = float(old_pos.get("avg_cost", 0.0))
-                                
                                 qty = float(old_pos.get("quantity", 0))
                                 avg_cost = float(old_pos.get("avg_cost", 0.0))
-                                pnl = (current_price - avg_cost) * qty
-                                
+
+                                # Determine the REAL exit fill price. P&L must never
+                                # be computed from a live market quote — that is what
+                                # produced fabricated results (e.g. a STOP_LOSS that
+                                # appeared to profit). Sources, in order of trust:
+                                #   1. The fill captured by our own close_position().
+                                #   2. The broker's actual last filled SELL order
+                                #      (covers native stops / off-poll closes).
+                                # If neither is available, record P&L as UNKNOWN
+                                # (None) rather than inventing a number.
+                                fill_price = self.pending_fill_prices.pop(symbol, None)
+                                price_source = "close-fill"
+                                if not (fill_price and fill_price > 0):
+                                    getter = getattr(ibkr_connector, "get_last_fill_price", None)
+                                    if callable(getter):
+                                        fill_price = getter(symbol)
+                                        price_source = "broker-order"
+
+                                if fill_price and fill_price > 0:
+                                    exit_price = fill_price
+                                    pnl = (exit_price - avg_cost) * qty
+                                else:
+                                    exit_price = avg_cost
+                                    pnl = None
+                                    price_source = "unknown"
+
                                 reason = self.pending_reasons.pop(symbol, "BROKER_SYNC_CLOSE")
-                                logger.info("Broker position closed for %s. Recording SELL (reason=%s).", symbol, reason)
+                                if pnl is None:
+                                    logger.warning(
+                                        "Broker position closed for %s (reason=%s) but the real "
+                                        "fill price could not be determined — recording at cost "
+                                        "basis with PnL=UNKNOWN.",
+                                        symbol, reason,
+                                    )
+                                else:
+                                    logger.info(
+                                        "Broker position closed for %s. Recording SELL "
+                                        "(reason=%s, price=%.4f, pnl=%.4f, source=%s).",
+                                        symbol, reason, exit_price, pnl, price_source,
+                                    )
                                 self.record_trade(
                                     symbol=symbol,
                                     action="SELL",
                                     quantity=qty,
-                                    price=current_price,
+                                    price=exit_price,
                                     pnl=pnl,
                                     exit_reason=reason
                                 )
@@ -230,6 +308,8 @@ class PortfolioTracker:
                 self.cash = summary.get("AvailableFunds", self.cash)
                 self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
                 self.buying_power = summary.get("BuyingPower", getattr(self, "buying_power", self.portfolio_value))
+                # Cross-check our recorded trade P&L against the broker's truth.
+                self._reconcile_daily_pnl(summary.get("DailyPnL"))
 
             # Capture session-start NAV on the first update each trading day.
             today = str(date.today())

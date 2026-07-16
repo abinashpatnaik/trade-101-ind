@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Dict, List, Optional
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopOrderRequest, TrailingStopOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopOrderRequest, TrailingStopOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
 from alpaca.data.live import StockDataStream
@@ -274,6 +275,71 @@ class AlpacaConnector:
         except Exception as exc:
             logger.error("Failed to place MARKET order for %s: %s", symbol, exc)
             return None
+
+    def get_order_fill_price(self, order_id: str, max_wait: float = 3.0) -> Optional[float]:
+        """
+        Return the actual average fill price for *order_id*.
+
+        Market orders usually fill within a fraction of a second, but
+        ``submit_order`` returns before the fill is reported. Poll the order
+        briefly until ``filled_avg_price`` is populated.
+
+        Returns the fill price as a float, or ``None`` if the order is not
+        filled within *max_wait* seconds (caller should fall back to another
+        authoritative source rather than a live quote).
+        """
+        if not self.trading_client or not order_id:
+            return None
+        deadline = time.monotonic() + max_wait
+        while True:
+            try:
+                order = self.trading_client.get_order_by_id(order_id)
+                fill = getattr(order, "filled_avg_price", None)
+                if fill is not None and float(fill) > 0:
+                    return float(fill)
+                status = str(getattr(order, "status", "")).lower()
+                if status in ("canceled", "cancelled", "rejected", "expired"):
+                    logger.warning("Order %s reached terminal status %s with no fill.", order_id, status)
+                    return None
+            except Exception as exc:
+                logger.error("Failed to fetch fill price for order %s: %s", order_id, exc)
+                return None
+            if time.monotonic() >= deadline:
+                logger.warning("Fill price for order %s not available after %.1fs.", order_id, max_wait)
+                return None
+            time.sleep(0.2)
+
+    def get_last_fill_price(self, symbol: str, side: str = "sell") -> Optional[float]:
+        """
+        Return the average fill price of the most recent FILLED *side* order for
+        *symbol*, straight from the broker's order history.
+
+        This is the authoritative exit price when the position was closed by
+        something other than our own ``close_position`` call (e.g. a native
+        broker stop, or a fill that landed between position-sync polls). Returns
+        ``None`` if no matching filled order is found.
+        """
+        if not self.trading_client:
+            return None
+        try:
+            want = OrderSide.SELL if side.lower() == "sell" else OrderSide.BUY
+            req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, symbols=[symbol], limit=20)
+            orders = self.trading_client.get_orders(filter=req)
+            best = None
+            for o in orders:
+                if getattr(o, "side", None) != want:
+                    continue
+                fill = getattr(o, "filled_avg_price", None)
+                if fill is None or float(fill) <= 0:
+                    continue
+                filled_at = getattr(o, "filled_at", None)
+                if best is None or (filled_at and best[0] and filled_at > best[0]):
+                    best = (filled_at, float(fill))
+            if best is not None:
+                return best[1]
+        except Exception as exc:
+            logger.error("Failed to fetch last %s fill price for %s: %s", side, symbol, exc)
+        return None
 
     def _place_extended_hours_limit_order(self, symbol: str, action: str, quantity: float) -> Optional[str]:
         """
