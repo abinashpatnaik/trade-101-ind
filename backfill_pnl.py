@@ -30,7 +30,7 @@ import argparse
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("backfill_pnl")
@@ -47,6 +47,21 @@ def parse_trade_dt(date_s: str, time_s: str) -> Optional[datetime]:
         except (ValueError, TypeError):
             continue
     return None
+
+
+def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalise any datetime to naive UTC so DB (naive) and Alpaca (tz-aware,
+    UTC) timestamps can be compared. Recorded trade times come from the
+    container's UTC clock, so treating both as UTC is correct."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _secs_between(a: Optional[datetime], b: Optional[datetime]) -> float:
+    return abs((_naive_utc(a) - _naive_utc(b)).total_seconds())
 
 
 def _entry_price_for(sell: Dict, buys: List[Dict]) -> Optional[float]:
@@ -95,10 +110,10 @@ def plan_corrections(
             sdt = parse_trade_dt(s["date"], s["time"])
             timed = [c for c in candidates if c.get("filled_at") and sdt]
             if sdt and timed:
-                timed.sort(key=lambda c: abs((c["filled_at"] - sdt).total_seconds()))
+                timed.sort(key=lambda c: _secs_between(c["filled_at"], sdt))
                 # Disambiguate only if the closest is clearly closer than the next.
-                if len(timed) == 1 or abs((timed[0]["filled_at"] - sdt).total_seconds()) + 1 < \
-                        abs((timed[1]["filled_at"] - sdt).total_seconds()):
+                if len(timed) == 1 or _secs_between(timed[0]["filled_at"], sdt) + 1 < \
+                        _secs_between(timed[1]["filled_at"], sdt):
                     match = timed[0]
                 else:
                     skipped.append({**s, "_why": f"{len(candidates)} ambiguous fills"})
