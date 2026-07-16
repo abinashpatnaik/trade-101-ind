@@ -598,6 +598,76 @@ class ZerodhaConnector:
             logger.error("Failed to place MARKET order for %s: %s", symbol, exc)
             return None
 
+    def get_order_fill_price(self, order_id: str, max_wait: float = 3.0) -> Optional[float]:
+        """
+        Return the actual average fill price for *order_id* from Kite.
+
+        Our market orders are simulated as LIMIT orders, which usually fill
+        promptly but not synchronously. Poll the order's history until it is
+        COMPLETE with a positive average_price. Returns None if it does not
+        complete within *max_wait* seconds (caller falls back to another
+        authoritative source rather than a live quote).
+        """
+        if not self.kite or not order_id:
+            return None
+        deadline = time.monotonic() + max_wait
+        while True:
+            try:
+                history = self.kite.order_history(order_id)
+                if history:
+                    last = history[-1]
+                    status = str(last.get("status", "")).upper()
+                    avg = last.get("average_price")
+                    if status == "COMPLETE" and avg and float(avg) > 0:
+                        return float(avg)
+                    if status in ("REJECTED", "CANCELLED"):
+                        logger.warning("Kite order %s ended %s with no fill.", order_id, status)
+                        return None
+            except Exception as exc:
+                logger.error("Failed to fetch fill price for Kite order %s: %s", order_id, exc)
+                return None
+            if time.monotonic() >= deadline:
+                logger.warning("Fill price for Kite order %s not available after %.1fs.", order_id, max_wait)
+                return None
+            time.sleep(0.2)
+
+    def get_last_fill_price(self, symbol: str, side: str = "sell") -> Optional[float]:
+        """
+        Return the average fill price of the most recent COMPLETE *side* order
+        for *symbol* from today's Kite order book.
+
+        Authoritative exit price when the position was closed by something other
+        than our own close_position() call. NOTE: Kite's ``orders()`` only
+        returns the CURRENT day's orders, so this cannot resolve fills from
+        prior sessions (fine for same-day exit recording). Returns None if no
+        matching completed order is found.
+        """
+        if not self.kite:
+            return None
+        want = "SELL" if side.lower() == "sell" else "BUY"
+        tradingsymbol = symbol.split(".")[0]
+        try:
+            orders = self.kite.orders()
+            best = None
+            for o in orders:
+                if str(o.get("status", "")).upper() != "COMPLETE":
+                    continue
+                if o.get("tradingsymbol") != tradingsymbol:
+                    continue
+                if str(o.get("transaction_type", "")).upper() != want:
+                    continue
+                avg = o.get("average_price")
+                if avg is None or float(avg) <= 0:
+                    continue
+                ts = o.get("order_timestamp")
+                if best is None or (ts and best[0] and ts > best[0]):
+                    best = (ts, float(avg))
+            if best is not None:
+                return best[1]
+        except Exception as exc:
+            logger.error("Failed to fetch last %s fill for %s from Kite: %s", side, symbol, exc)
+        return None
+
     def place_stop_order(self, symbol: str, action: str, quantity: int, stop_price: float) -> Optional[str]:
         """
         Place a stop-loss market order (SL-M) on NSE.
