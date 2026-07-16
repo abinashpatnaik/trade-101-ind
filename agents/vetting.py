@@ -50,6 +50,7 @@ class VettingAgent(BaseAgent):
         from price_feed import PriceFeed
         from trend_engine import TrendEngine
         from decision_engine import DecisionEngine
+        from ai_validator import AIValidator
         from db import TradingDB
 
         self.session = MarketSession()
@@ -61,6 +62,11 @@ class VettingAgent(BaseAgent):
         )
         self.trend_engine = TrendEngine()
         self.decision_engine = DecisionEngine()
+        # Score backtest bars with the same ML model the live system uses so the
+        # screen tests the live AI-driven entry path (requires AI_VALIDATION_ENABLED
+        # + AI_PRIMARY_DRIVER in this container's env; degrades to the classic path
+        # if models are unavailable).
+        self.ai_validator = AIValidator()
         self.db = TradingDB()  # read-only usage
         self._vet_lock = threading.Lock()
 
@@ -167,14 +173,14 @@ class VettingAgent(BaseAgent):
                         self.logger.info("BLOCKED %s — %s", symbol, reason)
                         continue
 
-                    result = replay(symbol, df, self.decision_engine, self.trend_engine, params)
+                    result = replay(symbol, df, self.decision_engine, self.trend_engine, params, self.ai_validator)
                 except Exception as exc:
                     self.logger.warning("Vet replay failed for %s (PASS by default): %s", symbol, exc)
                     approved.append(symbol)
                     report[symbol] = {"verdict": "PASS", "error": str(exc)}
                     continue
 
-                v = verdict(result, cfg.ev_threshold_pct)
+                v = verdict(result, cfg.ev_threshold_pct, getattr(cfg, "min_backtest_trades", 0))
                 report[symbol] = {
                     "verdict": v,
                     "n_trades": result.n_trades,

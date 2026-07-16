@@ -104,6 +104,10 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - HC_AGENT=vetting
       - TZ=Asia/Kolkata
+      # Match the live trader's entry path so the backtest screen tests the
+      # ML-driven strategy that actually trades, not the classic trend path.
+      - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-true}
+      - AI_PRIMARY_DRIVER=${AI_PRIMARY_DRIVER:-true}
 
   strategy-in:
     <<: *agent-base
@@ -192,6 +196,10 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - HC_AGENT=vetting
       - TZ=America/New_York
+      # Match the live trader's entry path so the backtest screen tests the
+      # ML-driven strategy that actually trades, not the classic trend path.
+      - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-true}
+      - AI_PRIMARY_DRIVER=${AI_PRIMARY_DRIVER:-true}
 
   strategy-us:
     <<: *agent-base

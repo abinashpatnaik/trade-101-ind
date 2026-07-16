@@ -172,6 +172,11 @@ class VettingConfig:
     backtest_interval: str = "5m"
     # Block a symbol when its simulated total return is below this threshold
     ev_threshold_pct: float = 0.0
+    # Require at least this many backtest trades to APPROVE a symbol; below it,
+    # block rather than pass on absence of evidence. 0 keeps the original
+    # "zero trades is a neutral PASS" behavior (raise deliberately after
+    # observing approval/block rates on the ML-aligned backtest).
+    min_backtest_trades: int = 0
     # Live-accuracy blocklist
     accuracy_lookback_sessions: int = 5
     accuracy_window_trades: int = 10
