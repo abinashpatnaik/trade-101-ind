@@ -266,6 +266,44 @@ class TradingDB:
                 "totalPnl": row["total_pnl"],
             }
 
+    def get_realized_pnl(
+        self,
+        since_date: Optional[str] = None,
+        mode: Optional[str] = None,
+    ) -> Dict[str, float]:
+        """
+        Aggregate realised P&L across all SELL trades (optionally since a date
+        and/or for a given mode). Rows with a NULL pnl (fill price unknown) are
+        counted separately so callers can tell reconciliation gaps apart from a
+        genuinely flat day.
+
+        Returns dict with realizedPnl, sellCount, unknownCount.
+        """
+        clauses: List[str] = ["action = 'SELL'"]
+        params: List[Any] = []
+        if since_date:
+            clauses.append("date >= ?")
+            params.append(since_date)
+        if mode:
+            clauses.append("mode = ?")
+            params.append(mode)
+        where = f"WHERE {' AND '.join(clauses)}"
+
+        with self._conn() as conn:
+            row = conn.execute(
+                f"""SELECT
+                    COALESCE(SUM(pnl), 0) as realized_pnl,
+                    COUNT(*) as sell_count,
+                    COALESCE(SUM(CASE WHEN pnl IS NULL THEN 1 ELSE 0 END), 0) as unknown_count
+                FROM trades {where}""",
+                params,
+            ).fetchone()
+            return {
+                "realizedPnl": row["realized_pnl"],
+                "sellCount": row["sell_count"],
+                "unknownCount": row["unknown_count"],
+            }
+
     # ------------------------------------------------------------------
     # Signals
     # ------------------------------------------------------------------
