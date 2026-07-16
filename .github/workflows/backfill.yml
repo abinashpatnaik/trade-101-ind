@@ -1,0 +1,41 @@
+name: Backfill Historical PnL
+
+# Manually-triggered maintenance job: runs backfill_pnl.py inside the running
+# US trading container on Hetzner to correct historical fabricated exit P&L.
+# Dry-run by default — set apply=true only after reviewing a dry-run run.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Write changes? Leave false for a dry-run."
+        type: boolean
+        default: false
+      since:
+        description: "Only correct SELLs on/after this date (YYYY-MM-DD). Blank = all."
+        type: string
+        default: ""
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          known_hosts: unnecessary
+          if_key_exists: replace
+
+      - name: Run backfill on Hetzner
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
+          APPLY: ${{ inputs.apply }}
+          SINCE: ${{ inputs.since }}
+        run: |
+          ARGS=""
+          if [ -n "$SINCE" ]; then ARGS="--since $SINCE"; fi
+          if [ "$APPLY" = "true" ]; then ARGS="$ARGS --apply"; fi
+          echo "Running: python backfill_pnl.py $ARGS (apply=$APPLY)"
+          ssh -o StrictHostKeyChecking=no "$HETZNER_USERNAME@$HETZNER_HOST" \
+            "docker exec us-trading-agent python backfill_pnl.py $ARGS"
