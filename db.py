@@ -316,6 +316,21 @@ class TradingDB:
         for sig in signals:
             self.upsert_signal(sig)
 
+    def delete_stale_signals(self, max_age_hours: int = 24) -> int:
+        """
+        Remove signal rows not refreshed within *max_age_hours*.
+
+        Signals persist per-symbol across sessions; without pruning, the
+        dashboard's confidence-sorted view surfaces rows (and hold reasons
+        like "max positions reached") from days-old market states.
+        """
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM signals WHERE updated_at < datetime('now', ?)",
+                (f"-{int(max_age_hours)} hours",),
+            )
+            return cur.rowcount
+
     def get_signals(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get the latest signals, sorted by absolute trend score."""
         with self._conn() as conn:

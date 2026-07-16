@@ -73,10 +73,16 @@ class RiskConfig:
     max_open_positions: int = 3
     allow_short_selling: bool = False
     trailing_stop_pct: float = field(default_factory=lambda: float(os.getenv("TRAILING_STOP_PCT", "0.015")))
-    # Profit-lock trailing stop: minimum CURRENT gain to activate
-    profit_lock_threshold: float = 0.005    # +0.5% (US default, floor for ATR-dynamic)
+    # Profit-lock trailing stop: minimum CURRENT gain to activate.
+    # Small-account tuning: locking gains below round-trip cost converts
+    # gross wins into net losses, so the floor sits above typical friction.
+    profit_lock_threshold: float = 0.0075   # +0.75% (US default, floor for ATR-dynamic)
     # Base trailing gap for small gains (widest gap in the graduated table)
     trailing_gap_base: float = 0.008        # 0.8% (US default)
+    # US regulatory: max same-day round trips per rolling 5 business days for
+    # sub-$25K margin accounts (Pattern Day Trader rule). Entries are blocked
+    # when no day-trade slot is available so protective exits never get stuck.
+    max_day_trades_per_5d: int = field(default_factory=lambda: int(os.getenv("MAX_DAY_TRADES_5D", "3")))
 
 
 @dataclass
@@ -119,6 +125,9 @@ class SignalConfig:
     buy_threshold: float = 0.48
     sell_threshold: float = -0.35
     ml_buy_threshold: float = 0.55
+    # Cost gate: expected move (2×ATR as % of price) must be at least this
+    # multiple of the estimated round-trip cost, or the BUY is blocked.
+    min_edge_multiple: float = field(default_factory=lambda: float(os.getenv("MIN_EDGE_MULTIPLE", "2.0")))
 
 
 @dataclass
@@ -146,6 +155,62 @@ class AIConfig:
 
 
 @dataclass
+class BusConfig:
+    """Redis message-bus settings shared by all agents."""
+    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://redis:6379/0"))
+    heartbeat_period_seconds: int = 30
+    heartbeat_ttl_seconds: int = 90
+    # New BUYs are suppressed after the bus has been unreachable this long
+    # (blocklist/vetting data may be stale — fail toward not entering).
+    buy_suppress_after_seconds: int = 90
+
+
+@dataclass
+class VettingConfig:
+    """Profit-vetting agent settings (backtest screen + live-accuracy blocklist)."""
+    backtest_lookback_period: str = "10d"
+    backtest_interval: str = "5m"
+    # Block a symbol when its simulated total return is below this threshold
+    ev_threshold_pct: float = 0.0
+    # Live-accuracy blocklist
+    accuracy_lookback_sessions: int = 5
+    accuracy_window_trades: int = 10
+    min_trades_to_judge: int = 3
+    min_hit_rate: float = 0.40
+    consecutive_stop_losses_to_block: int = 2
+    # Liquidity screen: block symbols whose MEDIAN daily traded value over the
+    # backtest lookback is below this (illiquid names = wide spreads that the
+    # slippage model can't capture). Overridden per market profile.
+    min_daily_turnover: float = 50_000_000.0
+
+
+@dataclass
+class StrategyConfig:
+    """Market-regime strategy agent settings."""
+    index_symbol: str = "^NSEI"          # Overridden per market profile
+    classify_interval_minutes: int = 15
+    adx_trending_threshold: float = 25.0
+    atr_volatile_pct: float = 0.025      # Daily ATR% above this => VOLATILE
+    # Require this many consecutive agreeing reads before switching regime
+    hysteresis_reads: int = 2
+    # A directive older than this is ignored by the trader
+    directive_stale_minutes: int = 30
+
+
+@dataclass
+class OrchestratorConfig:
+    """Primary-agent supervision settings."""
+    tick_seconds: int = 20
+    train_daily_minutes_before_open: int = 90
+    strategy_minutes_before_open: int = 10
+    intraday_scan_interval_minutes: int = 60
+    max_restarts_per_agent_per_day: int = 3
+    # Suppress trader restarts for this long after session close
+    # (the trader exits by design post-session; docker revives it).
+    trader_restart_suppress_seconds: int = 300
+
+
+@dataclass
 class Config:
     """Master configuration object."""
     kite: KiteConfig
@@ -159,6 +224,10 @@ class Config:
     signal: SignalConfig
     agent: AgentConfig
     ai: AIConfig
+    bus: BusConfig = field(default_factory=BusConfig)
+    vetting: VettingConfig = field(default_factory=VettingConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
 
     eod_api_key: str = field(default_factory=lambda: os.getenv("EOD_API_KEY", ""))
     gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
@@ -200,15 +269,20 @@ def get_india_config() -> Config:
         ),
         risk=RiskConfig(
             stop_loss_pct=0.025,            # -2.5% hard stop floor (ATR-dynamic widens further)
-            profit_lock_threshold=0.005,    # +0.5% before profit-lock activates
+            profit_lock_threshold=0.010,    # +1.0% before profit-lock activates (covers IN friction)
             trailing_gap_base=0.010,        # 1.0% trailing gap (IN mid-caps are more volatile)
+            # Small-account concentration: 2 larger positions amortise the
+            # fixed DP charge far better than 3 tiny ones.
+            max_open_positions=2,
         ),
-        wallet=WalletConfig(min_trade_value=1000.0),
+        wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
         signal=SignalConfig(),
         agent=AgentConfig(),
-        ai=AIConfig()
+        ai=AIConfig(),
+        strategy=StrategyConfig(index_symbol="^NSEI"),
+        vetting=VettingConfig(min_daily_turnover=50_000_000.0),   # ₹5 crore/day median
     )
 
 
@@ -243,7 +317,9 @@ def get_us_config() -> Config:
         sentiment=SentimentConfig(),
         signal=SignalConfig(),
         agent=AgentConfig(),
-        ai=AIConfig()
+        ai=AIConfig(),
+        strategy=StrategyConfig(index_symbol="SPY"),
+        vetting=VettingConfig(min_daily_turnover=5_000_000.0),    # $5M/day median
     )
 
 

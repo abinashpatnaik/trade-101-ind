@@ -568,14 +568,18 @@ class ZerodhaConnector:
             
             exchange_code = "BSE" if symbol.endswith(".BO") else "NSE"
             
-            # Zerodha blocks plain MARKET orders for many stocks. 
-            # We simulate a MARKET order using a LIMIT order with a 2% execution buffer.
+            # Zerodha blocks plain MARKET orders for many stocks.
+            # We simulate a MARKET order using a LIMIT order with a buffer.
+            # BUY: tight 0.4% — paying 2% over LTP on entry silently consumed
+            #      the strategy's ~1% profit target; better to miss the fill.
+            # SELL: wide 2% — exits (stops, EOD) must fill, price protection
+            #       is secondary when getting out.
             ltp = self.get_current_price(symbol)
             if not ltp or ltp <= 0:
                 logger.error("Cannot simulate MARKET order for %s: LTP unavailable", symbol)
                 return None
-                
-            buffer = 1.02 if action.upper() == "BUY" else 0.98
+
+            buffer = 1.004 if action.upper() == "BUY" else 0.98
             limit_price = round(ltp * buffer, 1)
             
             order_id = self.kite.place_order(

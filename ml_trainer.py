@@ -137,13 +137,17 @@ def train_model():
         future_periods=5,
         target_return=0.01
     )
-    # Train DAY model (5m bars, 60 days, >0.2% in 12 periods)
+    # Train DAY model (5m bars, 60 days, >0.75% within 36 periods / 3 hours).
+    # Cost-aware label: the old +0.2%/1h target taught the model to find
+    # moves SMALLER than round-trip friction (~0.25-1% on small accounts) —
+    # a perfectly accurate model would still lose money. The label must be a
+    # move worth taking after costs.
     day_success = _train_single_model(
         mode="day",
         period="60d",
         interval="5m",
-        future_periods=12,
-        target_return=0.002
+        future_periods=36,
+        target_return=0.0075
     )
     return swing_success and day_success
 
@@ -284,7 +288,9 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     clf.fit(X, y)
     
     os.makedirs(os.path.dirname(model_path_local), exist_ok=True)
-    joblib.dump(clf, model_path_local)
+    # Atomic write: the trader may reload this file at any moment
+    joblib.dump(clf, model_path_local + ".tmp")
+    os.replace(model_path_local + ".tmp", model_path_local)
     logger.info(f"[{mode.upper()}] Model successfully saved to {model_path_local}")
     
     # Calculate dynamic thresholds from test-set predictions only (honest thresholds)
@@ -319,8 +325,10 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     logger.info(f"[{mode.upper()}] Per-symbol threshold range: {min(all_thresholds):.4f} - {max(all_thresholds):.4f}")
             
     thresholds_path = os.path.join(os.path.dirname(__file__), "data", f"ml_thresholds_{ACTIVE_MARKET}_{mode}.json")
-    with open(thresholds_path, 'w') as f:
+    # Atomic write: decision_engine hot-reloads this file on mtime change
+    with open(thresholds_path + ".tmp", 'w') as f:
         json.dump(thresholds, f, indent=4)
+    os.replace(thresholds_path + ".tmp", thresholds_path)
     logger.info(f"[{mode.upper()}] Saved dynamic thresholds to {thresholds_path}")
     
     # Log feature importances to understand what the model actually learned

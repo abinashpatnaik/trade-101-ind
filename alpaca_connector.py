@@ -178,6 +178,22 @@ class AlpacaConnector:
             logger.error("Failed to get Alpaca account summary: %s", exc)
             return {}
 
+    def is_margin_account(self) -> bool:
+        """
+        True if this account trades on margin (and is therefore subject to
+        the Pattern Day Trader rule). Cash accounts are PDT-exempt — Alpaca
+        leaves ``pattern_day_trader``/``daytrade_count`` as None for them and
+        sets ``multiplier`` to 1 (vs 2/4 for margin).
+        """
+        if not self.trading_client:
+            return False
+        try:
+            account = self.trading_client.get_account()
+            return account.pattern_day_trader is not None or float(account.multiplier) > 1.0
+        except Exception as exc:
+            logger.warning("Failed to determine Alpaca account type: %s — assuming margin (safer).", exc)
+            return True
+
     def get_positions(self) -> Optional[Dict[str, Dict]]:
         if not self.trading_client:
             return None
@@ -227,7 +243,7 @@ class AlpacaConnector:
     def place_market_order(self, symbol: str, action: str, quantity: float, **kwargs) -> Optional[str]:
         if not self.trading_client:
             return None
-            
+
         if action.upper() == "SELL" and not config.risk.allow_short_selling:
             positions = self.get_positions()
             held_qty = float(positions.get(symbol, {}).get("quantity", 0))
@@ -236,6 +252,13 @@ class AlpacaConnector:
                 return None
             if quantity > held_qty:
                 quantity = held_qty
+
+        # Extended-hours close (e.g. pre-market dump protection): Alpaca rejects
+        # MARKET orders outside regular hours entirely — must be a LIMIT order
+        # with extended_hours=True. Previously this flag was silently dropped
+        # (absorbed by **kwargs, never read), so these calls no-op'd.
+        if kwargs.get("outsideRth"):
+            return self._place_extended_hours_limit_order(symbol, action, quantity)
 
         try:
             side = OrderSide.BUY if action.upper() == "BUY" else OrderSide.SELL
@@ -250,6 +273,53 @@ class AlpacaConnector:
             return str(order.id)
         except Exception as exc:
             logger.error("Failed to place MARKET order for %s: %s", symbol, exc)
+            return None
+
+    def _place_extended_hours_limit_order(self, symbol: str, action: str, quantity: float) -> Optional[str]:
+        """
+        Place a LIMIT order eligible for pre/post-market execution.
+
+        Alpaca requires extended_hours orders to be LIMIT + DAY (market, stop,
+        and trailing-stop orders are all rejected outside regular hours). We
+        simulate a marketable order with a buffer around the latest quote,
+        the same pattern zerodha_connector.py uses for its LIMIT-as-MARKET
+        orders. NOTE: on the free/IEX data feed, quotes are stale outside
+        regular hours (IEX itself is closed) — this can still fail to get a
+        useful reference price; that is a data-plan limitation, not a bug in
+        this method, and is handled by failing safe (returns None).
+        """
+        ref_price = self.get_current_price(symbol)
+        if not ref_price or ref_price <= 0:
+            logger.error(
+                "Cannot place extended-hours order for %s: no reference price "
+                "available (IEX feed has no quotes outside regular hours).",
+                symbol,
+            )
+            return None
+
+        # Sell: buffer down to raise fill odds; buy: buffer up. 1% is wider
+        # than the regular-hours buffer since extended-hours spreads are wider.
+        buffer = 0.99 if action.upper() == "SELL" else 1.01
+        limit_price = round(ref_price * buffer, 2)
+
+        try:
+            side = OrderSide.BUY if action.upper() == "BUY" else OrderSide.SELL
+            req = LimitOrderRequest(
+                symbol=symbol,
+                qty=round(quantity, 4),
+                side=side,
+                time_in_force=TimeInForce.DAY,
+                limit_price=limit_price,
+                extended_hours=True,
+            )
+            order = self.trading_client.submit_order(order_data=req)
+            logger.info(
+                "Alpaca EXTENDED-HOURS LIMIT order placed: %s %.4f %s @ %.2f (ref=%.2f), ID: %s",
+                action, quantity, symbol, limit_price, ref_price, order.id,
+            )
+            return str(order.id)
+        except Exception as exc:
+            logger.error("Failed to place extended-hours LIMIT order for %s: %s", symbol, exc)
             return None
 
     def place_stop_order(self, symbol: str, action: str, quantity: int, stop_price: float) -> Optional[str]:

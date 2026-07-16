@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from config import config, ACTIVE_MARKET
+from trading_costs import round_trip_cost_pct
 from trend_engine import TrendSignal
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,16 @@ class DecisionEngine:
     ... )
     """
 
+    #: Directive keys the strategy agent may override — anything else is ignored.
+    DIRECTIVE_KEYS = frozenset({
+        "buy_threshold",
+        "ml_buy_threshold_delta",
+        "sniper_min_adx",
+        "trailing_gap_multiplier",
+        "position_size_multiplier",
+        "max_open_positions",
+    })
+
     def __init__(self) -> None:
         self._risk = config.risk
         self._sig = config.signal
@@ -109,12 +120,44 @@ class DecisionEngine:
         # Cooldown: {symbol: timestamp} — prevents re-buying a stock too soon after a loss
         self._sell_cooldowns: Dict[str, float] = {}
         self._cooldown_seconds: int = int(os.getenv("SELL_COOLDOWN_MINUTES", "30")) * 60
-        
+        # Strategy-agent parameter overlay; empty dict = exact default behavior
+        self._directive: Dict[str, float] = {}
+
         self.ml_thresholds: Dict[str, Dict[str, float]] = {"day": {}, "swing": {}}
         self._thresholds_mtime: Dict[str, float] = {"day": 0.0, "swing": 0.0}
         self._load_ml_thresholds()
-                    
+
         logger.debug("DecisionEngine initialised (cooldown=%ds).", self._cooldown_seconds)
+
+    # ------------------------------------------------------------------
+    # Strategy directive overlay
+    # ------------------------------------------------------------------
+
+    def apply_directive(self, params: Dict) -> None:
+        """
+        Overlay regime parameters published by the strategy agent.
+
+        Unknown keys are dropped. An empty/missing directive leaves the
+        engine in its exact default (config-driven) behavior.
+        """
+        cleaned = {k: v for k, v in (params or {}).items() if k in self.DIRECTIVE_KEYS}
+        if cleaned != self._directive:
+            logger.info("Strategy directive applied: %s", cleaned)
+        self._directive = cleaned
+
+    def clear_directive(self) -> None:
+        if self._directive:
+            logger.info("Strategy directive cleared — reverting to config defaults.")
+        self._directive = {}
+
+    def _buy_threshold(self) -> float:
+        return float(self._directive.get("buy_threshold", self._sig.buy_threshold))
+
+    def _sniper_min_adx(self) -> float:
+        return float(self._directive.get("sniper_min_adx", 25.0))
+
+    def _max_open_positions(self) -> int:
+        return int(self._directive.get("max_open_positions", self._risk.max_open_positions))
 
     def _load_ml_thresholds(self) -> None:
         """Loads ML thresholds from disk, reloading if modified."""
@@ -146,14 +189,14 @@ class DecisionEngine:
         
         # 1. Per-symbol threshold (training symbols only)
         if clean_sym in thresholds:
-            return thresholds[clean_sym]
-        
+            base = thresholds[clean_sym]
         # 2. Global dynamic threshold (covers sector-scanner picks)
-        if "_GLOBAL_" in thresholds:
-            return thresholds["_GLOBAL_"]
-        
+        elif "_GLOBAL_" in thresholds:
+            base = thresholds["_GLOBAL_"]
         # 3. Static fallback
-        return self._sig.ml_buy_threshold
+        else:
+            base = self._sig.ml_buy_threshold
+        return base + float(self._directive.get("ml_buy_threshold_delta", 0.0))
 
     def register_cooldown(self, symbol: str, is_loss: bool) -> None:
         """
@@ -185,6 +228,15 @@ class DecisionEngine:
             + self._sent.sentiment_weight * sentiment_score
         )
         return float(max(-1.0, min(1.0, raw)))
+
+    def compute_classic_score(
+        self,
+        overall_trend: float,
+        sentiment_score: float,
+    ) -> float:
+        """Public alias of the classic trend+sentiment score (used by the
+        vetting agent's backtest simulator)."""
+        return self._compute_combined_score(overall_trend, sentiment_score)
 
     def _compute_quantity(
         self,
@@ -224,6 +276,9 @@ class DecisionEngine:
         price_qty = max_notional / current_price
         qty = min(atr_qty, price_qty)
 
+        # Strategy-directive sizing (e.g. half-size in volatile regimes)
+        qty *= float(self._directive.get("position_size_multiplier", 1.0))
+
         import config
         if config.ACTIVE_MARKET == "IN":
             import math
@@ -236,7 +291,7 @@ class DecisionEngine:
 
     def _has_capacity(self, open_positions: Dict) -> bool:
         """Return True if the portfolio can take on another position."""
-        return len(open_positions) < self._risk.max_open_positions
+        return len(open_positions) < self._max_open_positions()
 
     def _can_afford(
         self,
@@ -355,7 +410,7 @@ class DecisionEngine:
                 trend_signal.overall_trend, sentiment_score
             )
             confidence = round(abs(combined_score), 4)
-            buy_condition = combined_score >= self._sig.buy_threshold
+            buy_condition = combined_score >= self._buy_threshold()
             sell_condition = combined_score <= self._sig.sell_threshold
             logger.debug(
                 "Decision input — %s: trend=%.4f sentiment=%.4f combined=%.4f "
@@ -364,7 +419,7 @@ class DecisionEngine:
                 trend_signal.overall_trend,
                 sentiment_score,
                 combined_score,
-                self._sig.buy_threshold,
+                self._buy_threshold(),
                 self._sig.sell_threshold,
             )
 
@@ -403,12 +458,15 @@ class DecisionEngine:
             # --- Sniper Mode: ADX trend strength filter ---
             # Only trade in clear trends (ADX > 25). Protects against
             # whipsaw losses in choppy/sideways markets.
+            # Applies in EVERY mode: the ML driver picks candidates, but a
+            # trade still needs trend + volume confirmation (AND, not OR).
             adx = getattr(trend_signal, 'adx', 0.0)
-            if not is_ai_driver and adx > 0 and adx < 25:
+            min_adx = self._sniper_min_adx()
+            if adx > 0 and adx < min_adx:
                 logger.info(
-                    "BUY blocked for %s — ADX=%.1f (weak trend, need >25). "
+                    "BUY blocked for %s — ADX=%.1f (weak trend, need >%.0f). "
                     "Protecting capital by avoiding choppy market.",
-                    symbol, adx,
+                    symbol, adx, min_adx,
                 )
                 return Decision(
                     action="HOLD",
@@ -427,7 +485,7 @@ class DecisionEngine:
             # Only trade when volume is above average (>1.5x). Low volume
             # moves often reverse — high volume confirms conviction.
             vol_ratio = getattr(trend_signal, 'volume_ratio', 1.0)
-            if not is_ai_driver and vol_ratio > 0 and vol_ratio < 1.5:
+            if vol_ratio > 0 and vol_ratio < 1.5:
                 logger.info(
                     "BUY blocked for %s — volume_ratio=%.2f (need >1.5x avg). "
                     "No market conviction behind this move.",
@@ -564,6 +622,35 @@ class DecisionEngine:
                 budget_qty = max(1, int(remaining_budget / current_price))
                 quantity = min(quantity, budget_qty)
 
+            # --- Cost gate: the expected move must clear round-trip friction ---
+            # Expected move proxy is 2×ATR (the same scale the stop uses); the
+            # trade must offer at least min_edge_multiple × estimated cost, or
+            # the position's edge is smaller than what the broker/exchange take.
+            notional = quantity * current_price
+            cost_pct = round_trip_cost_pct(notional, overnight=False)
+            expected_move_pct = (trend_signal.atr * 2.0) / current_price if current_price > 0 else 0.0
+            required_pct = self._sig.min_edge_multiple * cost_pct
+            if notional > 0 and expected_move_pct < required_pct:
+                logger.info(
+                    "BUY blocked for %s — expected move %.2f%% < %.1fx round-trip "
+                    "cost %.2f%% (notional=%.0f). Edge smaller than friction.",
+                    symbol, expected_move_pct * 100, self._sig.min_edge_multiple,
+                    cost_pct * 100, notional,
+                )
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"BUY signal (score={combined_score:.3f}) but expected move "
+                        f"{expected_move_pct*100:.2f}% is below {self._sig.min_edge_multiple:.0f}x "
+                        f"round-trip cost {cost_pct*100:.2f}% — not worth the friction."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
+                )
+
             if not self._can_afford(quantity, current_price, available_funds):
                 return Decision(
                     action="HOLD",
@@ -592,8 +679,11 @@ class DecisionEngine:
                 current_price * (1.0 + self._risk.take_profit_pct), 4
             )
             
-            # Dynamic trailing stop pct (same ATR basis, bounded 1% to 4%)
-            dynamic_trailing_stop_pct = max(0.01, min(0.04, atr_pct))
+            # Dynamic trailing stop pct (same ATR basis, bounded 1% to 4%),
+            # scaled by the strategy directive (wider in trends, tighter in ranges)
+            trailing_mult = float(self._directive.get("trailing_gap_multiplier", 1.0))
+            dynamic_trailing_stop_pct = max(0.01, min(0.04, atr_pct)) * trailing_mult
+            dynamic_trailing_stop_pct = max(0.005, min(0.06, dynamic_trailing_stop_pct))
 
             reason = (
                 f"BUY signal — combined_score={combined_score:.3f} "
@@ -701,7 +791,7 @@ class DecisionEngine:
             reason_str = (
                 f"No signal — combined_score={combined_score:.3f} is within "
                 f"hold band [{self._sig.sell_threshold:.2f}, "
-                f"{self._sig.buy_threshold:.2f}]."
+                f"{self._buy_threshold():.2f}]."
             )
 
         return Decision(
