@@ -1,4 +1,4 @@
-name: Deploy Trading Agent to EC2
+name: Deploy Trading Agent to Hetzner
 
 on:
   push:
@@ -14,20 +14,20 @@ jobs:
       - name: Install SSH Key
         uses: shimataro/ssh-key-action@v2
         with:
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
           known_hosts: unnecessary # Will bypass host verification in following commands
           if_key_exists: replace
 
-      - name: Deploy Files to EC2
+      - name: Deploy Files to Hetzner
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}${{ vars.EC2_HOST }}
-          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}${{ vars.EC2_USERNAME }}
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='logs' --exclude='data' ./ $EC2_USERNAME@$EC2_HOST:~/trading-agent/
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='logs' --exclude='data' ./ $HETZNER_USERNAME@$HETZNER_HOST:~/trading-agent/
 
-      - name: Start Container Stack on EC2
+      - name: Start Container Stack on Hetzner
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}${{ vars.EC2_HOST }}
-          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}${{ vars.EC2_USERNAME }}
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
         run: |
-          ssh -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST "mkdir -p ~/trading-agent/logs ~/trading-agent/data && cd ~/trading-agent && docker-compose kill && docker-compose rm -f && docker-compose up -d --build"
+          ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "mkdir -p ~/trading-agent/logs ~/trading-agent/data && cd ~/trading-agent && docker compose kill && docker compose rm -f && docker compose up -d --build"
