@@ -186,6 +186,29 @@ class TradingDB:
             )
             return cursor.lastrowid
 
+    def update_trade_price_pnl(
+        self,
+        trade_id: int,
+        price: float,
+        pnl: Optional[float],
+    ) -> None:
+        """
+        Correct a recorded trade's execution price, notional, and P&L in place.
+
+        Used by the historical backfill to replace fabricated (quote-derived)
+        exit prices with real broker fills. Quantity is preserved; notional is
+        recomputed from the corrected price.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE trades
+                   SET price = ?,
+                       notional = round(quantity * ?, 2),
+                       pnl = ?
+                   WHERE id = ?""",
+                (price, price, round(pnl, 2) if pnl is not None else None, trade_id),
+            )
+
     def get_trades(
         self,
         date: Optional[str] = None,
