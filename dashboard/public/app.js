@@ -380,9 +380,20 @@ function renderPositions(positions) {
       <td class="right num live-pnl" data-sym="${esc(p.symbol)}" data-entry="${p.entryPrice}" data-qty="${p.quantity}">
         <span class="${dir}">${arrow} ${fmtSigned(p.pnl)} (${fmtSignedPct(p.pnlPct)})</span>
       </td>
-      <td class="right num">${fmtMoney(p.trailingStop ?? p.stopLoss)}</td>
+      <td class="right num">${fmtMoney(p.trailingStop ?? p.stopLoss)}${stopTag(p)}</td>
     </tr>`;
   }).join("");
+}
+
+// Label whether the shown stop is the live trailing lock or the fixed hard stop,
+// so a stop above/below the price is never mistaken for a missed trigger.
+function stopTag(p) {
+  if (p.trailingActive === undefined) return "";
+  const label = p.trailingActive ? "trail" : "hard";
+  const title = p.trailingActive
+    ? "Active trailing stop — sells if price falls to this level"
+    : "Hard stop — trailing lock inactive until >profit threshold; only this protects the position";
+  return ` <span class="badge" style="font-size:0.6rem;opacity:0.7;" title="${title}">${label}</span>`;
 }
 
 function patchPositionPrice(symbol, price, wentUp) {
