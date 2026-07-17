@@ -79,6 +79,14 @@ class PortfolioTracker:
         # trigger time alongside the reason so the recorded SELL uses the actual
         # fill rather than a live quote fetched later at sync time.
         self.pending_fill_prices: Dict[str, float] = {}
+        # Consecutive syncs a tracked position has been missing from the broker
+        # snapshot without any sell evidence. A transient/partial snapshot (e.g.
+        # Zerodha's holdings API flaking at market open) must not be mistaken for
+        # a real close, so we require several misses before reconciling.
+        self._missing_syncs: Dict[str, int] = {}
+        # Consecutive missing syncs (with no sell evidence) before a vanished
+        # position is reconciled as closed.
+        self._SYNC_CLOSE_GRACE: int = 3
         self.daily_pnl: float = 0.0            # P&L since session start (INR)
 
         # Session tracking
@@ -233,6 +241,10 @@ class PortfolioTracker:
                     else:
                         # Detect natively closed positions (or fulfilled agent sell orders)
                         for symbol, old_pos in list(self.open_positions.items()):
+                            if symbol in positions:
+                                # Still present — clear any pending missing streak.
+                                self._missing_syncs.pop(symbol, None)
+                                continue
                             if symbol not in positions:
                                 qty = float(old_pos.get("quantity", 0))
                                 avg_cost = float(old_pos.get("avg_cost", 0.0))
@@ -253,6 +265,32 @@ class PortfolioTracker:
                                     if callable(getter):
                                         fill_price = getter(symbol)
                                         price_source = "broker-order"
+
+                                # A position vanishing from the snapshot is only a
+                                # real close if there's EVIDENCE: our own pending
+                                # reason, or a completed broker SELL. Without either
+                                # it's almost always a transient/partial snapshot
+                                # (Zerodha holdings API flaking at open). Defer the
+                                # close for a few syncs instead of logging a phantom
+                                # BROKER_SYNC_CLOSE.
+                                has_evidence = (fill_price and fill_price > 0) or (symbol in self.pending_reasons)
+                                if not has_evidence:
+                                    missing = self._missing_syncs.get(symbol, 0) + 1
+                                    self._missing_syncs[symbol] = missing
+                                    if missing < self._SYNC_CLOSE_GRACE:
+                                        positions[symbol] = old_pos  # keep tracking
+                                        logger.debug(
+                                            "Position %s missing from broker snapshot "
+                                            "(%d/%d) with no sell evidence — deferring close.",
+                                            symbol, missing, self._SYNC_CLOSE_GRACE,
+                                        )
+                                        continue
+                                    logger.warning(
+                                        "Position %s gone %d syncs with no sell evidence — "
+                                        "recording reconciliation close (PnL unknown).",
+                                        symbol, missing,
+                                    )
+                                self._missing_syncs.pop(symbol, None)
 
                                 if fill_price and fill_price > 0:
                                     exit_price = fill_price
