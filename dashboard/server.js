@@ -769,6 +769,25 @@ app.get("/api/signals", async (_req, res) => {
 
     let signals = readSignals();
 
+    // Show ONLY today's vetted/approved symbols — the set the bot actually
+    // trades — so stale signals from previous sessions don't clutter the view.
+    // Falls back to showing everything if the vetting list is unavailable.
+    try {
+      const client = await getRedis();
+      if (client) {
+        const vetted = await redisJson(client, `${REDIS_NS}:state:vetted_targets`);
+        const session = await redisJson(client, `${REDIS_NS}:state:session`);
+        const sessionDate = session?.session_date || session?.date;
+        const dateOk = !sessionDate || !vetted?.session_date || vetted.session_date === sessionDate;
+        if (dateOk && Array.isArray(vetted?.approved) && vetted.approved.length) {
+          const approved = new Set(vetted.approved);
+          signals = signals.filter((s) => approved.has(s.symbol));
+        }
+      }
+    } catch (e) {
+      console.error("signals vetting-filter error (showing all):", e.message);
+    }
+
     signals = signals.map((s) => {
       return {
         ...s,
