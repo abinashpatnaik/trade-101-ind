@@ -570,14 +570,22 @@ class OrderExecutor:
                         current_price = float(pos.get("current_price", pos.get("avg_cost", 0)))
                     
                     if current_price > 0:
+                        # Give adopted/restored positions a real hard stop —
+                        # entry × (1 − stop_loss_pct) — instead of 0.0. Without
+                        # it the hard-stop check (which requires stop_loss_price
+                        # > 0) never fires, leaving the position with NO downside
+                        # protection whenever it's below the profit-lock
+                        # threshold (trailing inactive).
+                        entry_p = float(pos.get("avg_cost", current_price))
+                        hard_stop = round(entry_p * (1.0 - config.risk.stop_loss_pct), 2) if entry_p > 0 else 0.0
                         # Re-create OpenOrder entry for trailing stop processing
                         self._open_orders[symbol] = OpenOrder(
                             symbol=symbol,
                             entry_order_id=0, # Unknown from boot
                             order_type="BUY",
                             quantity=qty,
-                            entry_price=float(pos.get("avg_cost", current_price)),
-                            stop_loss_price=0.0,
+                            entry_price=entry_p,
+                            stop_loss_price=hard_stop,
                             take_profit_price=0.0,
                             is_fractional=True,
                             initial_trailing_pct=0.015,
@@ -585,7 +593,24 @@ class OrderExecutor:
                         )
                         self._trailing_high[symbol] = current_price
                         self._dump_state()
-                        logger.info("Restored software trailing stop tracker for %s at %.4f", symbol, current_price)
+                        logger.info(
+                            "Restored protective tracker for %s at %.4f (hard stop %.2f)",
+                            symbol, current_price, hard_stop,
+                        )
+                # Backfill a hard stop onto an already-tracked position that has
+                # none (e.g. holdings adopted before this fix, or a legacy 0.0
+                # stop) so it isn't left with only trailing protection.
+                else:
+                    existing = self._open_orders.get(symbol)
+                    if existing is not None and existing.stop_loss_price <= 0:
+                        entry_p = existing.entry_price or float(pos.get("avg_cost", 0))
+                        if entry_p > 0:
+                            existing.stop_loss_price = round(entry_p * (1.0 - config.risk.stop_loss_pct), 2)
+                            self._dump_state()
+                            logger.info(
+                                "Backfilled missing hard stop for %s: %.2f (entry %.2f).",
+                                symbol, existing.stop_loss_price, entry_p,
+                            )
 
         # Prune orphaned protective orders — entries with no matching broker
         # position. These arise from exchange-suffix flips (a stale SYMBOL.NS
