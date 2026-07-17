@@ -560,11 +560,18 @@ function renderTrades(trades) {
     if (isBuy) {
       detail = `<span class="num">Entry ${fmtMoney(t.price)} · qty ${t.quantity}</span>`;
     } else {
-      const pnl = parseFloat(t.pnl) || 0;
-      const dir = pnl >= 0 ? "up" : "down";
-      const arrow = pnl >= 0 ? "▲" : "▼";
       const reason = t.exit_reason ? ` <span class="badge" style="font-size:0.65rem;">${esc(String(t.exit_reason).replace(/_/g, " "))}</span>` : "";
-      detail = `<span class="num ${dir}">${arrow} ${fmtSigned(pnl)}</span> <span class="num" style="color:var(--muted)">@ ${fmtMoney(t.price)}</span>${reason}`;
+      const priceSpan = `<span class="num" style="color:var(--muted)">@ ${fmtMoney(t.price)}</span>`;
+      // A null P&L means the real fill couldn't be determined (e.g. a broker-sync
+      // reconciliation). Show "—" rather than a misleading green "+0.00".
+      if (t.pnl === null || t.pnl === undefined || t.pnl === "") {
+        detail = `<span class="num" style="color:var(--muted)" title="P&L unknown — recorded without a confirmed fill">—</span> ${priceSpan}${reason}`;
+      } else {
+        const pnl = parseFloat(t.pnl) || 0;
+        const dir = pnl >= 0 ? "up" : "down";
+        const arrow = pnl >= 0 ? "▲" : "▼";
+        detail = `<span class="num ${dir}">${arrow} ${fmtSigned(pnl)}</span> ${priceSpan}${reason}`;
+      }
     }
     return `<tr>
       <td class="num" style="color:var(--muted)">${esc(t.date ? `${t.date.slice(5)} ` : "")}${esc(t.time || "")}</td>
