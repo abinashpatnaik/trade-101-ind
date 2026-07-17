@@ -67,6 +67,13 @@ class OrderExecutor:
         # keyed by symbol. Consumed once by the caller so the recorded SELL uses
         # the actual fill price instead of a stale market quote.
         self._last_fill_price: Dict[str, float] = {}
+        # Consecutive syncs a protective order has had no matching broker
+        # position. Orphans (e.g. an exchange-suffix flip leaving a stale
+        # SYMBOL.NS alongside the real SYMBOL.BO) are pruned after a grace
+        # window so they don't linger or fire sells for positions that don't
+        # exist.
+        self._orphan_syncs: Dict[str, int] = {}
+        self._ORPHAN_GRACE: int = 3
         self._load_state()
         logger.debug("OrderExecutor initialised (trailing_stop=%.2f%%).", self._trailing_stop_pct * 100)
 
@@ -580,6 +587,30 @@ class OrderExecutor:
                         self._dump_state()
                         logger.info("Restored software trailing stop tracker for %s at %.4f", symbol, current_price)
 
+        # Prune orphaned protective orders — entries with no matching broker
+        # position. These arise from exchange-suffix flips (a stale SYMBOL.NS
+        # left beside the real SYMBOL.BO) or positions that vanished without a
+        # tracked close. A short grace protects a just-placed buy that hasn't
+        # appeared in the broker snapshot yet.
+        current = {s for s, p in open_positions.items() if float(p.get("quantity", 0)) > 0}
+        pruned = False
+        for sym in list(self._open_orders.keys()):
+            if sym in current:
+                self._orphan_syncs.pop(sym, None)
+                continue
+            n = self._orphan_syncs.get(sym, 0) + 1
+            self._orphan_syncs[sym] = n
+            if n >= self._ORPHAN_GRACE:
+                self._open_orders.pop(sym, None)
+                self._trailing_high.pop(sym, None)
+                self._orphan_syncs.pop(sym, None)
+                pruned = True
+                logger.info(
+                    "Pruned stale protective order for %s (no broker position for %d syncs).",
+                    sym, n,
+                )
+        if pruned:
+            self._dump_state()
 
     @property
     def open_orders(self) -> Dict[str, OpenOrder]:
