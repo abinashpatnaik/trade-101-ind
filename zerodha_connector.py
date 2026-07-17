@@ -42,7 +42,21 @@ class ZerodhaConnector:
         # Token cache file
         in_docker = os.path.exists("/app")
         self.token_file = "/app/data/kite_access_token.txt" if in_docker else "trading_agent/kite_access_token.txt"
-        
+
+        # Pre-existing long-term holdings the bot must NOT adopt or manage.
+        # These are the account owner's delivery shares (this account is shared
+        # with manual investing); the agent should only see positions it opened.
+        self._ignore_holdings = {
+            s.strip().upper()
+            for s in os.getenv("ZERODHA_IGNORE_HOLDINGS", "").split(",")
+            if s.strip()
+        }
+        if self._ignore_holdings:
+            logger.info(
+                "Excluding %d owner holding(s) from bot positions: %s",
+                len(self._ignore_holdings), ", ".join(sorted(self._ignore_holdings)),
+            )
+
         self.kite: Optional[KiteConnect] = None
         self._authenticated = False
         
@@ -394,8 +408,12 @@ class ZerodhaConnector:
                 qty = int(h.get("quantity", 0)) + int(h.get("t1_quantity", 0))
                 if qty <= 0:
                     continue
-                
+
                 tradingsymbol = h.get("tradingsymbol", "")
+                # Skip the owner's long-term holdings — the bot neither manages
+                # nor reconciles them (prevents phantom BROKER_SYNC_CLOSE trades).
+                if tradingsymbol.upper() in self._ignore_holdings:
+                    continue
                 exchange = h.get("exchange", "NSE")
                 symbol = f"{tradingsymbol}.BO" if exchange == "BSE" else f"{tradingsymbol}.NS"
                 
