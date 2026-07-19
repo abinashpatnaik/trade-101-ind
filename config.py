@@ -55,6 +55,11 @@ class MarketConfig:
     close_minute: int
     pre_market_hour: int
     eod_close_buffer_minutes: int = 15
+    # Block NEW entries within this many minutes of the close. Late entries
+    # rarely develop before the forced EOD flat-close and just bleed friction
+    # (backtest: EOD exits are consistently net-negative). Existing positions
+    # are still exit-managed inside this window — only new BUYs are paused.
+    no_entry_buffer_minutes: int = 30
 
 
 @dataclass
@@ -283,7 +288,11 @@ def get_india_config() -> Config:
         wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
-        signal=SignalConfig(),
+        # Concentration tuning (data-backed): raise the ML buy bar so only
+        # high-conviction entries trade. On the nominated IN small-cap universe
+        # the 0.55–0.70 confidence band was net-negative; >0.70 was the only
+        # band that turned positive net of friction.
+        signal=SignalConfig(ml_buy_threshold=0.70),
         agent=AgentConfig(),
         ai=AIConfig(),
         strategy=StrategyConfig(index_symbol="^NSEI"),
@@ -320,7 +329,11 @@ def get_us_config() -> Config:
         ),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
-        signal=SignalConfig(),
+        # Concentration tuning (data-backed): raise the ML buy bar. On US
+        # mega-caps the low 0.55 bar drove the worst losses (raising it to 0.65
+        # took that bucket from deeply negative to ~breakeven); on the nominated
+        # US small-cap universe 0.65 was clearly the best net-of-cost bucket.
+        signal=SignalConfig(ml_buy_threshold=0.65),
         agent=AgentConfig(),
         ai=AIConfig(),
         strategy=StrategyConfig(index_symbol="SPY"),

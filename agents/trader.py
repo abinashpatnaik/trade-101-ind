@@ -1158,11 +1158,28 @@ class TradingAgent:
                 # d. Per-symbol scan (vetted targets → file → config universe)
                 daily_targets = [] if skip_scanning else self._effective_targets()
 
+                # No NEW entries in the final no_entry_buffer window before close:
+                # late entries rarely develop before the forced EOD flat-close and
+                # just bleed friction (backtest: EOD exits are net-negative).
+                # Existing positions are still exit-managed below.
+                buys_allowed = (not skip_scanning) and (
+                    self.session.minutes_remaining()
+                    > config.market.no_entry_buffer_minutes
+                )
+                if not skip_scanning and not buys_allowed:
+                    logger.info(
+                        "New entries paused — within %d min of close (%.1f min "
+                        "remaining); managing existing positions for exits only.",
+                        config.market.no_entry_buffer_minutes,
+                        self.session.minutes_remaining(),
+                    )
+
                 # Always exit-manage open positions, even if they dropped off
                 # today's vetted targets (or during the EOD buffer). Buys stay
-                # gated to daily_targets; held-but-unapproved names are scanned
-                # for exits only (buy_eligible=False).
+                # gated to daily_targets AND the no-entry window; held-but-
+                # unapproved names are scanned for exits only (buy_eligible=False).
                 target_set = set(daily_targets)
+                buy_set = target_set if buys_allowed else set()
                 held_only = [
                     s for s in self.portfolio.open_positions.keys() if s not in target_set
                 ]
@@ -1179,7 +1196,7 @@ class TradingAgent:
                 for symbol in scan_set:
                     if self._shutdown_requested:
                         break
-                    self._process_symbol(symbol, buy_eligible=(symbol in target_set))
+                    self._process_symbol(symbol, buy_eligible=(symbol in buy_set))
 
                 # Dump signals for dashboard (and prune rows from previous
                 # sessions so stale hold-reasons never surface in the UI)
