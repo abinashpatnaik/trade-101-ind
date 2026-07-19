@@ -11,3 +11,12 @@ data/*.csv
 
 trading-app/
 *.db
+
+# Ignore SQLite temp files
+*-shm
+*-wal
+IN
+
+# Ignore trading agent local logs and json data
+trading_agent/*.log
+trading_agent/*.json
