@@ -176,10 +176,15 @@ class DecisionEngine:
 
     def get_ml_buy_threshold(self, symbol: str, is_swing: bool) -> float:
         """Returns the dynamic ML threshold for a symbol.
-        
+
         Uses per-symbol threshold if available (training symbols).
         Falls back to _GLOBAL_ threshold (75th percentile of all training thresholds).
-        Last resort: static config value (0.55).
+        Last resort: static config value.
+
+        The config ``signal.ml_buy_threshold`` additionally acts as a FLOOR on
+        the result: concentration tuning raises the buy bar so only
+        high-conviction entries trade, even where the trained per-symbol /
+        _GLOBAL_ threshold sits lower (set per-market: IN 0.70, US 0.65).
         """
         self._load_ml_thresholds()
         mode = "swing" if is_swing else "day"
@@ -196,6 +201,8 @@ class DecisionEngine:
         # 3. Static fallback
         else:
             base = self._sig.ml_buy_threshold
+        # Config threshold is a FLOOR over the dynamic/per-symbol value.
+        base = max(base, self._sig.ml_buy_threshold)
         return base + float(self._directive.get("ml_buy_threshold_delta", 0.0))
 
     def register_cooldown(self, symbol: str, is_loss: bool) -> None:
