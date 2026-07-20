@@ -133,6 +133,10 @@ class SignalConfig:
     # Cost gate: expected move (2×ATR as % of price) must be at least this
     # multiple of the estimated round-trip cost, or the BUY is blocked.
     min_edge_multiple: float = field(default_factory=lambda: float(os.getenv("MIN_EDGE_MULTIPLE", "2.0")))
+    # Overbought / blow-off guard: block BUYs when RSI >= this (0 = disabled).
+    # Parabolic RSI spikes tend to spike-and-reverse (see the MBAPL loss).
+    # Backtest: helps the IN traded universe, hurt US — so enabled IN-only.
+    rsi_overbought_block: float = 0.0
 
 
 @dataclass
@@ -288,11 +292,11 @@ def get_india_config() -> Config:
         wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
-        # Concentration tuning (data-backed): raise the ML buy bar so only
-        # high-conviction entries trade. On the nominated IN small-cap universe
-        # the 0.55–0.70 confidence band was net-negative; >0.70 was the only
-        # band that turned positive net of friction.
-        signal=SignalConfig(ml_buy_threshold=0.70),
+        # Concentration tuning (data-backed): raise the ML buy bar and skip
+        # parabolic blow-off entries. 0.70 overshot (hurt the traded universe
+        # + froze the dashboard); 0.65 + an RSI>=82 overbought guard was the
+        # best net-of-friction combo on the IN daily-targets backtest.
+        signal=SignalConfig(ml_buy_threshold=0.65, rsi_overbought_block=82.0),
         agent=AgentConfig(),
         ai=AIConfig(),
         strategy=StrategyConfig(index_symbol="^NSEI"),

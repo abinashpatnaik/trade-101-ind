@@ -620,6 +620,31 @@ class DecisionEngine:
                     combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
+            # --- Overbought / blow-off guard ---
+            # Skip parabolic entries: an extreme RSI spike tends to spike and
+            # reverse immediately (e.g. MBAPL bought at RSI 94, underwater from
+            # the first tick). Configurable per market; 0 disables.
+            rsi_block = self._sig.rsi_overbought_block
+            if rsi_block and trend_signal.rsi >= rsi_block:
+                logger.info(
+                    "BUY blocked for %s — RSI %.0f >= overbought guard %.0f "
+                    "(blow-off risk).",
+                    symbol, trend_signal.rsi, rsi_block,
+                )
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"BUY signal (score={combined_score:.3f}) but RSI "
+                        f"{trend_signal.rsi:.0f} ≥ overbought guard "
+                        f"{rsi_block:.0f} — skipping blow-off entry."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
+                )
+
             quantity = self._compute_quantity(
                 portfolio_value, current_price, trend_signal.atr
             )
