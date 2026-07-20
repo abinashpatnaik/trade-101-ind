@@ -459,6 +459,55 @@ function readLocalPositions() {
   return [];
 }
 
+// Read the order executor's real per-symbol protective state so the dashboard
+// can display the ACTUAL stop the bot will trigger on (hard stop + real
+// trailing high-water mark), rather than a cosmetic estimate.
+function readExecutorState() {
+  try {
+    const dataPath = path.join(__dirname, "..", "data", `executor_state_${MARKET_TYPE}.json`);
+    if (fs.existsSync(dataPath)) {
+      const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+      return { openOrders: state.open_orders || {}, trailingHigh: state.trailing_high || {} };
+    }
+  } catch (err) {
+    console.error("Error reading executor state:", err.message);
+  }
+  return { openOrders: {}, trailingHigh: {} };
+}
+
+// Compute the price the executor will ACTUALLY sell at right now, mirroring
+// order_executor.check_exit_conditions using the executor's own entry price,
+// hard stop, ATR trail gap and real high-water mark. Returns null when the
+// symbol isn't under executor management (caller falls back to an estimate).
+function realProtectiveStop(order, trailingHigh, mktPrice, isIN) {
+  if (!order) return null;
+  const entry = order.entry_price || 0;
+  const hardStop = order.stop_loss_price || 0;
+  if (entry <= 0) return null;
+
+  const lockThreshold = isIN ? 0.0025 : 0.0015;   // profit-lock activates above this gain
+  const configGap = isIN ? 0.005 : 0.003;
+  const atrGap = order.initial_trailing_pct || 0;
+  const baseGap = atrGap > 0 ? Math.max(atrGap, configGap) : configGap;
+
+  const gainFromEntry = (mktPrice / entry) - 1.0;
+  if (gainFromEntry >= lockThreshold && trailingHigh > 0) {
+    const gainFromHigh = (trailingHigh / entry) - 1.0;
+    let trailGap;
+    if (gainFromHigh >= 0.03) trailGap = baseGap * 0.33;
+    else if (gainFromHigh >= 0.02) trailGap = baseGap * 0.50;
+    else if (gainFromHigh >= 0.01) trailGap = baseGap * 0.67;
+    else if (gainFromHigh >= 0.005) trailGap = baseGap * 0.83;
+    else trailGap = baseGap;
+    let trigger = trailingHigh * (1.0 - trailGap);
+    trigger = Math.max(trigger, entry);   // floored at break-even
+    return { stop: Math.round(trigger * 100) / 100, hardStop: Math.round(hardStop * 100) / 100, trailingActive: true };
+  }
+  // Below the profit-lock threshold the trailing stop is INACTIVE — only the
+  // hard stop protects the position.
+  return { stop: Math.round(hardStop * 100) / 100, hardStop: Math.round(hardStop * 100) / 100, trailingActive: false };
+}
+
 function readLocalSummary() {
   try {
     const dataPath = path.join(__dirname, "..", "data", `local_summary_${MARKET_TYPE}.json`);
@@ -629,6 +678,7 @@ app.get("/api/positions", async (_req, res) => {
     }
 
     const allSignals = readSignals();
+    const execState = readExecutorState();
 
     const result = positions.map((pos) => {
       const qty = pos.position || 0;
@@ -647,50 +697,56 @@ app.get("/api/positions", async (_req, res) => {
           else strategy = "Trend Follow";
       }
 
-        // "Patience Then Lock" Trailing Stop Display
-        // Mirrors the Python logic in order_executor.py:
-        //   - If stock has EVER been in profit (mktPrice > avgCost at any point),
-        //     trail tightly from the high, floored at entry price.
-        //   - If stock is not in profit, show the hard stop.
-        // Market-specific risk parameters:
         const isIN = (typeof MARKET_TYPE !== 'undefined' ? MARKET_TYPE : 'US') === 'IN';
-        const stopLossPct = isIN ? 0.015 : 0.01;          // IN: -1.5%, US: -1%
-        const lockThreshold = isIN ? 0.0025 : 0.0015;     // IN: +0.25%, US: +0.15%
-        const baseGap = isIN ? 0.005 : 0.003;             // IN: 0.5%, US: 0.3%
 
-        let gainPct = avgCost > 0 ? (mktPrice / avgCost) - 1.0 : 0;
-        let trailingTrigger;
-        let effectiveStopLoss = Math.round(avgCost * (1.0 - stopLossPct) * 100) / 100;
+        // Prefer the executor's REAL protective state so the displayed stop is
+        // exactly what the bot will trigger on. Fall back to an avg-cost estimate
+        // only when a position isn't under executor management yet.
+        const execOrder = execState.openOrders[symbol];
+        const real = realProtectiveStop(execOrder, execState.trailingHigh[symbol], mktPrice, isIN);
 
-        if (gainPct >= lockThreshold) {
-            // Stock is in profit — show the profit-lock trailing stop
-            // Graduated gap: tighter as profit grows
-            let trailGap;
-            if (gainPct >= 0.03) trailGap = baseGap * 0.33;
-            else if (gainPct >= 0.02) trailGap = baseGap * 0.50;
-            else if (gainPct >= 0.01) trailGap = baseGap * 0.67;
-            else if (gainPct >= 0.005) trailGap = baseGap * 0.83;
-            else trailGap = baseGap;
-
-            trailingTrigger = mktPrice * (1.0 - trailGap);
-            // Floor at entry price (break-even)
-            trailingTrigger = Math.max(trailingTrigger, avgCost);
+        let effectiveStopLoss, trailingTrigger, trailingActive, entryBasis;
+        if (real) {
+            effectiveStopLoss = real.hardStop;      // the bot's actual hard stop
+            trailingTrigger = real.stop;            // active trailing level, else hard stop
+            trailingActive = real.trailingActive;
+            entryBasis = execOrder.entry_price;     // the entry the stop is measured from
         } else {
-            // Stock is not in profit — trailing stop = hard stop
-            trailingTrigger = effectiveStopLoss;
+            // Fallback estimate (unmanaged position): mirror the Python logic.
+            const stopLossPct = isIN ? 0.015 : 0.01;
+            const lockThreshold = isIN ? 0.0025 : 0.0015;
+            const baseGap = isIN ? 0.005 : 0.003;
+            const gainPct = avgCost > 0 ? (mktPrice / avgCost) - 1.0 : 0;
+            effectiveStopLoss = Math.round(avgCost * (1.0 - stopLossPct) * 100) / 100;
+            if (gainPct >= lockThreshold) {
+                let trailGap;
+                if (gainPct >= 0.03) trailGap = baseGap * 0.33;
+                else if (gainPct >= 0.02) trailGap = baseGap * 0.50;
+                else if (gainPct >= 0.01) trailGap = baseGap * 0.67;
+                else if (gainPct >= 0.005) trailGap = baseGap * 0.83;
+                else trailGap = baseGap;
+                trailingTrigger = Math.round(Math.max(mktPrice * (1.0 - trailGap), avgCost) * 100) / 100;
+                trailingActive = true;
+            } else {
+                trailingTrigger = effectiveStopLoss;
+                trailingActive = false;
+            }
+            entryBasis = avgCost;
         }
 
       return {
           symbol,
           quantity: qty,
           entryPrice: avgCost,
+          stopBasisEntry: entryBasis,
           currentPrice: mktPrice,
           marketValue: mktValue,
           pnl: Math.round(pnl * 100) / 100,
           pnlPct: Math.round(pnlPct * 100) / 100,
           stopLoss: effectiveStopLoss,
           takeProfit: Math.round(avgCost * (1.0 + 0.015) * 100) / 100,
-          trailingStop: Math.round(trailingTrigger * 100) / 100,
+          trailingStop: trailingTrigger,
+          trailingActive: trailingActive,
           allocation: nav > 0 ? Math.round((mktValue / nav) * 1000) / 10 : 0,
         strategy: strategy
       };
@@ -712,6 +768,25 @@ app.get("/api/signals", async (_req, res) => {
     const isAuth = authStatus?.authenticated === true;
 
     let signals = readSignals();
+
+    // Show ONLY today's vetted/approved symbols — the set the bot actually
+    // trades — so stale signals from previous sessions don't clutter the view.
+    // Falls back to showing everything if the vetting list is unavailable.
+    try {
+      const client = await getRedis();
+      if (client) {
+        const vetted = await redisJson(client, `${REDIS_NS}:state:vetted_targets`);
+        const session = await redisJson(client, `${REDIS_NS}:state:session`);
+        const sessionDate = session?.session_date || session?.date;
+        const dateOk = !sessionDate || !vetted?.session_date || vetted.session_date === sessionDate;
+        if (dateOk && Array.isArray(vetted?.approved) && vetted.approved.length) {
+          const approved = new Set(vetted.approved);
+          signals = signals.filter((s) => approved.has(s.symbol));
+        }
+      }
+    } catch (e) {
+      console.error("signals vetting-filter error (showing all):", e.message);
+    }
 
     signals = signals.map((s) => {
       return {

@@ -12,5 +12,14 @@ data/*.csv
 trading-app/
 *.db
 
+# Ignore SQLite temp files
+*-shm
+*-wal
+IN
+
+# Ignore trading agent local logs and json data
+trading_agent/*.log
+trading_agent/*.json
+
 # Mobile app lives in its own repository; keep its build artifacts out of this one
 *.apk
