@@ -34,6 +34,20 @@ def test_ranging():
     assert classify_regime(adx=15, atr_pct=0.01, atr_pct_p90=0.02, ema20_slope=0.0002) == "RANGING"
 
 
+def test_classify_before_setup_is_safe():
+    """Regression: BaseAgent.run() starts the command listener BEFORE setup(),
+    so a cmd:classify arriving during startup calls _classify_and_publish before
+    setup()'s attributes exist. It must no-op, not crash with AttributeError."""
+    import logging
+    from agents.strategy import StrategyAgent
+
+    agent = StrategyAgent.__new__(StrategyAgent)   # bypass __init__ (needs a Bus)
+    agent._ready = False                            # pre-setup state
+    agent.logger = logging.getLogger("test-strategy")
+    # No price_feed/session/hysteresis/_classify_lock set yet — must return early.
+    agent._classify_and_publish()                   # should not raise
+
+
 def test_hysteresis_requires_consecutive_reads():
     h = Hysteresis(reads_required=2, initial="RANGING")
     assert h.update("TRENDING") == "RANGING"   # 1st disagreeing read — hold
