@@ -17,15 +17,23 @@ Requires:
 
 from __future__ import annotations
 
+import csv
 import logging
+import os
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-from config import config
+from config import config, ACTIVE_MARKET
 from decision_engine import Decision
 from trading_costs import round_trip_cost_pct
 from zerodha_connector import ZerodhaConnector as IBKRConnector
+
+_IN_DOCKER = os.path.exists("/app")
+_DATA_DIR = "/app/data" if _IN_DOCKER else os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +211,32 @@ class OrderExecutor:
     # Public API
     # ------------------------------------------------------------------
 
+    def _record_order_intent(
+        self, symbol: str, action: str, order_id, signal_price: float, quantity: float
+    ) -> None:
+        """Durably record the SIGNAL (decision) price at order time so realized
+        slippage can be measured later against the actual fill price (which the
+        portfolio tracker records in the trades DB). Best-effort — wrapped so a
+        logging failure can never break the trade path.
+
+        Written to data/order_intents_{MARKET}.csv; joined to the trades DB by
+        symbol+action+nearest timestamp during the forward-PnL / slippage review.
+        """
+        try:
+            path = os.path.join(_DATA_DIR, f"order_intents_{ACTIVE_MARKET}.csv")
+            new_file = not os.path.exists(path)
+            with open(path, "a", newline="") as f:
+                w = csv.writer(f)
+                if new_file:
+                    w.writerow(["ts", "symbol", "action", "order_id",
+                                "signal_price", "quantity"])
+                w.writerow([
+                    datetime.now().astimezone().isoformat(timespec="seconds"),
+                    symbol, action, order_id, f"{signal_price:.4f}", quantity,
+                ])
+        except Exception as exc:
+            logger.debug("Order-intent logging failed for %s: %s", symbol, exc)
+
     def execute(
         self,
         decision: Decision,
@@ -258,6 +292,9 @@ class OrderExecutor:
             self._open_orders[symbol] = open_order
             self._trailing_high[symbol] = current_price
             self._dump_state()
+            self._record_order_intent(
+                symbol, "BUY", entry_order_id, current_price, decision.quantity
+            )
 
             stop_type = "SOFTWARE" if open_order.is_fractional else "NATIVE"
             logger.info(
@@ -308,6 +345,9 @@ class OrderExecutor:
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
             self._dump_state()
+            self._record_order_intent(
+                symbol, "SELL", sell_order_id, current_price, live_qty
+            )
 
             logger.info(
                 "SELL executed for %s: qty=%.4f order_id=%s",
