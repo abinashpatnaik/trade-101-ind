@@ -11,3 +11,6 @@ data/*.csv
 
 trading-app/
 *.db
+
+# Mobile app lives in its own repository; keep its build artifacts out of this one
+*.apk

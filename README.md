@@ -31,7 +31,6 @@ agents/        Multi-agent runtime — one module per agent (python -m agents.<n
 tests/         Automated test suite (pytest)
 scripts/       One-off / manual utilities (checks/, analysis/, maintenance/) — not shipped in prod
 dashboard/     Web dashboard
-mobile/        Mobile app
 docs/          Architecture & deployment docs
 data/          Runtime data: models, thresholds, daily targets, SQLite DBs (git-ignored contents)
 ```
