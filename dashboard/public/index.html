@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Trading Dashboard</title>
-  <link rel="stylesheet" href="index.css?v=10">
+  <link rel="stylesheet" href="index.css?v=11">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
@@ -84,13 +84,13 @@
       </div>
     </section>
 
-    <!-- ===================== Positions + Vetting ===================== -->
-    <section class="grid halves" aria-label="Positions and stock vetting">
+    <!-- ============= Positions + Vetting  |  Execution history ============= -->
+    <section class="grid halves" aria-label="Positions, vetting and execution history">
       <div class="card">
         <h2>Live positions</h2>
         <div class="table-wrap">
           <table>
-            <caption class="sr-only">Open positions with live prices and unrealized profit</caption>
+            <caption class="sr-only">Open positions with live prices, unrealized profit, stop and trailing gap</caption>
             <thead><tr>
               <th scope="col">Symbol</th>
               <th scope="col" class="right">Qty</th>
@@ -98,34 +98,36 @@
               <th scope="col" class="right">Live</th>
               <th scope="col" class="right">Unrealized P&amp;L</th>
               <th scope="col" class="right">Stop</th>
-            </tr></thead>
-            <tbody id="positions-body"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
-          </table>
-        </div>
-        <h3>Protective orders</h3>
-        <div class="table-wrap">
-          <table>
-            <caption class="sr-only">Active trailing-stop trackers</caption>
-            <thead><tr>
-              <th scope="col">Symbol</th>
-              <th scope="col" class="right">Qty</th>
-              <th scope="col" class="right">Entry</th>
-              <th scope="col" class="right">Hard stop</th>
               <th scope="col" class="right">Trail</th>
             </tr></thead>
-            <tbody id="pending-body"><tr><td colspan="5" class="empty">None</td></tr></tbody>
+            <tbody id="positions-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
           </table>
         </div>
-      </div>
 
-      <div class="card">
-        <h2>Stock vetting <span id="vetting-when" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)"></span></h2>
+        <h2 style="margin-top:22px;">Stock vetting <span id="vetting-when" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)"></span></h2>
         <h3>Approved for today</h3>
         <div id="vetting-approved" class="chip-list"><span class="empty">Waiting for pre-market vetting…</span></div>
         <h3>Blocked by backtest / liquidity screen</h3>
         <div id="vetting-blocked"><p class="empty">None blocked</p></div>
         <h3>Live-accuracy blocklist</h3>
         <div id="vetting-blocklist"><p class="empty">Nothing blocked in-session</p></div>
+      </div>
+
+      <div class="card">
+        <h2>Execution history</h2>
+        <div class="table-wrap" style="max-height:560px;overflow-y:auto;">
+          <table>
+            <caption class="sr-only">Recent trades, most recent first</caption>
+            <thead style="position:sticky;top:0;background:var(--surface);">
+            <tr>
+              <th scope="col">Time</th>
+              <th scope="col">Symbol</th>
+              <th scope="col">Side</th>
+              <th scope="col" class="right">Detail</th>
+            </tr></thead>
+            <tbody id="trades-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -160,35 +162,17 @@
       </div>
     </section>
 
-    <!-- ===================== Trades + Fleet/Model ===================== -->
-    <section class="grid halves" aria-label="Trade history and system health">
+    <!-- ===================== Model analytics ===================== -->
+    <section class="grid halves" aria-label="Model analytics">
       <div class="card">
-        <h2>Execution history</h2>
-        <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
-          <table>
-            <caption class="sr-only">Recent trades, most recent first</caption>
-            <thead style="position:sticky;top:0;background:var(--surface);">
-            <tr>
-              <th scope="col">Time</th>
-              <th scope="col">Symbol</th>
-              <th scope="col">Side</th>
-              <th scope="col" class="right">Detail</th>
-            </tr></thead>
-            <tbody id="trades-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
-          </table>
+        <h2>Model calibration <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">confidence vs actual wins</span></h2>
+        <div class="chart-box short" role="img" aria-label="Model confidence buckets compared with their actual win rates">
+          <canvas id="calib-chart"></canvas>
         </div>
       </div>
 
       <div class="card">
-        <h2>Agent fleet</h2>
-        <div id="fleet-grid" class="fleet"><span class="empty">Connecting to bus…</span></div>
-
-        <h3>Model calibration — confidence vs actual wins</h3>
-        <div class="chart-box short" role="img" aria-label="Model confidence buckets compared with their actual win rates">
-          <canvas id="calib-chart"></canvas>
-        </div>
-
-        <h3>Exit reason performance</h3>
+        <h2>Exit reason performance</h2>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Wins, losses and P&L per exit reason</caption>
@@ -204,10 +188,16 @@
       </div>
     </section>
 
-    <!-- ===================== Logs ===================== -->
-    <section class="card" aria-label="Agent log">
-      <h2>Agent log <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">last 20 lines</span></h2>
-      <div id="log-box" class="log-box" tabindex="0">Loading…</div>
+    <!-- ============= Agent fleet + log (bottom) ============= -->
+    <section class="grid halves" aria-label="Agent fleet and log">
+      <div class="card">
+        <h2>Agent fleet</h2>
+        <div id="fleet-grid" class="fleet"><span class="empty">Connecting to bus…</span></div>
+      </div>
+      <div class="card">
+        <h2>Agent log <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">last 20 lines</span></h2>
+        <div id="log-box" class="log-box" tabindex="0">Loading…</div>
+      </div>
     </section>
   </main>
 
@@ -239,6 +229,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=10"></script>
+  <script src="/app.js?v=11"></script>
 </body>
 </html>
