@@ -366,7 +366,7 @@ function renderPositions(positions) {
   const body = $("positions-body");
   if (!body) return;
   if (!positions?.length) {
-    body.innerHTML = `<tr><td colspan="6" class="empty">No open positions</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="empty">No open positions</td></tr>`;
     return;
   }
   body.innerHTML = positions.map((p) => {
@@ -381,6 +381,7 @@ function renderPositions(positions) {
         <span class="${dir}">${arrow} ${fmtSigned(p.pnl)} (${fmtSignedPct(p.pnlPct)})</span>
       </td>
       <td class="right num">${fmtMoney(p.trailingStop ?? p.stopLoss)}${stopTag(p)}</td>
+      <td class="right num">${p.trailingPct ? fmtPct(p.trailingPct * 100, 1) : "—"}</td>
     </tr>`;
   }).join("");
 }
@@ -414,22 +415,6 @@ function patchPositionPrice(symbol, price, wentUp) {
   const dir = pnl >= 0 ? "up" : "down";
   const arrow = pnl >= 0 ? "▲" : "▼";
   pnlEl.innerHTML = `<span class="${dir}">${arrow} ${fmtSigned(pnl)} (${fmtSignedPct(pct)})</span>`;
-}
-
-function renderPending(orders) {
-  const body = $("pending-body");
-  if (!body) return;
-  if (!orders?.length) {
-    body.innerHTML = `<tr><td colspan="5" class="empty">None</td></tr>`;
-    return;
-  }
-  body.innerHTML = orders.map((o) => `<tr>
-    <td>${esc(o.symbol)}</td>
-    <td class="right num">${o.quantity}</td>
-    <td class="right num">${fmtMoney(o.entryPrice)}</td>
-    <td class="right num">${o.stopLoss ? fmtMoney(o.stopLoss) : "—"}</td>
-    <td class="right num">${o.trailingPct ? fmtPct(o.trailingPct * 100, 1) : "—"}</td>
-  </tr>`).join("");
 }
 
 /* ------------------------- vetting --------------------------------------- */
@@ -785,17 +770,15 @@ async function refreshCore() {
 }
 
 async function refreshSlow() {
-  const [ticker, vetting, pending, dailyPnl, mlAcc, logs] = await Promise.all([
+  const [ticker, vetting, dailyPnl, mlAcc, logs] = await Promise.all([
     getJSON("/api/ticker"),
     getJSON("/api/vetting"),
-    getJSON("/api/pending-orders"),
     getJSON("/api/daily-pnl"),
     getJSON("/api/ml-accuracy"),
     getJSON("/api/logs"),
   ]);
   if (ticker?.ticker) renderTape(ticker.ticker);
   renderVetting(vetting);
-  renderPending(pending);
   if (Array.isArray(dailyPnl) && dailyPnl.length) renderPnlChart(dailyPnl);
   if (mlAcc && !mlAcc.error) {
     renderCalibChart(mlAcc.calibration);

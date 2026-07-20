@@ -705,12 +705,13 @@ app.get("/api/positions", async (_req, res) => {
         const execOrder = execState.openOrders[symbol];
         const real = realProtectiveStop(execOrder, execState.trailingHigh[symbol], mktPrice, isIN);
 
-        let effectiveStopLoss, trailingTrigger, trailingActive, entryBasis;
+        let effectiveStopLoss, trailingTrigger, trailingActive, entryBasis, trailingPctVal;
         if (real) {
             effectiveStopLoss = real.hardStop;      // the bot's actual hard stop
             trailingTrigger = real.stop;            // active trailing level, else hard stop
             trailingActive = real.trailingActive;
             entryBasis = execOrder.entry_price;     // the entry the stop is measured from
+            trailingPctVal = execOrder.initial_trailing_pct || (isIN ? 0.005 : 0.003);
         } else {
             // Fallback estimate (unmanaged position): mirror the Python logic.
             const stopLossPct = isIN ? 0.015 : 0.01;
@@ -732,6 +733,7 @@ app.get("/api/positions", async (_req, res) => {
                 trailingActive = false;
             }
             entryBasis = avgCost;
+            trailingPctVal = baseGap;
         }
 
       return {
@@ -747,6 +749,7 @@ app.get("/api/positions", async (_req, res) => {
           takeProfit: Math.round(avgCost * (1.0 + 0.015) * 100) / 100,
           trailingStop: trailingTrigger,
           trailingActive: trailingActive,
+          trailingPct: trailingPctVal,
           allocation: nav > 0 ? Math.round((mktValue / nav) * 1000) / 10 : 0,
         strategy: strategy
       };
