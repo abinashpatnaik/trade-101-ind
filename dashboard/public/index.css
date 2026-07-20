@@ -124,6 +124,14 @@ button {
 .chip.is-warn .dot { background: var(--warning); }
 .chip.is-bad .dot { background: var(--down); }
 .chip.is-info .dot { background: var(--s1); }
+/* Approved-for-today but on the live-accuracy blocklist: won't actually be
+   bought until the block lifts. Mute the symbol and tag it. */
+.chip.is-blocked { cursor: help; }
+.chip.is-blocked .chip-sym { opacity: 0.6; text-decoration: line-through; }
+.chip.is-blocked .chip-flag {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--warning);
+}
 
 .theme-btn {
   display: inline-flex; padding: 6px; border-radius: var(--radius-sm);

@@ -442,9 +442,21 @@ function renderVetting(v) {
   const when = $("vetting-when");
 
   const vetted = v.vetted;
+  // A symbol can be backtest-approved AND on the live-accuracy blocklist — the
+  // two are independent screens, and the trader vetoes BUYs for blocklisted
+  // names. Flag such approvals so the list isn't misread as "will be traded".
+  const blockedSet = new Set(Object.keys(v.blocklist || {}));
   if (vetted?.approved?.length) {
     approvedEl.innerHTML = vetted.approved
-      .map((s) => `<span class="chip is-good"><span class="dot" aria-hidden="true"></span>${esc(s)}</span>`)
+      .map((s) => {
+        if (blockedSet.has(s)) {
+          const info = v.blocklist[s] || {};
+          const until = (info.until || "").slice(11, 16) || "next open";
+          const title = `On live-accuracy blocklist: ${info.reason || "recent losses"} · until ${until}. Won't be bought until the block lifts.`;
+          return `<span class="chip is-warn is-blocked" title="${esc(title)}"><span class="dot" aria-hidden="true"></span><span class="chip-sym">${esc(s)}</span><span class="chip-flag">blocked</span></span>`;
+        }
+        return `<span class="chip is-good"><span class="dot" aria-hidden="true"></span>${esc(s)}</span>`;
+      })
       .join("");
     if (when) when.textContent = `· ${esc(vetted.source || "")} ${vetted.session_date || ""}`;
   } else {
