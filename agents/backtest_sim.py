@@ -71,6 +71,9 @@ class SimResult:
     avg_return_pct: float = 0.0
     trades: List[SimTrade] = field(default_factory=list)
     error: Optional[str] = None
+    # Day-model ML confidence at every entry-eligible bar (populated only when
+    # an ai_validator is supplied). Used to calibrate a per-stock buy threshold.
+    ml_day_values: List[float] = field(default_factory=list)
 
 
 @dataclass
@@ -252,6 +255,7 @@ def replay(
         if ai_validator is not None:
             ml_day = ai_validator.get_ml_confidence(signal, 0.0, "day")
             ml_swing = ai_validator.get_ml_confidence(signal, 0.0, "swing")
+            result.ml_day_values.append(ml_day)
         else:
             ml_day = ml_swing = 0.0
 
