@@ -199,6 +199,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - HC_AGENT=vetting
       - TZ=America/New_York
+      # US market data (backtest replay + per-stock hybrid thresholds) comes from
+      # Alpaca — unlike IN/yfinance there is no keyless route, so this agent needs
+      # read-only Alpaca data keys or every US fetch fails and it approves blindly.
+      - APCA_API_KEY_ID=${APCA_API_KEY_ID}
+      - APCA_API_SECRET_KEY=${APCA_API_SECRET_KEY}
       # Match the live trader's entry path so the backtest screen tests the
       # ML-driven strategy that actually trades, not the classic trend path.
       - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-true}
@@ -213,6 +218,10 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - HC_AGENT=strategy
       - TZ=America/New_York
+      # SPY index data comes from Alpaca for US (no keyless route); without keys
+      # the regime classifier gets "No index data" and never publishes a regime.
+      - APCA_API_KEY_ID=${APCA_API_KEY_ID}
+      - APCA_API_SECRET_KEY=${APCA_API_SECRET_KEY}
 
   trainer-us:
     <<: *agent-base

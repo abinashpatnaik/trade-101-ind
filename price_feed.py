@@ -88,16 +88,11 @@ class PriceFeed:
         interval: str = "5m",
         start: Optional[str] = None,
         end: Optional[str] = None,
-        force_yfinance: bool = False,
     ) -> Optional[pd.DataFrame]:
         """
         Core wrapper for data fetch. Routes to Alpaca or yfinance/Zerodha based on market.
         Uses a Hybrid approach for Indian market: if the broker is Zerodha and we have credits,
         it uses high-fidelity Zerodha historical data.
-
-        ``force_yfinance`` bypasses the US→Alpaca route and uses yfinance regardless
-        of market — for public indices/ETFs (e.g. SPY, ^NSEI) that broker-free,
-        keyless consumers like the strategy agent must fetch without Alpaca creds.
         """
         cache_key = (symbol, period, interval, start, end)
         now = time.time()
@@ -116,7 +111,7 @@ class PriceFeed:
                 return cached_df.copy()
 
         df = None
-        if ACTIVE_MARKET == "US" and not force_yfinance:
+        if ACTIVE_MARKET == "US":
             df = self._fetch_alpaca(symbol, period, interval, start, end)
         else:
             # Due to the strict 500 credits/month limit (16 credits/day), 
@@ -351,7 +346,6 @@ class PriceFeed:
         symbol: str,
         period: str = "5d",
         interval: str = "5m",
-        force_yfinance: bool = False,
     ) -> Optional[pd.DataFrame]:
         """
         Return OHLCV data for *symbol*.
@@ -372,8 +366,7 @@ class PriceFeed:
         pd.DataFrame or None
             Columns: Open, High, Low, Close, Volume.  Index: DatetimeIndex.
         """
-        return self._fetch(symbol, period=period, interval=interval,
-                           force_yfinance=force_yfinance)
+        return self._fetch(symbol, period=period, interval=interval)
 
     def get_intraday_data(
         self,
