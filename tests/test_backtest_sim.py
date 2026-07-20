@@ -143,7 +143,17 @@ def test_chop_is_blocked_by_sniper_gates(engines):
 
 def test_crash_fails_vetting(engines):
     de, te = engines
-    result = replay("CRASH.NS", load_fixture("crash"), de, te)
+    # The crash fixture spikes to RSI ~99 before collapsing; the live overbought
+    # guard (rsi_overbought_block) would correctly block that blow-off entry, so
+    # it must be disabled here — this test pins the vetting FAIL-on-loss verdict,
+    # which requires the losing trade to actually be taken. Save/restore so the
+    # shared config singleton doesn't leak into other tests.
+    prev = de._sig.rsi_overbought_block
+    de._sig.rsi_overbought_block = 0.0
+    try:
+        result = replay("CRASH.NS", load_fixture("crash"), de, te)
+    finally:
+        de._sig.rsi_overbought_block = prev
     assert result.error is None
     assert result.n_trades >= 1
     assert result.total_return_pct < 0
