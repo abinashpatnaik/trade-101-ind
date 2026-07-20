@@ -244,6 +244,10 @@ class TradingAgent:
         else:
             self.decision_engine.clear_directive()
 
+        # Hybrid per-stock buy thresholds published by the vetting agent.
+        dyn = self.bus.get_state("dynamic_thresholds")
+        self.decision_engine.set_dynamic_thresholds(dyn if isinstance(dyn, dict) else {})
+
         if self._reload_model_flag.is_set():
             self._reload_model_flag.clear()
             try:

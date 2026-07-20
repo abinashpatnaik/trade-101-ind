@@ -122,6 +122,10 @@ class DecisionEngine:
         self._cooldown_seconds: int = int(os.getenv("SELL_COOLDOWN_MINUTES", "30")) * 60
         # Strategy-agent parameter overlay; empty dict = exact default behavior
         self._directive: Dict[str, float] = {}
+        # Per-stock buy thresholds published by the vetting agent (calibrated
+        # from each nominated symbol's own recent ML-confidence distribution).
+        # Takes priority over the trained per-symbol / _GLOBAL_ thresholds.
+        self._dynamic_thresholds: Dict[str, float] = {}
 
         self.ml_thresholds: Dict[str, Dict[str, float]] = {"day": {}, "swing": {}}
         self._thresholds_mtime: Dict[str, float] = {"day": 0.0, "swing": 0.0}
@@ -150,6 +154,11 @@ class DecisionEngine:
             logger.info("Strategy directive cleared — reverting to config defaults.")
         self._directive = {}
 
+    def set_dynamic_thresholds(self, thresholds: Dict[str, float]) -> None:
+        """Per-stock buy thresholds from the vetting agent (symbol → threshold).
+        Empty/None reverts to the trained per-symbol / _GLOBAL_ / config chain."""
+        self._dynamic_thresholds = thresholds or {}
+
     def _buy_threshold(self) -> float:
         return float(self._directive.get("buy_threshold", self._sig.buy_threshold))
 
@@ -175,25 +184,35 @@ class DecisionEngine:
                         logger.error("Failed to load ML thresholds: %s", e)
 
     def get_ml_buy_threshold(self, symbol: str, is_swing: bool) -> float:
-        """Returns the dynamic ML threshold for a symbol.
+        """Returns the per-stock ML buy threshold for a symbol (the HYBRID).
 
-        Uses per-symbol threshold if available (training symbols).
-        Falls back to _GLOBAL_ threshold (75th percentile of all training thresholds).
-        Last resort: static config value.
+        Priority:
+        0. Vetting-computed per-stock threshold — calibrated premarket from the
+           symbol's OWN recent ML-confidence distribution (covers the nominated
+           small-caps that actually trade; day-mode only).
+        1. Trained per-symbol threshold (training/anchor symbols).
+        2. _GLOBAL_ threshold (75th percentile of all trained thresholds).
+        3. Static config fallback (``signal.ml_buy_threshold``) — used only when
+           a symbol has none of the above.
 
-        The config ``signal.ml_buy_threshold`` additionally acts as a FLOOR on
-        the result: concentration tuning raises the buy bar so only
-        high-conviction entries trade, even where the trained per-symbol /
-        _GLOBAL_ threshold sits lower (set per-market: IN 0.70, US 0.65).
+        No floor: per-stock thresholds may sit below the config value so each
+        name trades at its own level (a flat floor over-restricts — see the
+        hybrid backtest). A strategy directive delta is still added on top.
         """
         self._load_ml_thresholds()
         mode = "swing" if is_swing else "day"
         # Extract base symbol if it has an extension (for IN market)
         clean_sym = symbol.replace('.NS', '') if ACTIVE_MARKET == "IN" else symbol
         thresholds = self.ml_thresholds[mode]
-        
-        # 1. Per-symbol threshold (training symbols only)
-        if clean_sym in thresholds:
+
+        # 0. Vetting-computed per-stock threshold (day mode; keyed either way).
+        dyn = self._dynamic_thresholds if mode == "day" else {}
+        if symbol in dyn:
+            base = dyn[symbol]
+        elif clean_sym in dyn:
+            base = dyn[clean_sym]
+        # 1. Trained per-symbol threshold (training symbols only)
+        elif clean_sym in thresholds:
             base = thresholds[clean_sym]
         # 2. Global dynamic threshold (covers sector-scanner picks)
         elif "_GLOBAL_" in thresholds:
@@ -201,8 +220,6 @@ class DecisionEngine:
         # 3. Static fallback
         else:
             base = self._sig.ml_buy_threshold
-        # Config threshold is a FLOOR over the dynamic/per-symbol value.
-        base = max(base, self._sig.ml_buy_threshold)
         return base + float(self._directive.get("ml_buy_threshold_delta", 0.0))
 
     def register_cooldown(self, symbol: str, is_loss: bool) -> None:

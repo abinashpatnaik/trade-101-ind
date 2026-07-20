@@ -32,6 +32,8 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List
 
+import numpy as np
+
 from agents.base import BaseAgent
 from agents.backtest_sim import SimParams, replay, verdict
 
@@ -143,6 +145,7 @@ class VettingAgent(BaseAgent):
             approved: List[str] = []
             blocked: Dict[str, str] = {}
             report: Dict[str, Any] = {}
+            dynamic_thresholds: Dict[str, float] = {}
 
             self.logger.info(
                 "Backtest-vetting %d nominations (source=%s, lookback=%s/%s)…",
@@ -180,6 +183,15 @@ class VettingAgent(BaseAgent):
                     report[symbol] = {"verdict": "PASS", "error": str(exc)}
                     continue
 
+                # Hybrid per-stock buy threshold: calibrate this symbol's live
+                # buy bar from its OWN backtest ML-confidence distribution. Applied
+                # forward (today), so today's bars are out-of-sample vs this.
+                vals = result.ml_day_values
+                if len(vals) >= cfg.dynamic_threshold_min_bars:
+                    thr = float(min(0.90, max(0.50, np.percentile(
+                        vals, cfg.dynamic_threshold_pctile))))
+                    dynamic_thresholds[symbol] = round(thr, 4)
+
                 v = verdict(result, cfg.ev_threshold_pct, getattr(cfg, "min_backtest_trades", 0))
                 report[symbol] = {
                     "verdict": v,
@@ -207,6 +219,12 @@ class VettingAgent(BaseAgent):
                     "blocked": blocked,
                     "source": source,
                 },
+            )
+            # Per-stock buy thresholds for the trader's decision engine (hybrid).
+            self.bus.set_state("dynamic_thresholds", dynamic_thresholds)
+            self.logger.info(
+                "Published %d per-stock buy thresholds (p%.0f).",
+                len(dynamic_thresholds), cfg.dynamic_threshold_pctile,
             )
             self.bus.publish("ev:vetted", {"approved": sorted(approved), "blocked": blocked})
             if source == "premarket":

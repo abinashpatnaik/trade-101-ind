@@ -186,6 +186,12 @@ class VettingConfig:
     # "zero trades is a neutral PASS" behavior (raise deliberately after
     # observing approval/block rates on the ML-aligned backtest).
     min_backtest_trades: int = 0
+    # Hybrid per-stock buy threshold: during vetting, each nominated symbol's
+    # buy bar is set to this percentile of its OWN backtest ML-confidence
+    # distribution (bounded [0.50, 0.90]), requiring at least min_bars samples.
+    # p80 = "trade the top ~20% most-confident signals for this stock."
+    dynamic_threshold_pctile: float = 80.0   # US profile raises to 85.0
+    dynamic_threshold_min_bars: int = 12
     # Live-accuracy blocklist
     accuracy_lookback_sessions: int = 5
     accuracy_window_trades: int = 10
@@ -292,11 +298,12 @@ def get_india_config() -> Config:
         wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
-        # Concentration tuning (data-backed): raise the ML buy bar and skip
-        # parabolic blow-off entries. 0.70 overshot (hurt the traded universe
-        # + froze the dashboard); 0.65 + an RSI>=82 overbought guard was the
-        # best net-of-friction combo on the IN daily-targets backtest.
-        signal=SignalConfig(ml_buy_threshold=0.65, rsi_overbought_block=82.0),
+        # Hybrid per-stock thresholds (data-backed, validated out-of-sample):
+        # ml_buy_threshold is now only the FALLBACK for symbols the vetting agent
+        # couldn't calibrate; the live bar is each stock's own p80 confidence
+        # percentile. A flat floor over-restricted (froze the dashboard). Keep
+        # the RSI>=82 blow-off guard.
+        signal=SignalConfig(ml_buy_threshold=0.58, rsi_overbought_block=82.0),
         agent=AgentConfig(),
         ai=AIConfig(),
         strategy=StrategyConfig(index_symbol="^NSEI"),
@@ -333,15 +340,17 @@ def get_us_config() -> Config:
         ),
         trend=TrendConfig(),
         sentiment=SentimentConfig(),
-        # Concentration tuning (data-backed): raise the ML buy bar. On US
-        # mega-caps the low 0.55 bar drove the worst losses (raising it to 0.65
-        # took that bucket from deeply negative to ~breakeven); on the nominated
-        # US small-cap universe 0.65 was clearly the best net-of-cost bucket.
-        signal=SignalConfig(ml_buy_threshold=0.65),
+        # Hybrid per-stock thresholds (fallback only; live bar is each stock's
+        # own p85 confidence percentile — see get_us_config's vetting profile).
+        # No RSI guard for US (it hurt US in backtest).
+        signal=SignalConfig(ml_buy_threshold=0.58),
         agent=AgentConfig(),
         ai=AIConfig(),
         strategy=StrategyConfig(index_symbol="SPY"),
-        vetting=VettingConfig(min_daily_turnover=5_000_000.0),    # $5M/day median
+        vetting=VettingConfig(
+            min_daily_turnover=5_000_000.0,          # $5M/day median
+            dynamic_threshold_pctile=85.0,           # p85 was best OOS on US targets
+        ),
     )
 
 
