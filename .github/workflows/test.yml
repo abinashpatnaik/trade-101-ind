@@ -1,0 +1,33 @@
+name: Tests
+
+# Runs the pytest suite on PRs and on branch pushes so behavioral regressions
+# are caught BEFORE they reach `main` (which auto-deploys to production via
+# deploy.yml). Does not run on `main` itself — deploy handles that path.
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          TRADING_MARKET: IN
+        run: pytest tests/ -q
