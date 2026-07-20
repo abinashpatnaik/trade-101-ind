@@ -168,6 +168,16 @@ class StrategyAgent(BaseAgent):
     name = "strategy"
     tick_seconds = 60.0
 
+    def __init__(self) -> None:
+        super().__init__()
+        # Initialised here, NOT in setup(): BaseAgent.run() starts the command
+        # listener BEFORE setup() runs, so an early cmd:classify (the
+        # orchestrator sends one right after a restart) must not hit missing
+        # attributes. _ready gates work that needs setup()'s state.
+        self._classify_lock = threading.Lock()
+        self._last_classify = 0.0
+        self._ready = False
+
     def setup(self) -> None:
         from market_session import MarketSession
         from price_feed import PriceFeed
@@ -175,8 +185,7 @@ class StrategyAgent(BaseAgent):
         self.session = MarketSession()
         self.price_feed = PriceFeed()  # yfinance only — never set_broker
         self.hysteresis = Hysteresis(self.config.strategy.hysteresis_reads)
-        self._classify_lock = threading.Lock()
-        self._last_classify = 0.0
+        self._ready = True
         self.logger.info(
             "Strategy agent ready (index=%s).", self.config.strategy.index_symbol
         )
@@ -184,6 +193,9 @@ class StrategyAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _classify_and_publish(self) -> None:
+        if not self._ready:
+            self.logger.debug("Classify requested before setup completed — skipping.")
+            return
         if not self._classify_lock.acquire(blocking=False):
             return
         try:
