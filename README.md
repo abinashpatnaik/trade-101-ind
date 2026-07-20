@@ -1,101 +1,77 @@
-# NSE Nifty 50 Trading Agent
+# trade-101 — Multi-Agent Trading System
 
-An autonomous Python trading agent designed to run on AWS EC2, trading a liquid universe of 20 Nifty 50 stocks during NSE market hours using the Zerodha Kite Connect API.
+An autonomous, multi-agent trading system running two independent markets from
+one codebase:
 
----
+- **India** — NSE via Zerodha Kite Connect
+- **US** — NASDAQ via Alpaca
 
-## 📁 File Structure
+The market is chosen at process start by `TRADING_MARKET` (`IN` / `US`). Each
+market runs its own agent stack — orchestrator, trader, scanner, vetting,
+strategy, trainer — coordinating over a shared Redis bus, with XGBoost models
+driving entries and a friction-aware decision engine gating them.
 
-| File | Purpose |
-|------|---------|
-| `agent.py` | Main orchestrator — drives the scan cycle, session state gating, and graceful shutdown |
-| `config.py` | Configuration settings loaded from environment variables |
-| `zerodha_connector.py` | API client for Zerodha Kite Connect (automated TOTP login, access token caching, order execution, margins) |
-| `market_session.py` | Market hours manager (NSE 09:15–15:30 IST, Mon–Fri) |
-| `price_feed.py` | Fetches historical OHLCV data from Yahoo Finance (appending `.NS`) |
-| `trend_engine.py` | Computes technical indicators: RSI, EMA crossover, MACD, ATR, and VWAP |
-| `sentiment_engine.py` | Aggregates and scores RSS feeds (Moneycontrol, ET) and Google News queries |
-| `decision_engine.py` | Evaluates composite trend + sentiment scores and executes BUY/SELL signals |
-| `order_executor.py` | Interfaces with the broker client to place and track trades (MARKET, LIMIT, SL-M) |
-| `portfolio_tracker.py` | Tracks capital, open positions, trailing stops, and writes local records |
-| `report_generator.py` | Generates end-of-day HTML and plain-text summaries in Rupees (`₹`) |
-| `report_sender.py` | Emails EOD reports via Gmail SMTP |
-| `Dockerfile` | Standalone Docker container definition (running Python 3.11 on Asia/Kolkata timezone) |
-| `docker-compose.yml` | Standalone service stack mapping persistent logs and cache volumes |
-| `setup_vm.sh` | One-command Ubuntu 22.04 VM setup script (installs Docker and Docker Compose) |
-| `CLOUD_DEPLOYMENT.md` | Full cloud deployment guide and CI/CD manual |
+> ⚠️ Runs **live with real money** by default (`TRADING_MODE=live`). Every change
+> to `main` auto-deploys to production. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+> before pushing.
 
----
+## Documentation
 
-## 🔑 Environment Variables
+| Doc | What's in it |
+|-----|--------------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The agent stack, decision flow, core modules, and data/state model. |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | The Hetzner auto-deploy pipeline, host layout, manual ops, and rollback. |
+| [`scripts/README.md`](scripts/README.md) | The one-off / diagnostic utilities (not production). |
 
-Create a `.env` file in the project root containing the following parameters:
+## Repository layout
 
-```ini
-# Zerodha Kite Connect API
-KITE_API_KEY=your_kite_api_key
-KITE_API_SECRET=your_kite_api_secret
-
-# Zerodha Credentials (for automated login)
-KITE_USER_ID=your_client_id
-KITE_PASSWORD=your_password
-KITE_TOTP_SECRET=your_totp_setup_secret_key
-
-# Email EOD Reports
-GMAIL_ADDRESS=your@gmail.com
-GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-REPORT_RECIPIENT=your@gmail.com
-
-# Trading Configuration
-TRADING_MODE=paper
+```
+agents/        Multi-agent runtime — one module per agent (python -m agents.<name>)
+*.py (root)    Core modules, imported flatly (config, decision_engine, order_executor, …)
+tests/         Automated test suite (pytest)
+scripts/       One-off / manual utilities (checks/, analysis/, maintenance/) — not shipped in prod
+dashboard/     Web dashboard
+mobile/        Mobile app
+docs/          Architecture & deployment docs
+data/          Runtime data: models, thresholds, daily targets, SQLite DBs (git-ignored contents)
 ```
 
----
+Core modules live flat at the root by design (the Dockerfile does `COPY *.py .`
+and agents import them flatly). See the note in `docs/ARCHITECTURE.md`.
 
-## 🚀 Running Locally (Without Docker)
+## Quickstart (local, paper mode)
 
-1. **Create and activate a virtual environment**:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-2. **Install requirements**:
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-3. **Start the agent**:
-   ```bash
-   python agent.py
-   ```
-
----
-
-## 🐳 Running with Docker Compose
-
-Build and start the standalone container service in the background:
 ```bash
-docker-compose up -d --build
+python3 -m venv .venv && source .venv/bin/activate
+pip install -U pip && pip install -r requirements.txt        # -r requirements-dev.txt for tests
 
-# Inspect running container logs
-docker-compose logs -f trading-agent
+cp .env.example .env        # fill in broker/API credentials; set TRADING_MODE=paper
+export TRADING_MARKET=IN    # or US
 
-# Stop the container
-docker-compose down
+python -m agents.trader     # run a single agent, or use docker compose for the full stack
 ```
 
----
+## Running the full stack (Docker Compose)
 
-## 🔄 Automated Deployment to EC2 via GitHub Actions
+```bash
+docker compose up -d --build          # all agents, both markets, + Redis
+docker compose logs -f in-trading-agent
+docker compose down
+```
 
-This project contains a CI/CD workflow defined in `.github/workflows/deploy.yml` that automates pushes directly to your AWS EC2 instance.
+## Tests
 
-### Setup Instructions:
-1. Ensure your EC2 VM is prepared by running `setup_vm.sh` on the instance.
-2. In your GitHub repository, navigate to **Settings ➔ Secrets and variables ➔ Actions ➔ New repository secret** and add:
-   *   `EC2_HOST`: Your EC2 public IP address (`16.171.65.174`).
-   *   `EC2_USERNAME`: Your SSH username (`ec2-user`).
-   *   `EC2_SSH_KEY`: The entire text contents of your private SSH key file (`.pem`).
-3. Commit and push any changes to your `main` branch. GitHub Actions will handle copying files, establishing target directories, and rebuilding/restarting the trading container stack on your VM.
+```bash
+pip install -r requirements-dev.txt
+pytest tests/
+```
+
+The `scripts/checks/` directory holds ad-hoc connectivity checks (broker logins,
+etc.) that need live credentials — those are **not** part of the pytest suite.
+
+## Configuration
+
+Runtime config is centralised in `config.py` (per-market profiles) and driven by
+environment variables. Key ones: `TRADING_MARKET`, `TRADING_MODE`,
+`AI_VALIDATION_ENABLED`, `AI_PRIMARY_DRIVER`, plus broker credentials. See
+`.env.example` and `docs/DEPLOYMENT.md`.
