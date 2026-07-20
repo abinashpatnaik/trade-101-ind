@@ -201,8 +201,13 @@ class StrategyAgent(BaseAgent):
         try:
             self.bus.heartbeat(self.name, status="busy", detail="classify")
             index_symbol = self.config.strategy.index_symbol
-            df_intraday = self.price_feed.get_ohlcv(index_symbol, period="5d", interval="15m")
-            df_daily = self.price_feed.get_ohlcv(index_symbol, period="3mo", interval="1d")
+            # Fetch the index via yfinance regardless of market: SPY / ^NSEI are
+            # public and free, and this agent is broker-free (no Alpaca keys), so
+            # the US→Alpaca route would fail with "keys not configured".
+            df_intraday = self.price_feed.get_ohlcv(
+                index_symbol, period="5d", interval="15m", force_yfinance=True)
+            df_daily = self.price_feed.get_ohlcv(
+                index_symbol, period="3mo", interval="1d", force_yfinance=True)
             if (df_intraday is None or df_intraday.empty) and (df_daily is None or df_daily.empty):
                 self.logger.warning("No index data for %s — keeping previous directive.", index_symbol)
                 return
