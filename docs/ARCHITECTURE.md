@@ -80,6 +80,6 @@ window in the final `no_entry_buffer_minutes` before close.
   `ml_thresholds_*`, `order_intents_{MARKET}.csv` (signal price per order, for
   slippage analysis), `vetting_report_{MARKET}.json`.
 
-Directories: `agents/` (the runtime), `dashboard/` (web UI), `mobile/` (app),
-`tests/` (pytest suite), `scripts/` (one-off/dev utilities — see
-`scripts/README.md`), `docs/` (this).
+Directories: `agents/` (the runtime), `dashboard/` (web UI), `tests/` (pytest
+suite), `scripts/` (one-off/dev utilities — see `scripts/README.md`), `docs/`
+(this). The mobile app is maintained in a separate repository.

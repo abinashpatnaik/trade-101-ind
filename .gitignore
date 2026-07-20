@@ -20,3 +20,6 @@ IN
 # Ignore trading agent local logs and json data
 trading_agent/*.log
 trading_agent/*.json
+
+# Mobile app lives in its own repository; keep its build artifacts out of this one
+*.apk
