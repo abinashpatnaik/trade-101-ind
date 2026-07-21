@@ -182,3 +182,41 @@ def test_pullback_rejects_extended_names(symbols):
     for sym in picks:
         c = hist[sym]["Close"]
         assert c.iloc[-1] / c.iloc[-20:].max() - 1 <= -0.03
+
+
+# --------------------------------------------------------------- edge study
+def test_edge_study_reports_gross_separately(symbols):
+    """Gross must be reported net + friction — it is the diagnostic that
+    decides whether any allocation layer is worth building."""
+    from research.edge_study import run_edge_study
+
+    src = FakeSource(symbols)
+    res = run_edge_study(symbols[:4], market="IN", n_windows=3, window_days=10,
+                         source=src, replay_fn=lambda s, b: [(-0.1, "EOD")] * 3,
+                         calendar_reference=symbols[0])
+    s = res.summary()
+    assert s["trades"] == 4 * 3 * 3
+    # net is -0.1; gross must be higher by exactly the friction
+    assert s["gross_avg"] == pytest.approx(-0.1 + res.friction_pct, abs=1e-9)
+    assert "GROSS EDGE BY WINDOW" in res.render()
+
+
+def test_edge_study_flags_ci_below_friction(symbols):
+    from research.edge_study import run_edge_study
+
+    src = FakeSource(symbols)
+    res = run_edge_study(symbols[:4], market="IN", n_windows=4, window_days=10,
+                         source=src, replay_fn=lambda s, b: [(-0.2, "EOD")] * 4,
+                         calendar_reference=symbols[0])
+    assert "BELOW friction" in res.render()
+
+
+def test_edge_study_collects_exit_reasons(symbols):
+    from research.edge_study import run_edge_study
+
+    src = FakeSource(symbols)
+    res = run_edge_study(symbols[:3], market="IN", n_windows=2, window_days=10,
+                         source=src, calendar_reference=symbols[0],
+                         replay_fn=lambda s, b: [(1.5, "TRAILING_STOP"), (-3.0, "STOP_LOSS")])
+    assert set(res.exit_reasons) == {"TRAILING_STOP", "STOP_LOSS"}
+    assert "TRAILING_STOP" in res.render()
