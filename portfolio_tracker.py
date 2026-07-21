@@ -345,7 +345,15 @@ class PortfolioTracker:
                 self.portfolio_value = summary.get("NetLiquidation", self.portfolio_value)
                 self.cash = summary.get("AvailableFunds", self.cash)
                 self.daily_pnl = summary.get("DailyPnL", self.daily_pnl)
-                self.buying_power = summary.get("BuyingPower", getattr(self, "buying_power", self.portfolio_value))
+                # Zerodha's summary has no BuyingPower key (only NetLiquidation /
+                # AvailableFunds / DailyPnL), so this used to stay at its 0.0
+                # live-mode default and the dashboard showed "buying power ₹0.00"
+                # next to real cash. Fall back to AvailableFunds (net margin).
+                # Display-only field — not used by sizing or execution.
+                self.buying_power = summary.get(
+                    "BuyingPower",
+                    summary.get("AvailableFunds", getattr(self, "buying_power", self.portfolio_value)),
+                )
                 # Cross-check our recorded trade P&L against the broker's truth.
                 self._reconcile_daily_pnl(summary.get("DailyPnL"))
 
