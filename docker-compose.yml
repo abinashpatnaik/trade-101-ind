@@ -66,6 +66,11 @@ services:
       - TZ=Asia/Kolkata
       - DASHBOARD_HOST=dashboard-in
       - OBSERVE_ONLY=${OBSERVE_ONLY:-false}
+      # IN flattens everything at the close: measured on 50 live round trips,
+      # overnight holds lost 4x more per trade than same-day exits and two gap
+      # exits were half the period's loss. US deliberately does NOT set this —
+      # daily flattening would exhaust its PDT day-trade budget.
+      - ALLOW_OVERNIGHT_HOLD=${IN_ALLOW_OVERNIGHT_HOLD:-false}
 
   orchestrator-in:
     <<: *agent-base
