@@ -165,6 +165,23 @@ class OrchestratorAgent(BaseAgent):
             self._mark_sched("scanner_premarket")
             self._send_cmd("scanner", "run_scan", {"source": "premarket"})
 
+        # Pre-open trader restart (once per day). The broker access token expires
+        # each morning; a trader process that spans the rollover loses its live
+        # price websocket permanently (Twisted's reactor cannot be restarted
+        # in-process), which silently kills tick-driven trailing-stop checks for
+        # the whole session. Restarting before the open guarantees a fresh
+        # process + freshly authenticated socket. Runs pre-market only, so there
+        # is no open position to disturb.
+        if (
+            state in ("CLOSED", "PRE_MARKET")
+            and 0 < secs_to_open <= cfg.trader_restart_minutes_before_open * 60
+            and not self._sched_marker_is_today("trader_preopen_restart")
+        ):
+            self._mark_sched("trader_preopen_restart")
+            self._restart_agent_container(
+                "trader", "pre-open refresh (new broker token + live price socket)"
+            )
+
         # Strategy classification: once at open−10min, then every 15min while OPEN
         if (
             state in ("CLOSED", "PRE_MARKET")
@@ -186,6 +203,31 @@ class OrchestratorAgent(BaseAgent):
     # ------------------------------------------------------------------
     # 3. Health supervisor
     # ------------------------------------------------------------------
+
+    def _restart_agent_container(self, agent: str, reason: str) -> bool:
+        """Restart a supervised agent's container as scheduled maintenance.
+
+        Deliberately does NOT consume the crash-loop restart budget — that
+        budget exists to stop a genuinely broken agent from being restarted
+        forever, whereas this is a planned once-a-day refresh.
+        """
+        env_var = SUPERVISED.get(agent, "")
+        container_name = os.getenv(env_var, "") if env_var else ""
+        if not container_name or self._docker is None:
+            self.logger.warning(
+                "Cannot restart %s (%s) — no docker supervision available.", agent, reason
+            )
+            return False
+        try:
+            container = self._docker.containers.get(container_name)
+            self.logger.warning(
+                "Restarting %s (container=%s) — %s.", agent, container_name, reason
+            )
+            container.restart(timeout=30)
+            return True
+        except Exception as exc:
+            self.logger.error("Failed to restart %s (%s): %s", container_name, reason, exc)
+            return False
 
     def _reset_restart_budget_if_new_day(self) -> None:
         today = self.session.get_session_date()

@@ -228,6 +228,13 @@ class OrchestratorConfig:
     # Suppress trader restarts for this long after session close
     # (the trader exits by design post-session; docker revives it).
     trader_restart_suppress_seconds: int = 300
+    # Restart the trader this many minutes before the open. Zerodha access
+    # tokens expire each morning (~07:30 IST); a trader process that spans that
+    # rollover loses its KiteTicker websocket (403) and can NEVER recover it
+    # in-process, because kiteconnect runs on Twisted whose reactor is not
+    # restartable. A fresh pre-open process re-authenticates and reconnects.
+    # Must be < the token expiry→open gap so the restart lands after expiry.
+    trader_restart_minutes_before_open: int = 20
 
 
 @dataclass
