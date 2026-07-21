@@ -1303,7 +1303,10 @@ app.get("/api/analytics", async (_req, res) => {
     let totalPnl = 0;
     
     for (const t of allTrades) {
-      if (t.pnl !== null && t.pnl !== undefined) {
+      // Only CLOSED trades count. BUY rows carry pnl = 0 (not null), so
+      // including them inflated the denominator and understated the win rate
+      // (e.g. 16/57 = 28.1% instead of the true 16/46 = 34.8%).
+      if (t.action === "SELL" && t.pnl !== null && t.pnl !== undefined) {
         totalTrades++;
         const pnl = parseFloat(t.pnl);
         totalPnl += pnl;

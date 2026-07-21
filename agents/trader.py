@@ -248,6 +248,38 @@ class TradingAgent:
         dyn = self.bus.get_state("dynamic_thresholds")
         self.decision_engine.set_dynamic_thresholds(dyn if isinstance(dyn, dict) else {})
 
+        self._warn_if_price_stream_dead()
+
+    def _warn_if_price_stream_dead(self) -> None:
+        """Surface a dead live-price websocket instead of failing silently.
+
+        The broker's ticker cannot be re-established in-process (kiteconnect
+        runs on Twisted, whose reactor is not restartable), so once it dies —
+        e.g. at the daily access-token rollover — tick-driven exit checks stay
+        degraded for the rest of the session and nothing says so. The
+        orchestrator's pre-open restart prevents the common case; this makes the
+        mid-session case loud. Rate-limited to one warning per 10 minutes.
+        """
+        kws = getattr(self.broker, "kws", None)
+        if kws is None:
+            return  # broker has no websocket concept (e.g. US/Alpaca)
+        try:
+            connected = bool(kws.is_connected())
+        except Exception:
+            connected = False
+        if connected:
+            self._stream_warned_at = 0.0
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_stream_warned_at", 0.0) < 600:
+            return
+        self._stream_warned_at = now
+        logger.warning(
+            "Live price websocket is DOWN — tick-driven trailing-stop checks are "
+            "degraded (exits fall back to the slower scan loop). It cannot "
+            "reconnect in-process; the trader must restart to restore it."
+        )
+
         if self._reload_model_flag.is_set():
             self._reload_model_flag.clear()
             try:
