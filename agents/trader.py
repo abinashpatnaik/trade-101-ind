@@ -949,7 +949,14 @@ class TradingAgent:
             # delivery adds the DP charge (~0.8% on small positions) and
             # overnight gap risk to a trade that is already negative. Only
             # positions the SWING model actively likes stay overnight.
-            if reason == "EOD" and self._evaluate_ml_hold(symbol):
+            # Markets can opt out entirely via risk.allow_overnight_hold —
+            # on IN the swing model's picks still lost 4x more per trade than
+            # same-day exits, so gap risk is not worth its conviction there.
+            if (
+                reason == "EOD"
+                and config.risk.allow_overnight_hold
+                and self._evaluate_ml_hold(symbol)
+            ):
                 logger.info("ML model predicts overnight swing. Holding %s overnight.", symbol)
                 continue
 

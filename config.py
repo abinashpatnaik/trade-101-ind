@@ -88,6 +88,16 @@ class RiskConfig:
     # sub-$25K margin accounts (Pattern Day Trader rule). Entries are blocked
     # when no day-trade slot is available so protective exits never get stuck.
     max_day_trades_per_5d: int = field(default_factory=lambda: int(os.getenv("MAX_DAY_TRADES_5D", "3")))
+    # Whether a position the SWING model likes may be carried into delivery at
+    # the EOD close-all. Measured on 50 live IN round trips (2026-07-07..07-21):
+    # overnight holds averaged -Rs31.82/trade vs -Rs7.65 same-day, won 23% vs
+    # 36%, and two gap exits alone were half the period's entire loss.
+    # Defaults True so behaviour is unchanged unless a market opts out — US
+    # MUST keep it, because flattening daily would burn the sub-$25K PDT
+    # day-trade budget enforced by agents.pdt_guard.
+    allow_overnight_hold: bool = field(
+        default_factory=lambda: str(os.getenv("ALLOW_OVERNIGHT_HOLD", "true")).lower() == "true"
+    )
 
 
 @dataclass
