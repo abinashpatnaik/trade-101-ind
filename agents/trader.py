@@ -660,8 +660,11 @@ class TradingAgent:
                 else:
                     success = self.executor.execute(decision, symbol, current_price)
                     if success and decision.action in ("BUY", "SELL"):
-                        if decision.action == "BUY" and self._pdt_guard is not None:
-                            self._pdt_guard.note_buy(symbol)
+                        if decision.action == "BUY":
+                            # Count the fill against the per-symbol churn cap.
+                            self.decision_engine.register_entry(symbol)
+                            if self._pdt_guard is not None:
+                                self._pdt_guard.note_buy(symbol)
                         pnl: Optional[float] = None
                         exit_reason: Optional[str] = None
 

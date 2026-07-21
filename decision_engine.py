@@ -33,6 +33,7 @@ import os
 import time
 import json
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Dict, Optional
 
 from config import config, ACTIVE_MARKET
@@ -120,6 +121,10 @@ class DecisionEngine:
         # Cooldown: {symbol: timestamp} — prevents re-buying a stock too soon after a loss
         self._sell_cooldowns: Dict[str, float] = {}
         self._cooldown_seconds: int = int(os.getenv("SELL_COOLDOWN_MINUTES", "30")) * 60
+        # Entries taken per symbol in the current session, for the churn cap.
+        # Reset lazily whenever the local trading date rolls over.
+        self._entries_today: Dict[str, int] = {}
+        self._entries_date: Optional[date] = None
         # Strategy-agent parameter overlay; empty dict = exact default behavior
         self._directive: Dict[str, float] = {}
         # Per-stock buy thresholds published by the vetting agent (calibrated
@@ -221,6 +226,28 @@ class DecisionEngine:
         else:
             base = self._sig.ml_buy_threshold
         return base + float(self._directive.get("ml_buy_threshold_delta", 0.0))
+
+    def _roll_entry_day(self) -> None:
+        """Clear the per-symbol entry counters when the local date changes."""
+        today = datetime.now().date()
+        if self._entries_date != today:
+            self._entries_date = today
+            self._entries_today = {}
+
+    def entries_used(self, symbol: str) -> int:
+        """Entries already taken for *symbol* in the current session."""
+        self._roll_entry_day()
+        return self._entries_today.get(symbol, 0)
+
+    def register_entry(self, symbol: str) -> None:
+        """Record a filled BUY against the per-symbol daily churn cap."""
+        self._roll_entry_day()
+        self._entries_today[symbol] = self._entries_today.get(symbol, 0) + 1
+        cap = int(getattr(self._risk, "max_entries_per_symbol_per_day", 0) or 0)
+        logger.info(
+            "Entry %d%s recorded for %s today.",
+            self._entries_today[symbol], f"/{cap}" if cap > 0 else "", symbol,
+        )
 
     def register_cooldown(self, symbol: str, is_loss: bool) -> None:
         """
@@ -541,6 +568,32 @@ class DecisionEngine:
                     take_profit_price=0.0,
                     combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
+
+            # --- Churn cap: limit re-entries into the same symbol per session ---
+            # Measured expectancy is negative, so a blocked re-entry saves the
+            # friction it would have paid. Targets the observed failure mode of
+            # the model re-firing on one setup (up to 10x in a day live).
+            entry_cap = int(getattr(self._risk, "max_entries_per_symbol_per_day", 0) or 0)
+            if entry_cap > 0 and not already_held:
+                used = self.entries_used(symbol)
+                if used >= entry_cap:
+                    logger.info(
+                        "BUY blocked for %s — daily entry cap reached (%d/%d).",
+                        symbol, used, entry_cap,
+                    )
+                    return Decision(
+                        action="HOLD",
+                        confidence=confidence,
+                        reason=(
+                            f"BUY signal (score={combined_score:.3f}) but {symbol} "
+                            f"has already been entered {used} time(s) today "
+                            f"(cap {entry_cap}) — avoiding churn."
+                        ),
+                        quantity=0,
+                        stop_loss_price=0.0,
+                        take_profit_price=0.0,
+                        combined_score=combined_score, ml_confidence=active_ml_confidence,
+                    )
 
             # --- Cooldown check: don't re-buy a stock we just sold at a loss ---
             cooldown_until = self._sell_cooldowns.get(symbol, 0)

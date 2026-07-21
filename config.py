@@ -98,6 +98,16 @@ class RiskConfig:
     allow_overnight_hold: bool = field(
         default_factory=lambda: str(os.getenv("ALLOW_OVERNIGHT_HOLD", "true")).lower() == "true"
     )
+    # Max BUY entries per symbol per session (0 = unlimited).
+    # Churn is the one lever with a PROVEN payoff: measured expectancy is
+    # negative (-0.214%/trade over 4,407 US trades), so each avoided round trip
+    # saves the friction it would have paid. Live logs show the pathological
+    # case this targets — one IN symbol entered 5x in a day, one US symbol 10x,
+    # the model re-firing on the same setup. A cap of 2 still permits one
+    # genuine re-entry after a stop-out. It does NOT add edge; it reduces bleed.
+    max_entries_per_symbol_per_day: int = field(
+        default_factory=lambda: int(os.getenv("MAX_ENTRIES_PER_SYMBOL_PER_DAY", "0"))
+    )
 
 
 @dataclass

@@ -71,6 +71,10 @@ services:
       # exits were half the period's loss. US deliberately does NOT set this —
       # daily flattening would exhaust its PDT day-trade budget.
       - ALLOW_OVERNIGHT_HOLD=${IN_ALLOW_OVERNIGHT_HOLD:-false}
+      # Churn cap. Live IN logs: one symbol entered 5x in a single day; a cap
+      # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
+      # each blocked re-entry saves its round-trip friction.
+      - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${IN_MAX_ENTRIES_PER_SYMBOL:-2}
 
   orchestrator-in:
     <<: *agent-base
@@ -163,6 +167,11 @@ services:
       - TZ=America/New_York
       - DASHBOARD_HOST=dashboard-us
       - OBSERVE_ONLY=${OBSERVE_ONLY:-false}
+      # Churn cap. Live US logs: one symbol entered 10x in a single day; 174
+      # round trips on a $49 account = 54x turnover, where friction ($5.95)
+      # exceeded the entire gross loss ($3.79). A cap of 2 blocks 26% of BUYs.
+      # US keeps ALLOW_OVERNIGHT_HOLD unset — see the IN block for why.
+      - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${US_MAX_ENTRIES_PER_SYMBOL:-2}
 
   orchestrator-us:
     <<: *agent-base
