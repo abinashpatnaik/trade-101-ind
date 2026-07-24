@@ -277,10 +277,10 @@ function readHistoricalWinRate() {
   if (!db) return 82.4; // Fallback test accuracy
   try {
     const row = db.prepare(`
-      SELECT 
-        SUM(CASE WHEN CAST(pnl AS REAL) > 0 THEN 1 ELSE 0 END) as winners,
+      SELECT
+        SUM(CASE WHEN CAST(COALESCE(pnl_net, pnl) AS REAL) > 0 THEN 1 ELSE 0 END) as winners,
         COUNT(id) as total
-      FROM trades 
+      FROM trades
       WHERE action = 'SELL' AND pnl IS NOT NULL AND pnl != ''
     `).get();
     
@@ -596,7 +596,8 @@ app.get("/api/portfolio", async (_req, res) => {
     // Lifetime Realized PNL
     const allHistoricalTrades = readTrades(null, tradingMode, null, 10000);
     const lifetimeRealizedPnl = allHistoricalTrades.reduce((acc, t) => {
-        if (t.action === "SELL" && t.pnl) return acc + parseFloat(t.pnl);
+        // NET of modelled costs (fallback to gross for legacy/CSV rows).
+        if (t.action === "SELL" && t.pnl) return acc + parseFloat(t.pnl_net != null ? t.pnl_net : t.pnl);
         return acc;
     }, 0);
 
@@ -1022,7 +1023,9 @@ async function getNavHistory(range = '1mo') {
   let lifetimePnl = 0;
   trades.forEach(t => {
     if (t.action === 'SELL' && t.pnl) {
-      const val = parseFloat(t.pnl);
+      // NET of modelled costs so the reconstructed NAV curve matches the
+      // account, not the gross trade log (fallback to gross for legacy rows).
+      const val = parseFloat(t.pnl_net != null ? t.pnl_net : t.pnl);
       pnlByDate[t.date] = (pnlByDate[t.date] || 0) + val;
       lifetimePnl += val;
     }
@@ -1308,7 +1311,10 @@ app.get("/api/analytics", async (_req, res) => {
       // (e.g. 16/57 = 28.1% instead of the true 16/46 = 34.8%).
       if (t.action === "SELL" && t.pnl !== null && t.pnl !== undefined) {
         totalTrades++;
-        const pnl = parseFloat(t.pnl);
+        // Prefer NET P&L (after modelled costs) so win rate and profit factor
+        // reflect the real account, not the gross overstatement. Legacy/CSV
+        // rows without pnl_net fall back to gross.
+        const pnl = parseFloat(t.pnl_net != null ? t.pnl_net : t.pnl);
         totalPnl += pnl;
         if (pnl > 0) {
           winCount++;
@@ -1585,9 +1591,9 @@ app.get("/api/daily-pnl", (_req, res) => {
   try {
     const rows = db.prepare(`
       SELECT date,
-             ROUND(SUM(pnl), 2) AS pnl,
-             SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins,
-             SUM(CASE WHEN pnl <= 0 THEN 1 ELSE 0 END) AS losses
+             ROUND(SUM(COALESCE(pnl_net, pnl)), 2) AS pnl,
+             SUM(CASE WHEN COALESCE(pnl_net, pnl) > 0 THEN 1 ELSE 0 END) AS wins,
+             SUM(CASE WHEN COALESCE(pnl_net, pnl) <= 0 THEN 1 ELSE 0 END) AS losses
       FROM trades
       WHERE action = 'SELL' AND pnl IS NOT NULL
       GROUP BY date ORDER BY date DESC LIMIT 30
