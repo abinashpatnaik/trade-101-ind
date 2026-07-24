@@ -460,7 +460,27 @@ class TradingAgent:
     # Per-symbol processing
     # ------------------------------------------------------------------
 
-    def _process_symbol(self, symbol: str, buy_eligible: bool = True) -> None:
+    @staticmethod
+    def _buy_block_reason(in_targets: bool, buys_allowed: bool) -> str:
+        """The correct, disambiguated reason a BUY is vetoed for a scanned name.
+
+        ``buy_eligible`` collapses two distinct causes, which a single hardcoded
+        string mislabels:
+          * an APPROVED name (``in_targets``) is ineligible only because entries
+            are paused near the close — NOT because it is off-list;
+          * a name absent from today's targets is genuinely off-list and managed
+            exit-only.
+        The first previously read "Not in today's approved targets" while being
+        approved (the DIACABS contradiction on the dashboard).
+        """
+        if in_targets and not buys_allowed:
+            return (f"New entries paused — within "
+                    f"{config.market.no_entry_buffer_minutes} min of close "
+                    f"(exit-only)")
+        return "Not in today's approved targets — exit-only"
+
+    def _process_symbol(self, symbol: str, buy_eligible: bool = True,
+                        buy_block_reason: Optional[str] = None) -> None:
         """Full analysis + execution pipeline for a single ticker.
 
         When *buy_eligible* is False the symbol is managed for EXITS only: BUY
@@ -468,6 +488,14 @@ class TradingAgent:
         is not in today's vetted targets. Held positions that dropped off the
         approved list are still scanned (buy_eligible=False) so their
         stop-loss / trailing / sell logic keeps running.
+
+        *buy_block_reason* is the human-readable cause of the veto shown on the
+        dashboard. It matters because ``buy_eligible`` is False for two distinct
+        reasons — an approved name paused near the close, versus a held name
+        that dropped off today's targets — and a single hardcoded string
+        mislabels the first as the second (an approved stock reading
+        "not in approved targets"). The caller, which knows both the target set
+        and whether buys are open, supplies the correct one.
         """
         try:
             is_held = symbol in self.portfolio.open_positions
@@ -567,12 +595,10 @@ class TradingAgent:
 
             # --- 4.6 Vetting blocklist + stale-bus BUY gates ---
             if decision.action == "BUY" and not buy_eligible:
-                logger.info(
-                    "BUY vetoed for %s — not in today's vetted targets "
-                    "(held position, exit-only management).", symbol,
-                )
+                reason = buy_block_reason or "Not in today's approved targets — exit-only"
+                logger.info("BUY vetoed for %s — %s", symbol, reason)
                 decision.action = "HOLD"
-                decision.reason = "Not in today's approved targets — exit-only"
+                decision.reason = reason
                 decision.quantity = 0
             if decision.action == "BUY" and is_blocked:
                 logger.info(
@@ -1242,7 +1268,11 @@ class TradingAgent:
                 for symbol in scan_set:
                     if self._shutdown_requested:
                         break
-                    self._process_symbol(symbol, buy_eligible=(symbol in buy_set))
+                    eligible = symbol in buy_set
+                    reason = None if eligible else self._buy_block_reason(
+                        symbol in target_set, buys_allowed)
+                    self._process_symbol(symbol, buy_eligible=eligible,
+                                         buy_block_reason=reason)
 
                 # Dump signals for dashboard (and prune rows from previous
                 # sessions so stale hold-reasons never surface in the UI)

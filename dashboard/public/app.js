@@ -443,7 +443,15 @@ function renderVetting(v) {
         return `<span class="chip is-good"><span class="dot" aria-hidden="true"></span>${esc(s)}</span>`;
       })
       .join("");
-    if (when) when.textContent = `· ${esc(vetted.source || "")} ${vetted.session_date || ""}`;
+    // Surface WHEN this vetting ran. The screen shows a full-day trade blotter,
+    // but the vetting status is a point-in-time snapshot that re-runs intraday —
+    // so a name traded in the morning can read "blocked" here after a later
+    // re-vet. The "as of HH:MM" tells the viewer this status is not the whole day.
+    if (when) {
+      const t = (vetted.ts || "").slice(11, 16); // HH:MM from ISO timestamp
+      when.textContent = `· ${esc(vetted.source || "")} ${vetted.session_date || ""}`
+        + (t ? ` · as of ${t}` : "");
+    }
   } else {
     approvedEl.innerHTML = `<span class="empty">Waiting for pre-market vetting…</span>`;
   }
