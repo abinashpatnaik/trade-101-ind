@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS trades (
     price REAL NOT NULL,
     notional REAL NOT NULL,
     pnl REAL,
+    pnl_net REAL,
     exit_reason TEXT,
     mode TEXT DEFAULT 'paper',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -155,7 +156,46 @@ class TradingDB:
                 conn.execute("ALTER TABLE signals ADD COLUMN ml_confidence_swing REAL")
             except sqlite3.OperationalError:
                 pass
+            # Migrate: add pnl_net (P&L after modelled round-trip costs) to trades.
+            # The `pnl` column is GROSS — entry vs exit price only — so every
+            # dashboard number derived from it (realized chart, win rate, profit
+            # factor, lifetime) overstated by the full cost of trading. pnl_net
+            # deducts the modelled round-trip friction so those tie out far
+            # closer to the broker's actual day P&L. Backfill existing SELLs so
+            # history is net immediately, not just new trades.
+            try:
+                conn.execute("ALTER TABLE trades ADD COLUMN pnl_net REAL")
+                self._backfill_pnl_net(conn)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         logger.debug("Database schema verified.")
+
+    def _backfill_pnl_net(self, conn) -> None:
+        """Populate pnl_net for existing SELL rows using the modelled cost.
+
+        Runs once, right after the column is first added. Assumes intraday
+        (same-day) costs — the dominant case now that IN flattens at the close
+        and US is a cash account — so it may slightly under-deduct for any
+        legacy overnight holds. The broker's day P&L stays the source of truth;
+        this only removes the systematic GROSS overstatement from history.
+        """
+        try:
+            from trading_costs import round_trip_cost_pct
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("pnl_net backfill skipped (trading_costs import): %s", exc)
+            return
+        rows = conn.execute(
+            "SELECT id, notional, pnl FROM trades "
+            "WHERE action = 'SELL' AND pnl IS NOT NULL AND pnl_net IS NULL"
+        ).fetchall()
+        for row in rows:
+            notional = row["notional"] or 0.0
+            cost = round_trip_cost_pct(notional, overnight=False,
+                                       market=_ACTIVE_MARKET) * notional
+            conn.execute("UPDATE trades SET pnl_net = ? WHERE id = ?",
+                         (round(row["pnl"] - cost, 2), row["id"]))
+        if rows:
+            logger.info("Backfilled pnl_net for %d historical SELL trades.", len(rows))
 
     # ------------------------------------------------------------------
     # Trades
@@ -173,18 +213,42 @@ class TradingDB:
         pnl: Optional[float] = None,
         exit_reason: Optional[str] = None,
         mode: str = "paper",
+        overnight: bool = False,
     ) -> int:
-        """Insert a trade record. Returns the row ID."""
+        """Insert a trade record. Returns the row ID.
+
+        For SELL rows with a P&L, also stores ``pnl_net`` — the P&L after the
+        modelled round-trip friction — so dashboard aggregates read net instead
+        of the gross ``pnl``. ``overnight`` selects the delivery cost schedule
+        (STT both legs + the DP charge); it defaults to intraday, the dominant
+        case. The broker's day P&L remains authoritative; this is the honest
+        approximation for historical per-trade figures.
+        """
+        pnl_net = self._net_pnl(pnl, notional, action, overnight)
         with self._conn() as conn:
             cursor = conn.execute(
                 """INSERT INTO trades
-                   (date, time, symbol, action, quantity, price, notional, pnl, exit_reason, mode)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (date, time, symbol, action, quantity, price, notional, pnl, pnl_net, exit_reason, mode)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (date, time, symbol, action.upper(), quantity, price,
                  round(notional, 2), round(pnl, 2) if pnl is not None else None,
-                 exit_reason or None, mode),
+                 pnl_net, exit_reason or None, mode),
             )
             return cursor.lastrowid
+
+    @staticmethod
+    def _net_pnl(pnl: Optional[float], notional: float, action: str,
+                 overnight: bool) -> Optional[float]:
+        """Gross P&L minus modelled round-trip cost, for SELL rows only."""
+        if pnl is None or action.upper() != "SELL" or not notional:
+            return None
+        try:
+            from trading_costs import round_trip_cost_pct
+        except Exception:
+            return None
+        cost = round_trip_cost_pct(notional, overnight=overnight,
+                                   market=_ACTIVE_MARKET) * notional
+        return round(pnl - cost, 2)
 
     def update_trade_price_pnl(
         self,
@@ -200,13 +264,21 @@ class TradingDB:
         recomputed from the corrected price.
         """
         with self._conn() as conn:
+            row = conn.execute(
+                "SELECT quantity, action FROM trades WHERE id = ?", (trade_id,)
+            ).fetchone()
+            notional = (row["quantity"] * price) if row else 0.0
+            action = row["action"] if row else "SELL"
+            pnl_net = self._net_pnl(pnl, notional, action, overnight=False)
             conn.execute(
                 """UPDATE trades
                    SET price = ?,
                        notional = round(quantity * ?, 2),
-                       pnl = ?
+                       pnl = ?,
+                       pnl_net = ?
                    WHERE id = ?""",
-                (price, price, round(pnl, 2) if pnl is not None else None, trade_id),
+                (price, price, round(pnl, 2) if pnl is not None else None,
+                 pnl_net, trade_id),
             )
 
     def get_trades(

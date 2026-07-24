@@ -48,7 +48,7 @@
       <div class="card tile"><span class="label">Available Cash</span><span id="kpi-cash" class="value num">—</span><span id="kpi-cash-sub" class="sub">&nbsp;</span></div>
       <div class="card tile"><span class="label">Open Positions</span><span id="kpi-positions" class="value num">—</span><span id="kpi-positions-sub" class="sub">&nbsp;</span></div>
       <div class="card tile"><span class="label">Win Rate</span><span id="kpi-winrate" class="value num">—</span><span id="kpi-winrate-sub" class="sub">&nbsp;</span></div>
-      <div class="card tile"><span class="label">Lifetime P&amp;L</span><span id="kpi-lifetime" class="value num">—</span><span id="kpi-lifetime-sub" class="sub">realized, all sessions</span></div>
+      <div class="card tile"><span class="label">Lifetime P&amp;L</span><span id="kpi-lifetime" class="value num">—</span><span id="kpi-lifetime-sub" class="sub">realized net, all sessions</span></div>
     </section>
 
     <!-- ===================== Charts row ===================== -->
@@ -73,8 +73,8 @@
       </div>
 
       <div class="card">
-        <h2>Daily realized P&amp;L</h2>
-        <div class="chart-box" role="img" aria-label="Realized profit and loss per trading session">
+        <h2>Daily realized P&amp;L <span class="sub" style="font-weight:400">· net of costs</span></h2>
+        <div class="chart-box" role="img" aria-label="Realized net profit and loss per trading session, after modelled trading costs">
           <canvas id="pnl-chart"></canvas>
         </div>
         <details class="data-table">
