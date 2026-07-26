@@ -75,9 +75,12 @@ services:
       # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
       # each blocked re-entry saves its round-trip friction.
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${IN_MAX_ENTRIES_PER_SYMBOL:-2}
-      # Fixed-fraction risk: a trade may lose at most 0.5% of NAV at its stop;
-      # weekly kill-switch pauses NEW entries after a -4% NAV week (net).
-      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.005}
+      # Fixed-fraction risk. IN is PINNED to ~Rs37/trade (0.21% of the
+      # post-deposit Rs17.5k NAV) so the 2026-07-26 Rs10k deposit sits as dry
+      # powder instead of silently 2.3x-ing intraday positions — %-of-NAV
+      # sizing auto-scales on deposits. Re-derive when the capital is
+      # assigned a purpose (momentum sleeve at Rs50k+, etc.).
+      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.0021}
       - MAX_WEEKLY_LOSS_PCT=${IN_MAX_WEEKLY_LOSS:-0.04}
 
   orchestrator-in:
@@ -180,6 +183,9 @@ services:
       # weekly kill-switch pauses NEW entries after a -4% NAV week (net).
       - MAX_RISK_PER_TRADE_PCT=${US_MAX_RISK_PER_TRADE:-0.005}
       - MAX_WEEKLY_LOSS_PCT=${US_MAX_WEEKLY_LOSS:-0.04}
+      # TLT belongs to the calendar-flow agent (flow-us): the intraday trader
+      # must not adopt, stop-manage, or EOD-flatten it.
+      - ALPACA_IGNORE_SYMBOLS=${ALPACA_IGNORE_SYMBOLS:-TLT}
 
   orchestrator-us:
     <<: *agent-base
@@ -255,6 +261,25 @@ services:
       - HC_AGENT=trainer
       - EOD_API_KEY=${EOD_API_KEY}
       - TZ=America/New_York
+
+  # Month-end Treasury flow (validated 2026-07-22: +0.304%/trade, 24y/288
+  # trades). Long TLT, close of 7th-last trading day -> close of 2nd-last,
+  # NO stop (the tested spec), ~12 trades/yr. Sleeps outside its window.
+  flow-us:
+    <<: *agent-base
+    container_name: us-flow
+    command: ["python", "-m", "agents.flow_trader"]
+    environment:
+      - TRADING_MARKET=US
+      - REDIS_URL=redis://redis:6379/0
+      - HC_AGENT=flow
+      - APCA_API_KEY_ID=${APCA_API_KEY_ID}
+      - APCA_API_SECRET_KEY=${APCA_API_SECRET_KEY}
+      - TRADING_MODE=${TRADING_MODE:-paper}
+      - TZ=America/New_York
+      - FLOW_ENABLED=${FLOW_ENABLED:-true}
+      - FLOW_SYMBOL=${FLOW_SYMBOL:-TLT}
+      - FLOW_ALLOC_PCT=${FLOW_ALLOC_PCT:-0.5}
 
   # =========================================================================
   # Dashboards (unchanged)
