@@ -277,7 +277,12 @@ services:
       - APCA_API_SECRET_KEY=${APCA_API_SECRET_KEY}
       - TRADING_MODE=${TRADING_MODE:-paper}
       - TZ=America/New_York
-      - FLOW_ENABLED=${FLOW_ENABLED:-true}
+      # HELD OFF until the account clears the size where this is worth its
+      # capital lockup: re-enable at ~$500 US (TLT positions ~$250, ~$0.76/
+      # trade vs ~$0.15 at $98). The agent still runs — it heartbeats and
+      # logs its schedule — so re-enabling is a one-flag change, no redeploy
+      # of logic. Set FLOW_ENABLED=true in .env when the threshold is met.
+      - FLOW_ENABLED=${FLOW_ENABLED:-false}
       - FLOW_SYMBOL=${FLOW_SYMBOL:-TLT}
       - FLOW_ALLOC_PCT=${FLOW_ALLOC_PCT:-0.5}
 
