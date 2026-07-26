@@ -340,6 +340,36 @@ class DecisionEngine:
             qty = round(qty, 4)
             return max(0.01, qty)
 
+    def dynamic_stop_pct(self, price: float, atr: float) -> float:
+        """The stop distance (as a fraction of price) a BUY at *price* will get.
+
+        Single source of truth for the ATR-dynamic stop — used both where the
+        stop order is priced and by the risk-per-trade cap, so the cap always
+        sizes against the stop the trade will actually have.
+        """
+        if price <= 0:
+            return self._risk.stop_loss_pct
+        atr_pct = (atr * 2.0) / price if atr > 0 else self._risk.stop_loss_pct
+        return max(self._risk.stop_loss_pct, min(0.05, atr_pct))
+
+    def _apply_risk_cap(self, quantity: float, portfolio_value: float,
+                        price: float, atr: float) -> float:
+        """Cap quantity so the loss at the initial stop is at most
+        risk.max_risk_per_trade_pct of portfolio value. Cap only — never
+        increases size. 0 disables (unchanged behaviour)."""
+        risk_cap = float(getattr(self._risk, "max_risk_per_trade_pct", 0.0) or 0.0)
+        if risk_cap <= 0 or price <= 0 or quantity <= 0:
+            return quantity
+        stop_pct = self.dynamic_stop_pct(price, atr)
+        if stop_pct <= 0:
+            return quantity
+        cap_qty = (portfolio_value * risk_cap) / (price * stop_pct)
+        if cap_qty >= quantity:
+            return quantity
+        if ACTIVE_MARKET == "IN":
+            return float(math.floor(cap_qty))        # whole shares, never round up
+        return round(cap_qty, 4)
+
     def _has_capacity(self, open_positions: Dict) -> bool:
         """Return True if the portfolio can take on another position."""
         return len(open_positions) < self._max_open_positions()
@@ -719,6 +749,30 @@ class DecisionEngine:
                 portfolio_value, current_price, trend_signal.atr
             )
 
+            # --- Fixed-fraction risk cap (max loss at the stop, % of equity) ---
+            capped = self._apply_risk_cap(
+                quantity, portfolio_value, current_price, trend_signal.atr)
+            if capped < quantity:
+                logger.info(
+                    "Risk cap: %s qty %.4f -> %.4f (max %.2f%% of equity at the stop).",
+                    symbol, quantity, capped,
+                    self._risk.max_risk_per_trade_pct * 100)
+                quantity = capped
+            if quantity <= 0:
+                return Decision(
+                    action="HOLD",
+                    confidence=confidence,
+                    reason=(
+                        f"BUY signal (score={combined_score:.3f}) but the "
+                        f"{self._risk.max_risk_per_trade_pct*100:.2f}% risk budget "
+                        "cannot fund even one share at this stop distance."
+                    ),
+                    quantity=0,
+                    stop_loss_price=0.0,
+                    take_profit_price=0.0,
+                    combined_score=combined_score, ml_confidence=active_ml_confidence,
+                )
+
             # Further cap quantity by remaining daily budget
             if remaining_budget < float("inf") and current_price > 0:
                 budget_qty = max(1, int(remaining_budget / current_price))
@@ -768,11 +822,10 @@ class DecisionEngine:
                     combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
-            # Dynamic ATR-based stop loss — adapts to each stock's volatility
-            # Uses 2× ATR as the stop distance, bounded between config floor and 5%
-            atr_multiplier = 2.0
-            atr_pct = (trend_signal.atr * atr_multiplier) / current_price if current_price > 0 else 0.025
-            dynamic_stop_loss_pct = max(self._risk.stop_loss_pct, min(0.05, atr_pct))
+            # Dynamic ATR-based stop loss — adapts to each stock's volatility.
+            # Same helper the risk cap sizes against, so they cannot diverge.
+            dynamic_stop_loss_pct = self.dynamic_stop_pct(
+                current_price, trend_signal.atr)
 
             stop_loss_price = round(
                 current_price * (1.0 - dynamic_stop_loss_pct), 4
@@ -782,7 +835,11 @@ class DecisionEngine:
             )
             
             # Dynamic trailing stop pct (same ATR basis, bounded 1% to 4%),
-            # scaled by the strategy directive (wider in trends, tighter in ranges)
+            # scaled by the strategy directive (wider in trends, tighter in ranges).
+            # Uses the RAW 2xATR fraction (not the stop helper, whose floor
+            # would widen tight trails) — identical to the pre-refactor value.
+            atr_pct = ((trend_signal.atr * 2.0) / current_price
+                       if current_price > 0 else 0.025)
             trailing_mult = float(self._directive.get("trailing_gap_multiplier", 1.0))
             dynamic_trailing_stop_pct = max(0.01, min(0.04, atr_pct)) * trailing_mult
             dynamic_trailing_stop_pct = max(0.005, min(0.06, dynamic_trailing_stop_pct))
