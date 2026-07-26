@@ -21,8 +21,12 @@ class FakeSource:
     def __init__(self, symbols, days=400):
         self.symbols = list(symbols)
         self._daily = {}
-        base = pd.Timestamp("2026-01-01")
-        idx = pd.date_range(base - pd.Timedelta(days=days), periods=days, freq="B")
+        # End the synthetic calendar at (near) today so the harness's
+        # wall-clock-relative intraday-limit filter always leaves a full
+        # window — anchoring to a fixed past date made this test rot as
+        # real time advanced past the window.
+        end = pd.Timestamp.now().normalize()
+        idx = pd.bdate_range(end=end, periods=days)
         for i, s in enumerate(self.symbols):
             drift = 0.001 if s.startswith("UP") else -0.001
             close = 100 * np.cumprod(1 + drift + 0.0001 * np.sin(np.arange(days) + i))
