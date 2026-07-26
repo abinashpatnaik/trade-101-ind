@@ -75,12 +75,14 @@ services:
       # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
       # each blocked re-entry saves its round-trip friction.
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${IN_MAX_ENTRIES_PER_SYMBOL:-2}
-      # Fixed-fraction risk. IN is PINNED to ~Rs37/trade (0.21% of the
-      # post-deposit Rs17.5k NAV) so the 2026-07-26 Rs10k deposit sits as dry
-      # powder instead of silently 2.3x-ing intraday positions — %-of-NAV
-      # sizing auto-scales on deposits. Re-derive when the capital is
-      # assigned a purpose (momentum sleeve at Rs50k+, etc.).
-      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.0021}
+      # Fixed-fraction risk, 0.5% of NAV per trade. UNPINNED 2026-07-26 at the
+      # owner's explicit instruction so the full post-deposit Rs17.5k NAV is
+      # deployed: positions ~Rs3,500, risk ~Rs87/trade.
+      # Recorded expectation at the time, so live results can be judged against
+      # what was predicted rather than in hindsight: simulation off the prior
+      # week put the typical week at -Rs297 (-1.70% NAV), P(green week) ~13%,
+      # friction ~Rs166/week. The kill-switches below are what bound it.
+      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.005}
       - MAX_WEEKLY_LOSS_PCT=${IN_MAX_WEEKLY_LOSS:-0.04}
 
   orchestrator-in:
