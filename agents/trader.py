@@ -29,7 +29,7 @@ import sys
 import threading
 import time
 import logging.handlers
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 from config import config, CUR_SYM
@@ -460,8 +460,44 @@ class TradingAgent:
     # Per-symbol processing
     # ------------------------------------------------------------------
 
+    def _weekly_loss_paused(self) -> bool:
+        """True when realized NET P&L since Monday breaches the weekly loss cap.
+
+        The "stop when live diverges from expectation" rule: measured
+        expectancy is ~0, so a deep weekly drawdown means something is broken
+        (regime, execution, or a bug) and the right move is to stop paying
+        friction until the week resets. Entries only — exits never pause.
+        Fails OPEN (returns False) on any error: this is a safety net on top
+        of the daily loss cap, not a core gate, and a dead DB must not silently
+        change trading behaviour.
+        """
+        cap = float(getattr(config.risk, "max_weekly_loss_pct", 0.0) or 0.0)
+        if cap <= 0:
+            return False
+        try:
+            today = datetime.now().date()
+            monday = today - timedelta(days=today.weekday())
+            mode = "paper" if str(os.getenv("TRADING_MODE", "paper")).lower() == "paper" else "live"
+            stats = self._trading_db.get_realized_pnl(
+                since_date=str(monday), mode=mode, net=True)
+            nav = float(self.portfolio.portfolio_value or 0.0)
+            if nav <= 0:
+                return False
+            weekly_net = float(stats.get("realizedPnl") or 0.0)
+            if weekly_net <= -(cap * nav):
+                logger.warning(
+                    "WEEKLY LOSS KILL-SWITCH: net %s%.2f since %s breaches "
+                    "-%.1f%% of NAV (%s%.2f) — new entries paused until Monday.",
+                    CUR_SYM, weekly_net, monday, cap * 100, CUR_SYM, cap * nav,
+                )
+                return True
+        except Exception as exc:
+            logger.warning("weekly loss check failed (entries stay enabled): %s", exc)
+        return False
+
     @staticmethod
-    def _buy_block_reason(in_targets: bool, buys_allowed: bool) -> str:
+    def _buy_block_reason(in_targets: bool, buys_allowed: bool,
+                          weekly_paused: bool = False) -> str:
         """The correct, disambiguated reason a BUY is vetoed for a scanned name.
 
         ``buy_eligible`` collapses two distinct causes, which a single hardcoded
@@ -473,6 +509,9 @@ class TradingAgent:
         The first previously read "Not in today's approved targets" while being
         approved (the DIACABS contradiction on the dashboard).
         """
+        if in_targets and weekly_paused:
+            return ("Weekly loss limit hit — new entries paused until Monday "
+                    "(risk kill-switch, exit-only)")
         if in_targets and not buys_allowed:
             return (f"New entries paused — within "
                     f"{config.market.no_entry_buffer_minutes} min of close "
@@ -1246,12 +1285,17 @@ class TradingAgent:
                         self.session.minutes_remaining(),
                     )
 
+                # Weekly loss kill-switch: entries pause for the rest of the
+                # trading week; exits keep running below regardless.
+                weekly_paused = self._weekly_loss_paused()
+
                 # Always exit-manage open positions, even if they dropped off
                 # today's vetted targets (or during the EOD buffer). Buys stay
-                # gated to daily_targets AND the no-entry window; held-but-
-                # unapproved names are scanned for exits only (buy_eligible=False).
+                # gated to daily_targets AND the no-entry window AND the weekly
+                # kill-switch; held-but-unapproved names are scanned for exits
+                # only (buy_eligible=False).
                 target_set = set(daily_targets)
-                buy_set = target_set if buys_allowed else set()
+                buy_set = target_set if (buys_allowed and not weekly_paused) else set()
                 held_only = [
                     s for s in self.portfolio.open_positions.keys() if s not in target_set
                 ]
@@ -1270,7 +1314,7 @@ class TradingAgent:
                         break
                     eligible = symbol in buy_set
                     reason = None if eligible else self._buy_block_reason(
-                        symbol in target_set, buys_allowed)
+                        symbol in target_set, buys_allowed, weekly_paused)
                     self._process_symbol(symbol, buy_eligible=eligible,
                                          buy_block_reason=reason)
 

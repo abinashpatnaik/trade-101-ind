@@ -365,12 +365,17 @@ class TradingDB:
         self,
         since_date: Optional[str] = None,
         mode: Optional[str] = None,
+        net: bool = False,
     ) -> Dict[str, float]:
         """
         Aggregate realised P&L across all SELL trades (optionally since a date
         and/or for a given mode). Rows with a NULL pnl (fill price unknown) are
         counted separately so callers can tell reconciliation gaps apart from a
         genuinely flat day.
+
+        ``net=True`` sums ``pnl_net`` (after modelled costs, falling back to
+        gross for legacy rows) — the right basis for risk kill-switches, since
+        gross understates real losses by the friction paid.
 
         Returns dict with realizedPnl, sellCount, unknownCount.
         """
@@ -383,11 +388,12 @@ class TradingDB:
             clauses.append("mode = ?")
             params.append(mode)
         where = f"WHERE {' AND '.join(clauses)}"
+        pnl_expr = "COALESCE(pnl_net, pnl)" if net else "pnl"
 
         with self._conn() as conn:
             row = conn.execute(
                 f"""SELECT
-                    COALESCE(SUM(pnl), 0) as realized_pnl,
+                    COALESCE(SUM({pnl_expr}), 0) as realized_pnl,
                     COUNT(*) as sell_count,
                     COALESCE(SUM(CASE WHEN pnl IS NULL THEN 1 ELSE 0 END), 0) as unknown_count
                 FROM trades {where}""",

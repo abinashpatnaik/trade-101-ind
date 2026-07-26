@@ -108,6 +108,25 @@ class RiskConfig:
     max_entries_per_symbol_per_day: int = field(
         default_factory=lambda: int(os.getenv("MAX_ENTRIES_PER_SYMBOL_PER_DAY", "0"))
     )
+    # Fixed-fraction risk cap: max fraction of portfolio value a single trade
+    # may LOSE if its initial stop is hit (0 = disabled). Layered as a cap on
+    # top of the existing ATR/notional sizing, never a floor — so it can only
+    # shrink positions. Classic small-account risk control ("risk 0.5% per
+    # trade"): equalises rupee/dollar risk across calm and volatile names,
+    # where notional-based sizing lets volatile names risk 2-3x more.
+    max_risk_per_trade_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_RISK_PER_TRADE_PCT", "0"))
+    )
+    # Weekly loss kill-switch: pause NEW entries for the rest of the trading
+    # week when realized net P&L since Monday falls below -this fraction of
+    # NAV (0 = disabled). Exits are never blocked. The "stop trading when
+    # live diverges from expectation" rule both strategy docs call for —
+    # with measured expectancy ~0, a deep weekly loss means something is
+    # wrong (regime, execution, bug), and the correct response is to stop
+    # paying friction until the week resets.
+    max_weekly_loss_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_WEEKLY_LOSS_PCT", "0"))
+    )
 
 
 @dataclass
