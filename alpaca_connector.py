@@ -195,9 +195,23 @@ class AlpacaConnector:
             logger.warning("Failed to determine Alpaca account type: %s — assuming margin (safer).", exc)
             return True
 
+    @staticmethod
+    def ignored_symbols() -> set:
+        """Symbols the intraday agent must never adopt or manage.
+
+        Mirror of ZERODHA_IGNORE_HOLDINGS: positions run by OTHER agents (the
+        calendar-flow trader's TLT) must be invisible here, or the intraday
+        machinery would stop-manage and EOD-flatten a strategy whose validated
+        spec is hold-with-no-stop across sessions.
+        """
+        return {s.strip().upper()
+                for s in os.getenv("ALPACA_IGNORE_SYMBOLS", "").split(",")
+                if s.strip()}
+
     def get_positions(self) -> Optional[Dict[str, Dict]]:
         if not self.trading_client:
             return None
+        ignored = self.ignored_symbols()
         try:
             alpaca_positions = self.trading_client.get_all_positions()
             positions = {}
@@ -206,6 +220,8 @@ class AlpacaConnector:
                 if qty == 0:
                     continue
                 symbol = pos.symbol
+                if symbol.upper() in ignored:
+                    continue
                 positions[symbol] = {
                     "quantity": qty,
                     "avg_cost": float(pos.avg_entry_price),
