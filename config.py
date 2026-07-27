@@ -117,6 +117,18 @@ class RiskConfig:
     max_risk_per_trade_pct: float = field(
         default_factory=lambda: float(os.getenv("MAX_RISK_PER_TRADE_PCT", "0"))
     )
+    # Total PORTFOLIO HEAT: the summed risk of all open positions may not
+    # exceed this fraction of NAV (0 = disabled, only the per-trade cap
+    # applies). Fixed per-trade risk alone leaves deployment hostage to how
+    # many signals happen to fire — 1 position deployed only 20% of NAV while
+    # 5 deployed 90%. A heat budget lets each trade take MORE when few are
+    # open (better utilisation on thin days) while bounding what a
+    # simultaneous stop-out of everything can cost. It also self-limits
+    # concurrency: at 0.75%/trade and 2.25% total, the 4th position is
+    # refused because the budget is spent.
+    max_portfolio_heat_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_PORTFOLIO_HEAT_PCT", "0"))
+    )
     # Weekly loss kill-switch: pause NEW entries for the rest of the trading
     # week when realized net P&L since Monday falls below -this fraction of
     # NAV (0 = disabled). Exits are never blocked. The "stop trading when

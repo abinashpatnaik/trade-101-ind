@@ -359,14 +359,43 @@ class DecisionEngine:
         atr_pct = (atr * 2.0) / price if atr > 0 else self._risk.stop_loss_pct
         return max(self._risk.stop_loss_pct, min(0.05, atr_pct))
 
+    def available_risk_pct(self, open_positions: Dict) -> float:
+        """Risk budget (as a fraction of NAV) this trade may consume.
+
+        The per-trade cap, further limited by whatever is left of the total
+        portfolio heat budget. Each already-open position is assumed to be
+        carrying a full per-trade risk allocation — conservative, and accurate
+        because that is exactly how positions are sized.
+
+        With 0.75%/trade and 2.25% total this yields 0.75% for each of the
+        first three positions and 0 for the fourth, so concurrency is capped
+        by the risk budget rather than an arbitrary count.
+        """
+        per_trade = float(getattr(self._risk, "max_risk_per_trade_pct", 0.0) or 0.0)
+        heat_cap = float(getattr(self._risk, "max_portfolio_heat_pct", 0.0) or 0.0)
+        if per_trade <= 0:
+            return 0.0                      # per-trade cap disabled entirely
+        if heat_cap <= 0:
+            return per_trade                # no heat budget — per-trade only
+        used = len(open_positions or {}) * per_trade
+        return max(0.0, min(per_trade, heat_cap - used))
+
     def _apply_risk_cap(self, quantity: float, portfolio_value: float,
-                        price: float, atr: float) -> float:
-        """Cap quantity so the loss at the initial stop is at most
-        risk.max_risk_per_trade_pct of portfolio value. Cap only — never
-        increases size. 0 disables (unchanged behaviour)."""
-        risk_cap = float(getattr(self._risk, "max_risk_per_trade_pct", 0.0) or 0.0)
-        if risk_cap <= 0 or price <= 0 or quantity <= 0:
+                        price: float, atr: float,
+                        open_positions: Optional[Dict] = None) -> float:
+        """Cap quantity so the loss at the initial stop fits the risk budget.
+
+        The budget is the per-trade cap, reduced by heat already committed to
+        open positions. Cap only — never increases size. Returns 0 when the
+        heat budget is exhausted, which blocks the trade upstream.
+        0 per-trade cap disables the whole mechanism (unchanged behaviour).
+        """
+        risk_cap = self.available_risk_pct(open_positions or {})
+        per_trade = float(getattr(self._risk, "max_risk_per_trade_pct", 0.0) or 0.0)
+        if per_trade <= 0 or price <= 0 or quantity <= 0:
             return quantity
+        if risk_cap <= 0:
+            return 0.0                      # portfolio heat budget spent
         stop_pct = self.dynamic_stop_pct(price, atr)
         if stop_pct <= 0:
             return quantity
@@ -761,24 +790,34 @@ class DecisionEngine:
                 portfolio_value, current_price, trend_signal.atr
             )
 
-            # --- Fixed-fraction risk cap (max loss at the stop, % of equity) ---
+            # --- Risk budget: per-trade cap, limited by open portfolio heat ---
+            budget_pct = self.available_risk_pct(open_positions)
             capped = self._apply_risk_cap(
-                quantity, portfolio_value, current_price, trend_signal.atr)
+                quantity, portfolio_value, current_price, trend_signal.atr,
+                open_positions)
             if capped < quantity:
                 logger.info(
-                    "Risk cap: %s qty %.4f -> %.4f (max %.2f%% of equity at the stop).",
-                    symbol, quantity, capped,
-                    self._risk.max_risk_per_trade_pct * 100)
+                    "Risk budget: %s qty %.4f -> %.4f (%.2f%% of equity at the "
+                    "stop; %d position(s) already holding heat).",
+                    symbol, quantity, capped, budget_pct * 100, len(open_positions),
+                )
                 quantity = capped
             if quantity <= 0:
+                heat_spent = budget_pct <= 0
+                reason = (
+                    f"Portfolio heat budget spent — "
+                    f"{len(open_positions)} open position(s) hold the full "
+                    f"{self._risk.max_portfolio_heat_pct*100:.2f}% risk allowance."
+                    if heat_spent else
+                    f"BUY signal (score={combined_score:.3f}) but the "
+                    f"{budget_pct*100:.2f}% risk budget cannot fund even one "
+                    "share at this stop distance."
+                )
+                logger.info("BUY blocked for %s — %s", symbol, reason)
                 return Decision(
                     action="HOLD",
                     confidence=confidence,
-                    reason=(
-                        f"BUY signal (score={combined_score:.3f}) but the "
-                        f"{self._risk.max_risk_per_trade_pct*100:.2f}% risk budget "
-                        "cannot fund even one share at this stop distance."
-                    ),
+                    reason=reason,
                     quantity=0,
                     stop_loss_price=0.0,
                     take_profit_price=0.0,
