@@ -42,6 +42,13 @@ from trend_engine import TrendSignal
 
 logger = logging.getLogger(__name__)
 
+# --- Two-step capital deployment (see the max-deployment check below) -------
+# Below its threshold an account deploys hard; at/above it the cap steps down
+# to wallet.max_deploy_pct (50%) so a grown account keeps a cash buffer.
+SMALL_ACCOUNT_DEPLOY_PCT = float(os.getenv("SMALL_ACCOUNT_DEPLOY_PCT", "0.90"))
+US_DEPLOY_STEP_NAV = float(os.getenv("US_DEPLOY_STEP_NAV", "500"))
+IN_DEPLOY_STEP_NAV = float(os.getenv("IN_DEPLOY_STEP_NAV", "100000"))
+
 
 @dataclass
 class Decision:
@@ -661,13 +668,18 @@ class DecisionEngine:
                     combined_score=combined_score, ml_confidence=active_ml_confidence,
                 )
 
-            # --- Max deployment check (e.g. only invest 50% of purse) ---
-            if ACTIVE_MARKET == "US" and portfolio_value < 500:
-                max_deploy_pct = 0.95
-            elif ACTIVE_MARKET == "IN" and portfolio_value < 50000:
-                max_deploy_pct = 0.95
-            else:
-                max_deploy_pct = config.wallet.max_deploy_pct
+            # --- Max deployment check: two-step by account size ---
+            # Small accounts deploy hard (90%) because a half-deployed tiny
+            # account can't hold enough positions to matter; once the account
+            # clears its threshold the cap steps DOWN to wallet.max_deploy_pct
+            # (50%), keeping a real cash buffer when there is something to
+            # protect. Thresholds: US $500, IN Rs1,00,000.
+            small_account = (
+                (ACTIVE_MARKET == "US" and portfolio_value < US_DEPLOY_STEP_NAV)
+                or (ACTIVE_MARKET == "IN" and portfolio_value < IN_DEPLOY_STEP_NAV)
+            )
+            max_deploy_pct = (SMALL_ACCOUNT_DEPLOY_PCT if small_account
+                              else config.wallet.max_deploy_pct)
             total_deployed = sum(
                 float(p.get("market_value", 0))
                 for p in open_positions.values()
