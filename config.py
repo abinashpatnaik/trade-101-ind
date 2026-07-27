@@ -342,11 +342,13 @@ def get_india_config() -> Config:
             # every close, so trades are INTRADAY — no DP charge, and
             # brokerage is min(Rs20, 0.03%) which scales linearly, so more
             # smaller positions carry no fixed-cost penalty.
-            # Raised to 4 to lift peak deployment (the 0.5% risk cap sizes
-            # each position at Rs1.7-3.5k, so 2 positions left ~60% of the
-            # post-deposit NAV idle). More names at the SAME per-trade risk
-            # is better diversified than fewer larger ones.
-            max_open_positions=4,
+            # Raised 2 -> 4 -> 5 to let the 90% deployment target actually be
+            # reachable: the 0.5% risk cap sizes each position at Rs1.7-3.5k,
+            # so N positions cap peak deployment at N x that. At 5 the binding
+            # constraint becomes the 90% deploy cap (as intended) rather than
+            # the position count. More names at the SAME per-trade risk is
+            # better diversified than fewer larger ones.
+            max_open_positions=5,
         ),
         wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),
@@ -386,7 +388,17 @@ def get_us_config() -> Config:
                      "INTU", "ISRG", "AMAT", "LRCX", "MU",
                      "PANW", "SNPS", "KLAC", "MELI", "CRWD"]
         ),
-        risk=RiskConfig(),
+        risk=RiskConfig(
+            # 3 -> 5 so the 90% small-account deployment target is reachable:
+            # the 0.5% risk cap sizes each position at ~$10-20, so 3 positions
+            # capped peak deployment near 60% of a ~$100 NAV.
+            # NOTE: this is a CASH account (PDT does not apply — the guard
+            # self-disables). Cash settles T+1, so aggressive same-day
+            # redeployment of unsettled proceeds risks a good-faith violation.
+            # The churn cap (2 entries/symbol/day) plus this position count
+            # keep that in check; if Alpaca ever flags it, lower this first.
+            max_open_positions=5,
+        ),
         wallet=WalletConfig(
             min_trade_value=10.0,
             daily_spend_cap=float(os.getenv("DAILY_SPEND_CAP", "10000.0"))
