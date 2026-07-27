@@ -337,9 +337,16 @@ def get_india_config() -> Config:
             stop_loss_pct=0.025,            # -2.5% hard stop floor (ATR-dynamic widens further)
             profit_lock_threshold=0.010,    # +1.0% before profit-lock activates (covers IN friction)
             trailing_gap_base=0.010,        # 1.0% trailing gap (IN mid-caps are more volatile)
-            # Small-account concentration: 2 larger positions amortise the
-            # fixed DP charge far better than 3 tiny ones.
-            max_open_positions=2,
+            # Was 2, to amortise the flat DP charge over larger positions.
+            # That rationale is OBSOLETE: since 2026-07-21 IN flattens at
+            # every close, so trades are INTRADAY — no DP charge, and
+            # brokerage is min(Rs20, 0.03%) which scales linearly, so more
+            # smaller positions carry no fixed-cost penalty.
+            # Raised to 4 to lift peak deployment (the 0.5% risk cap sizes
+            # each position at Rs1.7-3.5k, so 2 positions left ~60% of the
+            # post-deposit NAV idle). More names at the SAME per-trade risk
+            # is better diversified than fewer larger ones.
+            max_open_positions=4,
         ),
         wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),

@@ -155,15 +155,57 @@ class AlpacaConnector:
     # Account & Portfolio API
     # ------------------------------------------------------------------
 
+    def net_cash_transfers_today(self) -> float:
+        """Net external cash moved in/out TODAY (deposits +, withdrawals −).
+
+        Alpaca's daily P&L is ``equity - last_equity``, which counts a deposit
+        as profit: a $53.31 funding on 2026-07-27 made a −$0.73 trading day
+        report as +$52.58. Subtracting transfers restores the honest number.
+
+        The SDK exposes no activities method, so this hits the REST endpoint
+        directly. Cached per-day (transfers are rare and this is called every
+        loop) and fails OPEN at 0.0 — a transient API error must never corrupt
+        P&L into a *worse* lie than the one it fixes.
+        """
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        if getattr(self, "_transfers_day", None) == today:
+            return self._transfers_amount
+        amount = 0.0
+        try:
+            import requests
+            base = ("https://paper-api.alpaca.markets" if config.alpaca.paper_mode
+                    else "https://api.alpaca.markets")
+            resp = requests.get(
+                f"{base}/v2/account/activities",
+                headers={"APCA-API-KEY-ID": config.alpaca.api_key,
+                         "APCA-API-SECRET-KEY": config.alpaca.api_secret},
+                params={"activity_types": "CSD,CSW,JNLC,JNLS"}, timeout=10)
+            resp.raise_for_status()
+            for act in resp.json() or []:
+                if str(act.get("date")) == today:
+                    amount += float(act.get("net_amount") or 0.0)
+            if amount:
+                logger.info("Net cash transfers today: %.2f (excluded from daily P&L).",
+                            amount)
+        except Exception as exc:
+            logger.warning("Cash-transfer lookup failed (daily P&L unadjusted): %s", exc)
+            return 0.0
+        self._transfers_day = today
+        self._transfers_amount = amount
+        return amount
+
     def get_account_summary(self) -> Dict[str, float]:
         if not self.trading_client:
             return {}
         try:
             account = self.trading_client.get_account()
-            
+
             net_liquidation = float(account.portfolio_value)
             available_funds = float(account.cash)
+            # Deposits/withdrawals are not trading P&L — strip them out.
             daily_pnl = float(account.equity) - float(account.last_equity) if account.last_equity else 0.0
+            daily_pnl -= self.net_cash_transfers_today()
 
             buying_power = float(account.buying_power)
 
