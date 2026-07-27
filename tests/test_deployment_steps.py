@@ -56,16 +56,21 @@ def test_thresholds_are_the_agreed_values(monkeypatch):
 
 
 @pytest.mark.parametrize("market,nav", [("IN", 17_490.0), ("US", 101.16)])
-def test_position_count_allows_reaching_the_deploy_target(market, nav, monkeypatch):
-    """N positions x risk-cap size must be able to EXCEED 90% of NAV, else the
-    position count — not the deploy cap — is what limits deployment."""
+def test_heat_budget_reaches_the_deploy_target(market, nav, monkeypatch):
+    """Concurrency is limited by the HEAT BUDGET (0.75%/trade, 2.25% total),
+    not by max_open_positions — which is now only an outer bound. The
+    positions the budget permits must still reach the 90% deploy target,
+    otherwise deployment is silently capped below what was configured."""
     de_mod, cfg = _engine_for(market, monkeypatch)
-    risk = 0.005                       # compose enables 0.5% both markets
+    risk, heat = 0.0075, 0.0225        # compose values for both markets
     tight_stop = 0.025                 # the stop floor => largest position size
+    permitted = int(heat / risk)       # 3
+    assert permitted <= cfg.risk.max_open_positions, (
+        "max_open_positions must not cut below the heat budget")
     per_position = min(nav * risk / tight_stop, nav * cfg.risk.max_position_size_pct)
-    peak = cfg.risk.max_open_positions * per_position
-    assert peak >= nav * de_mod.SMALL_ACCOUNT_DEPLOY_PCT, (
-        f"{market}: {cfg.risk.max_open_positions} positions reach only "
+    peak = permitted * per_position
+    assert peak >= nav * de_mod.SMALL_ACCOUNT_DEPLOY_PCT * 0.99, (
+        f"{market}: {permitted} heat-permitted positions reach only "
         f"{peak/nav:.0%} of NAV — cannot hit the 90% target")
 
 

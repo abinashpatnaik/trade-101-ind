@@ -75,14 +75,19 @@ services:
       # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
       # each blocked re-entry saves its round-trip friction.
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${IN_MAX_ENTRIES_PER_SYMBOL:-2}
-      # Fixed-fraction risk, 0.5% of NAV per trade. UNPINNED 2026-07-26 at the
-      # owner's explicit instruction so the full post-deposit Rs17.5k NAV is
-      # deployed: positions ~Rs3,500, risk ~Rs87/trade.
-      # Recorded expectation at the time, so live results can be judged against
-      # what was predicted rather than in hindsight: simulation off the prior
-      # week put the typical week at -Rs297 (-1.70% NAV), P(green week) ~13%,
-      # friction ~Rs166/week. The kill-switches below are what bound it.
-      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.005}
+      # Risk per trade: 0.75% of NAV at the stop (~Rs131 on Rs17.5k).
+      # Raised from 0.5% alongside the heat budget below so a lone signal
+      # deploys ~30% of NAV instead of 20% — fixed per-trade risk alone left
+      # deployment hostage to how many signals happened to fire.
+      # Recorded expectation (2026-07-26, at 0.5%): typical week -Rs297
+      # (-1.70% NAV), P(green week) ~13%, friction ~Rs166/week. Judge live
+      # results against that rather than in hindsight; sizing changes the
+      # stakes, not the ~zero measured edge.
+      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.0075}
+      # Total open risk across all positions (heat budget). At 0.75%/trade
+      # this allows 3 concurrent positions (0.75 x 3 = 2.25%) and refuses the
+      # 4th, so 1 position deploys ~30% of NAV, 2 ~60%, 3 ~90%.
+      - MAX_PORTFOLIO_HEAT_PCT=${IN_MAX_PORTFOLIO_HEAT:-0.0225}
       - MAX_WEEKLY_LOSS_PCT=${IN_MAX_WEEKLY_LOSS:-0.04}
 
   orchestrator-in:
@@ -181,9 +186,11 @@ services:
       # exceeded the entire gross loss ($3.79). A cap of 2 blocks 26% of BUYs.
       # US keeps ALLOW_OVERNIGHT_HOLD unset — see the IN block for why.
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${US_MAX_ENTRIES_PER_SYMBOL:-2}
-      # Fixed-fraction risk: a trade may lose at most 0.5% of NAV at its stop;
-      # weekly kill-switch pauses NEW entries after a -4% NAV week (net).
-      - MAX_RISK_PER_TRADE_PCT=${US_MAX_RISK_PER_TRADE:-0.005}
+      # Risk per trade: 0.75% of NAV at the stop. Weekly kill-switch below
+      # pauses NEW entries after a -4% NAV week (net of costs).
+      - MAX_RISK_PER_TRADE_PCT=${US_MAX_RISK_PER_TRADE:-0.0075}
+      # Total open risk across all positions (heat budget) — see the IN block.
+      - MAX_PORTFOLIO_HEAT_PCT=${US_MAX_PORTFOLIO_HEAT:-0.0225}
       - MAX_WEEKLY_LOSS_PCT=${US_MAX_WEEKLY_LOSS:-0.04}
       # TLT belongs to the calendar-flow agent (flow-us): the intraday trader
       # must not adopt, stop-manage, or EOD-flatten it.
