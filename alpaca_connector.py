@@ -155,17 +155,29 @@ class AlpacaConnector:
     # Account & Portfolio API
     # ------------------------------------------------------------------
 
-    def net_cash_transfers_today(self) -> float:
-        """Net external cash moved in/out TODAY (deposits +, withdrawals −).
+    #: FEE descriptions that belong to MOVING money, not to trading. Wire /
+    #: FX-conversion / ACH charges are a cost of funding the account and must
+    #: not be charged to the strategy. Regulatory fees (SEC, TAF) are NOT
+    #: listed: those are genuine costs of trading and must stay in P&L.
+    _FUNDING_FEE_HINTS = ("funding", "conversion", "wire", "transfer",
+                          "deposit", "withdraw", "ach")
 
-        Alpaca's daily P&L is ``equity - last_equity``, which counts a deposit
-        as profit: a $53.31 funding on 2026-07-27 made a −$0.73 trading day
-        report as +$52.58. Subtracting transfers restores the honest number.
+    def net_cash_transfers_today(self) -> float:
+        """Net external cash movement TODAY, including its own fees.
+
+        Alpaca's daily P&L is ``equity - last_equity``, which counts anything
+        to do with funding as trading profit or loss. On 2026-07-27 a $53.31
+        deposit plus its $0.80 FX-conversion fee turned a +$0.11 trading day
+        into a reported +$52.58; excluding only the deposit still left the
+        $0.80 fee charged to the bot as a fake loss (−$0.73).
+
+        Returns deposits(+) − withdrawals(−) + funding fees(−), so subtracting
+        it from the equity delta leaves TRADING P&L alone.
 
         The SDK exposes no activities method, so this hits the REST endpoint
-        directly. Cached per-day (transfers are rare and this is called every
+        directly. Cached per-day (transfers are rare, this is polled every
         loop) and fails OPEN at 0.0 — a transient API error must never corrupt
-        P&L into a *worse* lie than the one it fixes.
+        P&L into a worse lie than the one it fixes.
         """
         from datetime import date as _date
         today = _date.today().isoformat()
@@ -180,13 +192,21 @@ class AlpacaConnector:
                 f"{base}/v2/account/activities",
                 headers={"APCA-API-KEY-ID": config.alpaca.api_key,
                          "APCA-API-SECRET-KEY": config.alpaca.api_secret},
-                params={"activity_types": "CSD,CSW,JNLC,JNLS"}, timeout=10)
+                params={"activity_types": "CSD,CSW,JNLC,JNLS,FEE"}, timeout=10)
             resp.raise_for_status()
             for act in resp.json() or []:
-                if str(act.get("date")) == today:
-                    amount += float(act.get("net_amount") or 0.0)
+                if str(act.get("date")) != today:
+                    continue
+                net = float(act.get("net_amount") or 0.0)
+                if act.get("activity_type") == "FEE":
+                    desc = str(act.get("description") or "").lower()
+                    if not any(h in desc for h in self._FUNDING_FEE_HINTS):
+                        continue          # trading/regulatory fee — keep in P&L
+                    logger.info("Funding fee excluded from P&L: %.2f (%s)",
+                                net, act.get("description"))
+                amount += net
             if amount:
-                logger.info("Net cash transfers today: %.2f (excluded from daily P&L).",
+                logger.info("Net cash movement today: %.2f (excluded from daily P&L).",
                             amount)
         except Exception as exc:
             logger.warning("Cash-transfer lookup failed (daily P&L unadjusted): %s", exc)

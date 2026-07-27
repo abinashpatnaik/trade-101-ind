@@ -64,27 +64,54 @@ def test_transfer_lookup_failure_fails_open(monkeypatch):
     assert c.get_account_summary()["DailyPnL"] == pytest.approx(52.58, abs=0.01)
 
 
-def test_only_todays_transfers_count(monkeypatch):
-    """Yesterday's deposit must not keep suppressing today's P&L."""
-    from datetime import date
-
+def _stub_activities(monkeypatch, rows):
     class _R:
-        status_code = 200
-
         @staticmethod
         def raise_for_status():
             pass
 
         @staticmethod
         def json():
-            return [
-                {"date": date.today().isoformat(), "net_amount": "53.31"},
-                {"date": "2026-06-23", "net_amount": "52.79"},   # older funding
-            ]
+            return rows
 
     monkeypatch.setattr("requests.get", lambda *a, **k: _R())
-    c = AlpacaConnector.__new__(AlpacaConnector)
+    return AlpacaConnector.__new__(AlpacaConnector)
+
+
+def test_only_todays_transfers_count(monkeypatch):
+    """Yesterday's deposit must not keep suppressing today's P&L."""
+    from datetime import date
+
+    c = _stub_activities(monkeypatch, [
+        {"date": date.today().isoformat(), "activity_type": "CSD", "net_amount": "53.31"},
+        {"date": "2026-06-23", "activity_type": "CSD", "net_amount": "52.79"},
+    ])
     assert c.net_cash_transfers_today() == pytest.approx(53.31)
+
+
+def test_funding_fee_is_excluded_but_trading_fee_is_not(monkeypatch):
+    """The real 2026-07-27 shape: deposit + its FX fee are both funding, so
+    both leave P&L; a regulatory fee is a genuine trading cost and stays."""
+    from datetime import date
+
+    t = date.today().isoformat()
+    c = _stub_activities(monkeypatch, [
+        {"date": t, "activity_type": "CSD", "net_amount": "53.31",
+         "description": "Funding Wallet deposit"},
+        {"date": t, "activity_type": "FEE", "net_amount": "-0.80",
+         "description": "Funding Wallet incoming alpaca conversion fee"},
+        {"date": t, "activity_type": "FEE", "net_amount": "-0.02",
+         "description": "REG/TAF fee"},
+    ])
+    # 53.31 - 0.80 excluded; the -0.02 regulatory fee stays in P&L
+    assert c.net_cash_transfers_today() == pytest.approx(52.51)
+
+
+def test_reported_pnl_matches_the_actual_trade(monkeypatch):
+    """End-to-end on the real numbers: +$0.11 HPQ round trip must report as
+    ~+$0.11, not the -$0.73 the unadjusted feed showed."""
+    c = _conn(52.51, monkeypatch)          # deposit net of its funding fee
+    assert c.get_account_summary()["DailyPnL"] == pytest.approx(0.07, abs=0.02)
 
 
 def test_result_is_cached_per_day(monkeypatch):
