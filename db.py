@@ -168,34 +168,47 @@ class TradingDB:
                 self._backfill_pnl_net(conn)
             except sqlite3.OperationalError:
                 pass  # Column already exists
+            # Rev 1: pnl_net originally deducted fees AND assumed slippage,
+            # double-counting — gross P&L already comes from real fills.
+            # Recompute every stored value on fees-only, once.
+            if conn.execute("PRAGMA user_version").fetchone()[0] < 1:
+                self._backfill_pnl_net(conn, recompute=True)
+                conn.execute("PRAGMA user_version = 1")
         logger.debug("Database schema verified.")
 
-    def _backfill_pnl_net(self, conn) -> None:
-        """Populate pnl_net for existing SELL rows using the modelled cost.
+    def _backfill_pnl_net(self, conn, recompute: bool = False) -> None:
+        """Populate pnl_net for existing SELL rows, net of BROKER FEES.
 
-        Runs once, right after the column is first added. Assumes intraday
-        (same-day) costs — the dominant case now that IN flattens at the close
-        and US is a cash account — so it may slightly under-deduct for any
-        legacy overnight holds. The broker's day P&L stays the source of truth;
-        this only removes the systematic GROSS overstatement from history.
+        Slippage is excluded on purpose — see ``_net_pnl``: gross P&L is
+        derived from real fills, so slippage is already in it.
+
+        ``recompute=False`` fills only rows still NULL (first migration).
+        ``recompute=True`` rewrites every stored value, used once to correct
+        rows written under the old fees+slippage formula.
+
+        Assumes intraday costs — the dominant case now that IN flattens at the
+        close — so it may slightly under-deduct legacy overnight holds. The
+        broker's own day P&L remains the source of truth.
         """
         try:
             from trading_costs import round_trip_cost_pct
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("pnl_net backfill skipped (trading_costs import): %s", exc)
             return
-        rows = conn.execute(
-            "SELECT id, notional, pnl FROM trades "
-            "WHERE action = 'SELL' AND pnl IS NOT NULL AND pnl_net IS NULL"
-        ).fetchall()
+        where = ("WHERE action = 'SELL' AND pnl IS NOT NULL"
+                 if recompute else
+                 "WHERE action = 'SELL' AND pnl IS NOT NULL AND pnl_net IS NULL")
+        rows = conn.execute(f"SELECT id, notional, pnl FROM trades {where}").fetchall()
         for row in rows:
             notional = row["notional"] or 0.0
             cost = round_trip_cost_pct(notional, overnight=False,
-                                       market=_ACTIVE_MARKET) * notional
+                                       market=_ACTIVE_MARKET,
+                                       include_slippage=False) * notional
             conn.execute("UPDATE trades SET pnl_net = ? WHERE id = ?",
                          (round(row["pnl"] - cost, 2), row["id"]))
         if rows:
-            logger.info("Backfilled pnl_net for %d historical SELL trades.", len(rows))
+            logger.info("%s pnl_net (fees only) for %d SELL trades.",
+                        "Recomputed" if recompute else "Backfilled", len(rows))
 
     # ------------------------------------------------------------------
     # Trades
@@ -239,7 +252,19 @@ class TradingDB:
     @staticmethod
     def _net_pnl(pnl: Optional[float], notional: float, action: str,
                  overnight: bool) -> Optional[float]:
-        """Gross P&L minus modelled round-trip cost, for SELL rows only."""
+        """Gross P&L minus BROKER FEES, for SELL rows only.
+
+        Fees only — slippage is deliberately excluded. ``pnl`` is computed from
+        the ACTUAL broker fill prices, so whatever slippage occurred is already
+        inside it; subtracting an assumed slippage on top double-counts it.
+        (The slippage estimate is still correct where a fill is unknown: the
+        prospective min_edge_multiple entry gate, and backtest_sim's simulated
+        fills at bar prices.)
+
+        Verified on the US session of 2026-07-28: 5 round trips, +$0.14 gross.
+        Fees-only gives +$0.117; Alpaca's own daily series says +$0.11. The
+        old fees+slippage model said -$0.11 — it painted a green day red.
+        """
         if pnl is None or action.upper() != "SELL" or not notional:
             return None
         try:
@@ -247,7 +272,8 @@ class TradingDB:
         except Exception:
             return None
         cost = round_trip_cost_pct(notional, overnight=overnight,
-                                   market=_ACTIVE_MARKET) * notional
+                                   market=_ACTIVE_MARKET,
+                                   include_slippage=False) * notional
         return round(pnl - cost, 2)
 
     def update_trade_price_pnl(
