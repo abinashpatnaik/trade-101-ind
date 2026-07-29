@@ -5,11 +5,17 @@ The dashboard's realized chart, win rate, profit factor and lifetime figure
 were all derived from the GROSS ``trades.pnl`` column (entry vs exit price,
 no charges), so they overstated performance by the full cost of trading. On
 2026-07-24 the bot's own reconcile logged the gap: recorded gross ₹108.96 vs
-broker day P&L ₹64.45. ``pnl_net`` deducts the modelled round-trip friction so
-these numbers tie out far closer to the real account.
+broker day P&L ₹64.45. ``pnl_net`` deducts the cost so these tie out.
 
-The broker's day P&L stays authoritative; pnl_net is the honest approximation
-for historical per-trade figures (it cannot capture per-fill slippage).
+FEES ONLY — slippage is deliberately excluded. ``pnl`` is derived from ACTUAL
+broker fill prices, so whatever slippage occurred is already inside it;
+subtracting an assumed slippage on top double-counts. The first version of
+pnl_net made exactly that mistake and reported the US session of 2026-07-28
+as -$0.11 when Alpaca's own daily series said +$0.11.
+
+The slippage estimate remains correct where the fill is UNKNOWN: the
+prospective min_edge_multiple entry gate, and backtest_sim's simulated fills.
+The broker's day P&L stays authoritative.
 """
 
 import os
@@ -22,12 +28,27 @@ from trading_costs import round_trip_cost_pct
 
 
 # --------------------------------------------------------------- pure helper
-def test_net_pnl_deducts_modelled_cost():
+def test_net_pnl_deducts_fees_only_not_slippage():
+    """Gross comes from real fills, so slippage is already in it — deducting
+    an assumed slippage on top double-counts. Fees only."""
     gross, notional = 28.90, 1444.85
     net = TradingDB._net_pnl(gross, notional, "SELL", overnight=False)
-    expected = round(gross - round_trip_cost_pct(notional, overnight=False, market="IN") * notional, 2)
-    assert net == expected
-    assert net < gross, "net must be below gross by the trading cost"
+    fees_only = round(gross - round_trip_cost_pct(
+        notional, overnight=False, market="IN", include_slippage=False) * notional, 2)
+    with_slippage = round(gross - round_trip_cost_pct(
+        notional, overnight=False, market="IN", include_slippage=True) * notional, 2)
+    assert net == fees_only
+    assert net > with_slippage, "must not double-count slippage"
+    assert net < gross, "fees are still deducted"
+
+
+def test_us_net_matches_the_broker():
+    """The 2026-07-28 US session: 5 round trips, +$0.14 gross, Alpaca's own
+    daily series reported +$0.11. Fees-only must land there, not at -$0.11."""
+    notionals = [23.08, 23.04, 23.30, 22.18, 22.93]
+    cost = sum(round_trip_cost_pct(n, market="US", include_slippage=False) * n
+               for n in notionals)
+    assert 0.14 - cost == pytest.approx(0.11, abs=0.02)
 
 
 def test_net_pnl_only_for_sells():
@@ -113,3 +134,35 @@ def _row(db: TradingDB, rid: int):
     with db._conn() as c:
         c.row_factory = sqlite3.Row
         return c.execute("SELECT * FROM trades WHERE id = ?", (rid,)).fetchone()
+
+
+def test_recompute_migration_corrects_old_slippage_rows(tmp_path):
+    """A db written under the old fees+slippage formula must be corrected in
+    place on next open, not left with understated history."""
+    path = str(tmp_path / "trading_IN.db")
+    db = TradingDB(db_path=path)
+    rid = db.insert_trade("2026-07-27", "10:00", "A.NS", "SELL",
+                          10, 300.0, 3000.0, pnl=50.0, exit_reason="EOD")
+    fees_only = _row(db, rid)["pnl_net"]
+
+    # simulate the OLD formula + pre-migration schema version
+    with db._conn() as c:
+        old = round(50.0 - round_trip_cost_pct(
+            3000.0, overnight=False, market="IN", include_slippage=True) * 3000.0, 2)
+        c.execute("UPDATE trades SET pnl_net = ? WHERE id = ?", (old, rid))
+        c.execute("PRAGMA user_version = 0")
+        assert old < fees_only
+
+    TradingDB(db_path=path)                     # reopening runs the migration
+    assert _row(db, rid)["pnl_net"] == pytest.approx(fees_only)
+
+
+def test_recompute_runs_only_once(tmp_path):
+    path = str(tmp_path / "trading_IN.db")
+    db = TradingDB(db_path=path)
+    rid = db.insert_trade("2026-07-27", "10:00", "A.NS", "SELL",
+                          10, 300.0, 3000.0, pnl=50.0, exit_reason="EOD")
+    TradingDB(db_path=path)
+    with db._conn() as c:
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert _row(db, rid)["pnl_net"] is not None
