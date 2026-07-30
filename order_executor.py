@@ -27,7 +27,7 @@ from typing import Dict, Optional
 
 from config import config, ACTIVE_MARKET
 from decision_engine import Decision
-from trading_costs import round_trip_cost_pct
+from trading_costs import net_breakeven_pct, profit_lock_arm_pct
 from zerodha_connector import ZerodhaConnector as IBKRConnector
 
 _IN_DOCKER = os.path.exists("/app")
@@ -71,6 +71,27 @@ class OrderExecutor:
         self._ibkr = ibkr
         self._open_orders: Dict[str, OpenOrder] = {}
         self._trailing_high: Dict[str, float] = {}
+        # Symbols whose profit-lock has ever armed. This is a LATCH, not a
+        # gate: once price has cleared the profit-lock threshold the trail
+        # stays armed for the life of the position.
+        #
+        # It used to be re-evaluated every tick, which made the trailing stop
+        # unreachable. Worked example (GRMN, 2026-07-30): entry 288.80, ATR gap
+        # 1.3%, high-water 294.29 (+1.90%) → tier gap 0.871% → trigger 291.73.
+        # But the lock only stayed armed above 288.80 × 1.0075 = 290.97, so the
+        # sell could only fire on a tick inside [290.97, 291.73] — a window
+        # 0.26% of price wide. Price fell 293.42 → 290.83 without landing in
+        # it, the old `else` branch then overwrote trailing_high with 290.83,
+        # and a locked +0.87% became exposure to the −1.5% hard stop with the
+        # 294.29 high erased. Below ~+1.7% gain-from-high the window was
+        # NEGATIVE, i.e. the trailing stop could never fire at all, and the
+        # break-even floor below (289.44) sat under the disarm price and was
+        # likewise dead code.
+        self._lock_armed: Dict[str, bool] = {}
+        # Derived arm / break-even / base-gap levels per symbol, published for
+        # the dashboard so it never has to re-derive them from its own copy of
+        # the constants. Recomputed every exit check; not authoritative state.
+        self._lock_levels: Dict[str, Dict[str, float]] = {}
         # Real broker fill prices from the most recent close_position() calls,
         # keyed by symbol. Consumed once by the caller so the recorded SELL uses
         # the actual fill price instead of a stale market quote.
@@ -105,7 +126,11 @@ class OrderExecutor:
                     sym: dataclasses.asdict(order)
                     for sym, order in self._open_orders.items()
                 },
-                "trailing_high": self._trailing_high
+                "trailing_high": self._trailing_high,
+                # Persisted so a restart cannot silently disarm a trail that
+                # had already locked in profit.
+                "lock_armed": self._lock_armed,
+                "lock_levels": self._lock_levels,
             }
             out_path = self._get_state_path()
             os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -124,6 +149,10 @@ class OrderExecutor:
                     state = json.load(f)
                 
                 self._trailing_high = state.get("trailing_high", {})
+                # Absent in state files written before the latch existed. Those
+                # positions re-arm naturally on the next tick above threshold.
+                self._lock_armed = state.get("lock_armed", {}) or {}
+                self._lock_levels = state.get("lock_levels", {}) or {}
                 orders = state.get("open_orders", {})
                 self._open_orders = {}
                 for sym, order_dict in orders.items():
@@ -291,6 +320,9 @@ class OrderExecutor:
             )
             self._open_orders[symbol] = open_order
             self._trailing_high[symbol] = current_price
+            # fresh position starts UNARMED
+            self._lock_armed.pop(symbol, None)
+            self._lock_levels.pop(symbol, None)
             self._dump_state()
             self._record_order_intent(
                 symbol, "BUY", entry_order_id, current_price, decision.quantity
@@ -321,6 +353,8 @@ class OrderExecutor:
                 )
                 self._open_orders.pop(symbol, None)
                 self._trailing_high.pop(symbol, None)
+                self._lock_armed.pop(symbol, None)
+                self._lock_levels.pop(symbol, None)
                 self._dump_state()
                 return False
 
@@ -344,6 +378,8 @@ class OrderExecutor:
 
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
+            self._lock_armed.pop(symbol, None)
+            self._lock_levels.pop(symbol, None)
             self._dump_state()
             self._record_order_intent(
                 symbol, "SELL", sell_order_id, current_price, live_qty
@@ -419,6 +455,9 @@ class OrderExecutor:
         #   - Snap the trailing stop to just below entry (break-even).
         #   - Trail tightly (0.3% gap) from every new high.
         #   - The stock can never turn from a winner into a loser.
+        #   - Phase 2 is a ONE-WAY LATCH: see self._lock_armed. Falling back
+        #     below the threshold must not disarm the trail, or the exit
+        #     becomes unreachable and the high-water mark is lost.
         #
         # Result: We're patient with losers (they might recover) but
         # ruthless about protecting any profit that appears.
@@ -437,6 +476,8 @@ class OrderExecutor:
             )
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
+            self._lock_armed.pop(symbol, None)
+            self._lock_levels.pop(symbol, None)
             return "STOP_LOSS"
 
         # --- 2. Take Profit (if configured) ---
@@ -447,15 +488,23 @@ class OrderExecutor:
             )
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
+            self._lock_armed.pop(symbol, None)
+            self._lock_levels.pop(symbol, None)
             return "TAKE_PROFIT"
 
         # --- 3. ATR-Based Profit-Lock Trailing Stop ---
         #
-        # Only activates when the stock is CURRENTLY above the profit-lock
-        # threshold (market-specific: US=+0.15%, IN=+0.25%).
-        # If the stock dips below, the lock deactivates and the stock is
-        # free to oscillate with only the hard stop protecting it.
-        # When it recovers, the lock reactivates from the new recovery point.
+        # Arms the FIRST time the stock closes above the arm threshold and then
+        # STAYS armed — a dip back below it no longer disarms it. Re-evaluating
+        # the threshold every tick made the trigger unreachable for gains under
+        # ~+1.7% and destroyed the high-water mark on the way down; see
+        # self._lock_armed for the worked GRMN case.
+        #
+        # The threshold is COST-AWARE (profit_lock_arm_pct), not the raw config
+        # value: it can never sit below net break-even. config.risk's +1.0% for
+        # IN was set when IN friction was believed to be ~0.1%; at the real
+        # 1.215% it sat below break-even, so arming at +1.0% put the break-even
+        # floor above the price and sold instantly for −0.41% net.
         #
         # The base gap is ATR-based (per-stock), computed at buy time as
         # ATR × 2 / entry_price (bounded 1-3%). This means volatile stocks
@@ -468,7 +517,10 @@ class OrderExecutor:
         #   +1.0% gain     → base × 0.67  (locking more profit)
         #   +2.0% gain     → base × 0.50  (half the base gap)
         #   +3.0%+ gain    → base × 0.33  (tight lock for big winners)
-        profit_lock_threshold = config.risk.profit_lock_threshold
+        notional = order.entry_price * order.quantity
+        breakeven_pct = net_breakeven_pct(notional, overnight=False)
+        profit_lock_threshold = profit_lock_arm_pct(
+            notional, config.risk.profit_lock_threshold, overnight=False)
 
         # Use per-stock ATR gap (computed at buy time), fall back to market config
         atr_gap = order.initial_trailing_pct if order.initial_trailing_pct > 0 else 0
@@ -476,7 +528,29 @@ class OrderExecutor:
         # ATR is the primary driver; config is the floor to prevent overly tight stops
         base_gap = max(atr_gap, config_gap) if atr_gap > 0 else config_gap
 
-        if gain_from_entry >= profit_lock_threshold:
+        # Publish the two derived levels so the dashboard shows exactly what
+        # this method will act on instead of re-deriving them from constants
+        # that drift out of sync (they already had, twice).
+        self._lock_levels[symbol] = {
+            "arm_pct": profit_lock_threshold,
+            "breakeven_pct": breakeven_pct,
+            "base_gap_pct": base_gap,
+        }
+
+        # Latch the lock on the first tick that clears the threshold, and never
+        # clear it while the position is open.
+        if gain_from_entry >= profit_lock_threshold and not self._lock_armed.get(symbol):
+            self._lock_armed[symbol] = True
+            self._dump_state()
+            logger.info(
+                "PROFIT-LOCK ARMED for %s at %.4f (+%.2f%% from entry %.4f, "
+                "arm threshold %.2f%%, net break-even %.2f%%) — trail now stays "
+                "armed for the life of the position.",
+                symbol, current_price, gain_from_entry * 100, order.entry_price,
+                profit_lock_threshold * 100, breakeven_pct * 100,
+            )
+
+        if self._lock_armed.get(symbol):
             # Graduated trailing gap — tighter as profit grows
             if gain_from_high >= 0.03:
                 trail_gap = base_gap * 0.33    # tight lock for big winners
@@ -493,10 +567,12 @@ class OrderExecutor:
 
             # CRITICAL: Never let the trailing stop go below the NET break-even.
             # Gross break-even is a guaranteed net loss after round-trip costs,
-            # so the floor sits at entry × (1 + estimated cost).
-            cost_pct = round_trip_cost_pct(order.entry_price * order.quantity, overnight=False)
+            # so the floor sits at entry × (1 + net break-even). That is fees
+            # plus ONE leg of slippage — round_trip_cost_pct was used here
+            # before and charged slippage twice, since entry slippage is
+            # already baked into entry_price. See net_breakeven_pct.
             trailing_stop_trigger = max(
-                trailing_stop_trigger, order.entry_price * (1.0 + cost_pct)
+                trailing_stop_trigger, order.entry_price * (1.0 + breakeven_pct)
             )
 
             if current_price <= trailing_stop_trigger:
@@ -518,14 +594,14 @@ class OrderExecutor:
                 )
                 self._open_orders.pop(symbol, None)
                 self._trailing_high.pop(symbol, None)
+                self._lock_armed.pop(symbol, None)
+                self._lock_levels.pop(symbol, None)
                 return exit_reason
-        else:
-            # Stock is below threshold — profit-lock INACTIVE.
-            # Reset trailing_high to current price so that when the lock
-            # reactivates after a recovery, it trails from the new recovery
-            # point instead of from a stale old high that would cause an
-            # immediate exit.
-            self._trailing_high[symbol] = current_price
+        # No `else` that rewrites trailing_high. The high-water mark is a
+        # one-way ratchet (advanced only upward, at the top of this method).
+        # Resetting it here used to erase the peak the moment price dipped
+        # below the threshold, which both disarmed the trail permanently and
+        # made any later trail restart from a lower high.
 
         return None
 
@@ -562,6 +638,8 @@ class OrderExecutor:
                 return False
             self._open_orders.pop(symbol, None)
             self._trailing_high.pop(symbol, None)
+            self._lock_armed.pop(symbol, None)
+            self._lock_levels.pop(symbol, None)
 
             # Capture the real average fill price so the recorded SELL reflects
             # where the order actually executed — not a live quote fetched later
@@ -632,6 +710,9 @@ class OrderExecutor:
                             entry_time=time.monotonic(),
                         )
                         self._trailing_high[symbol] = current_price
+                        # fresh tracker: never inherit a latch from a prior position
+                        self._lock_armed.pop(symbol, None)
+                        self._lock_levels.pop(symbol, None)
                         self._dump_state()
                         logger.info(
                             "Restored protective tracker for %s at %.4f (hard stop %.2f)",
@@ -668,6 +749,8 @@ class OrderExecutor:
             if n >= self._ORPHAN_GRACE:
                 self._open_orders.pop(sym, None)
                 self._trailing_high.pop(sym, None)
+                self._lock_armed.pop(sym, None)
+                self._lock_levels.pop(sym, None)
                 self._orphan_syncs.pop(sym, None)
                 pruned = True
                 logger.info(

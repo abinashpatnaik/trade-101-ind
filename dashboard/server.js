@@ -197,6 +197,48 @@ function readTrades(dateFilter, mode, symbol, limit = 200) {
 }
 
 /**
+ * Non-trade ledger totals by class, from the account_charges table.
+ *
+ * Trade settlements are only part of what moves the account. The Zerodha fund
+ * ledger for 15 Jun - 29 Jul 2026 also carried Rs20,000 of deposits (capital,
+ * not performance), Rs618.00 of overheads no trade caused (Kite Connect API
+ * Rs500.00, DDPI Rs118.00), and a Rs1,645.7678 provisional TDS that was
+ * blocked and then reversed. Showing trade P&L alone left the dashboard
+ * reading Rs679 better than the bank, with nothing on screen to explain it.
+ *
+ * Populate with: python -m scripts.import_zerodha_ledger <ledger.xlsx>
+ * Returns zeros when the table is absent or empty, so a fresh install and an
+ * un-imported account both degrade to "no adjustment" rather than an error.
+ */
+function getAccountCharges(sinceDate, mode) {
+  const empty = { funding: 0, overhead: 0, transient: 0, count: 0 };
+  try {
+    const db = getDB();
+    if (!db) return empty;
+    const clauses = [];
+    const params = [];
+    if (sinceDate) { clauses.push("posting_date >= ?"); params.push(sinceDate); }
+    if (mode) { clauses.push("mode = ?"); params.push(mode); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = db.prepare(
+      `SELECT kind, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+       FROM account_charges ${where} GROUP BY kind`).all(...params);
+    const out = { ...empty };
+    for (const r of rows) {
+      if (r.kind in out) out[r.kind] = r.total;
+      out.count += r.n;
+    }
+    return out;
+  } catch (e) {
+    // Table missing (pre-migration DB) is expected, not an error worth noise.
+    if (!/no such table/i.test(e.message)) {
+      console.error("account_charges query error:", e.message);
+    }
+    return empty;
+  }
+}
+
+/**
  * Get trade summary aggregates from merged SQLite and CSV trades.
  */
 function getTradeSummary(symbol, sinceDate, mode) {
@@ -467,45 +509,113 @@ function readExecutorState() {
     const dataPath = path.join(__dirname, "..", "data", `executor_state_${MARKET_TYPE}.json`);
     if (fs.existsSync(dataPath)) {
       const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-      return { openOrders: state.open_orders || {}, trailingHigh: state.trailing_high || {} };
+      return {
+        openOrders: state.open_orders || {},
+        trailingHigh: state.trailing_high || {},
+        lockArmed: state.lock_armed || {},
+        // Arm / break-even / base-gap levels the executor actually computed.
+        // Preferred over re-deriving from constants here, which drifted out of
+        // sync with config.py twice.
+        lockLevels: state.lock_levels || {},
+      };
     }
   } catch (err) {
     console.error("Error reading executor state:", err.message);
   }
-  return { openOrders: {}, trailingHigh: {} };
+  return { openOrders: {}, trailingHigh: {}, lockArmed: {}, lockLevels: {} };
+}
+
+// Graduated trailing-gap ladder — mirrors order_executor.py's "Patience Then
+// Lock" schedule exactly (see check_exit_conditions). `at` is the gain
+// measured from the post-entry HIGH (not from entry) required to earn that
+// multiplier on the base gap. Ordered tightest-first so the lookup below can
+// stop at the first threshold the current gain has cleared.
+const TRAIL_TIERS = [
+  { at: 0.03, mult: 0.33 },
+  { at: 0.02, mult: 0.50 },
+  { at: 0.01, mult: 0.67 },
+  { at: 0.005, mult: 0.83 },
+  { at: 0.0, mult: 1.00 },
+];
+
+// Which tier is currently active, and what it takes to reach the next
+// (tighter) one. Without this the dashboard can only show a single static
+// percentage with no way to tell where a position sits in the schedule or
+// what triggers the next tightening — which is exactly what was missing.
+function trailTierInfo(baseGap, gainFromHigh) {
+  let idx = TRAIL_TIERS.length - 1; // default: loosest (base) tier
+  for (let i = 0; i < TRAIL_TIERS.length; i++) {
+    if (gainFromHigh >= TRAIL_TIERS[i].at) { idx = i; break; }
+  }
+  const tier = TRAIL_TIERS[idx];
+  const next = idx > 0 ? TRAIL_TIERS[idx - 1] : null; // one step tighter
+  return {
+    tierIndex: TRAIL_TIERS.length - idx,   // 1 = loosest (just armed), 5 = tightest
+    tierCount: TRAIL_TIERS.length,
+    gapPct: baseGap * tier.mult,
+    nextAt: next ? next.at : null,          // gain-from-high needed for next tier
+    nextGapPct: next ? baseGap * next.mult : null,
+  };
 }
 
 // Compute the price the executor will ACTUALLY sell at right now, mirroring
 // order_executor.check_exit_conditions using the executor's own entry price,
 // hard stop, ATR trail gap and real high-water mark. Returns null when the
 // symbol isn't under executor management (caller falls back to an estimate).
-function realProtectiveStop(order, trailingHigh, mktPrice, isIN) {
+function realProtectiveStop(order, trailingHigh, mktPrice, isIN, lockArmed, levels) {
   if (!order) return null;
   const entry = order.entry_price || 0;
   const hardStop = order.stop_loss_price || 0;
   if (entry <= 0) return null;
 
-  const lockThreshold = isIN ? 0.0025 : 0.0015;   // profit-lock activates above this gain
-  const configGap = isIN ? 0.005 : 0.003;
+  // Prefer the levels the executor published (state.lock_levels). The fallback
+  // constants mirror config.risk.profit_lock_threshold / trailing_gap_base
+  // (US 0.0075 / 0.008, IN 0.010 / 0.010) and are only used for positions the
+  // executor hasn't evaluated yet. NOTE the real arm threshold is cost-aware
+  // (trading_costs.profit_lock_arm_pct) and for IN is ~1.64%, well above the
+  // 1.0% config value — another reason to trust the published number.
+  const lockThreshold = levels?.arm_pct ?? (isIN ? 0.010 : 0.0075);
+  const configGap = isIN ? 0.010 : 0.008;
   const atrGap = order.initial_trailing_pct || 0;
-  const baseGap = atrGap > 0 ? Math.max(atrGap, configGap) : configGap;
+  const baseGap = levels?.base_gap_pct
+    ?? (atrGap > 0 ? Math.max(atrGap, configGap) : configGap);
+  // Net break-even: the floor the trail may never sit below.
+  const breakevenPct = levels?.breakeven_pct ?? 0;
 
+  // The executor latches the lock (order_executor._lock_armed) — once armed it
+  // never disarms, so trust the persisted flag and fall back to the threshold
+  // only for positions predating the latch.
   const gainFromEntry = (mktPrice / entry) - 1.0;
-  if (gainFromEntry >= lockThreshold && trailingHigh > 0) {
+  const armed = lockArmed === true || gainFromEntry >= lockThreshold;
+  if (armed && trailingHigh > 0) {
     const gainFromHigh = (trailingHigh / entry) - 1.0;
-    let trailGap;
-    if (gainFromHigh >= 0.03) trailGap = baseGap * 0.33;
-    else if (gainFromHigh >= 0.02) trailGap = baseGap * 0.50;
-    else if (gainFromHigh >= 0.01) trailGap = baseGap * 0.67;
-    else if (gainFromHigh >= 0.005) trailGap = baseGap * 0.83;
-    else trailGap = baseGap;
-    let trigger = trailingHigh * (1.0 - trailGap);
-    trigger = Math.max(trigger, entry);   // floored at break-even
-    return { stop: Math.round(trigger * 100) / 100, hardStop: Math.round(hardStop * 100) / 100, trailingActive: true };
+    const tier = trailTierInfo(baseGap, gainFromHigh);
+    let trigger = trailingHigh * (1.0 - tier.gapPct);
+    // Floored at NET break-even, matching the executor. Flooring at bare
+    // `entry` (as this did) shows a stop that would book a net loss.
+    trigger = Math.max(trigger, entry * (1.0 + breakevenPct));
+    return {
+      stop: Math.round(trigger * 100) / 100,
+      hardStop: Math.round(hardStop * 100) / 100,
+      trailingActive: true,
+      baseGapPct: baseGap,
+      gapPct: tier.gapPct,
+      gainFromHigh,
+      tierIndex: tier.tierIndex,
+      tierCount: tier.tierCount,
+      nextAt: tier.nextAt,
+      nextGapPct: tier.nextGapPct,
+    };
   }
   // Below the profit-lock threshold the trailing stop is INACTIVE — only the
   // hard stop protects the position.
-  return { stop: Math.round(hardStop * 100) / 100, hardStop: Math.round(hardStop * 100) / 100, trailingActive: false };
+  return {
+    stop: Math.round(hardStop * 100) / 100,
+    hardStop: Math.round(hardStop * 100) / 100,
+    trailingActive: false,
+    baseGapPct: baseGap,
+    activatesAt: lockThreshold,   // gain FROM ENTRY needed to arm the trail
+  };
 }
 
 function readLocalSummary() {
@@ -601,6 +711,25 @@ app.get("/api/portfolio", async (_req, res) => {
         return acc;
     }, 0);
 
+    // --- Reconciliation against the broker ledger ---------------------------
+    // The rule, verified against the Zerodha ledger + P&L book for
+    // 15 Jun - 29 Jul 2026 (identity closes to 0.01 paisa):
+    //
+    //   NAV - netFunding = tradePnlNet + overheads
+    //   17,357.54 - 20,000 = (-457.36 - 1,505.74) + (-618.00 - 61.36 DP)
+    //         -2,642.46    = -2,642.46
+    //
+    // `lifetimeRealizedPnl` is trade P&L only, so it can NEVER equal the
+    // account's real result while overheads exist. Exposing both, plus the
+    // residual, means a divergence shows up on screen as a number instead of
+    // silently accruing — which is how ~Rs80/day went unnoticed for three
+    // sessions before the contract note explained it.
+    const charges = getAccountCharges(null, tradingMode);
+    const netFunding = charges.funding;
+    const overheads = charges.overhead;
+    const trueAccountPnl = netFunding !== 0 ? parseFloat(nav) - netFunding : null;
+    const explainedPnl = lifetimeRealizedPnl + overheads;
+
     // Fetch Market Pulse
     let marketPulse = [];
     try {
@@ -635,6 +764,22 @@ app.get("/api/portfolio", async (_req, res) => {
       winRate: Math.round(winRate * 10) / 10,
       tradesToday: trades.length,
       lifetimeRealizedPnl: Math.round(lifetimeRealizedPnl * 100) / 100,
+      // Trade P&L is NOT the account result — see the reconciliation note
+      // above. `unexplained` is the honest residual: non-zero means the model
+      // and the broker disagree and something needs diagnosing.
+      reconciliation: {
+        netFunding: Math.round(netFunding * 100) / 100,
+        tradePnlNet: Math.round(lifetimeRealizedPnl * 100) / 100,
+        accountOverheads: Math.round(overheads * 100) / 100,
+        transient: Math.round(charges.transient * 100) / 100,
+        trueAccountPnl: trueAccountPnl === null
+          ? null : Math.round(trueAccountPnl * 100) / 100,
+        unexplained: trueAccountPnl === null
+          ? null : Math.round((trueAccountPnl - explainedPnl) * 100) / 100,
+        // Nothing imported yet: the UI should say "not reconciled" rather
+        // than present a residual computed from an empty table as truth.
+        ledgerImported: charges.count > 0,
+      },
       marketPulse: marketPulse,
       agentStatus: agentStatus,
       marketOpen: systemMarketOpen,
@@ -704,37 +849,64 @@ app.get("/api/positions", async (_req, res) => {
         // exactly what the bot will trigger on. Fall back to an avg-cost estimate
         // only when a position isn't under executor management yet.
         const execOrder = execState.openOrders[symbol];
-        const real = realProtectiveStop(execOrder, execState.trailingHigh[symbol], mktPrice, isIN);
+        const real = realProtectiveStop(execOrder, execState.trailingHigh[symbol],
+                                       mktPrice, isIN, execState.lockArmed[symbol],
+                                       execState.lockLevels[symbol]);
 
-        let effectiveStopLoss, trailingTrigger, trailingActive, entryBasis, trailingPctVal;
+        let effectiveStopLoss, trailingTrigger, trailingActive, entryBasis,
+            trailingPctVal, trailBaseGapPct, trailTier;
         if (real) {
             effectiveStopLoss = real.hardStop;      // the bot's actual hard stop
             trailingTrigger = real.stop;            // active trailing level, else hard stop
             trailingActive = real.trailingActive;
             entryBasis = execOrder.entry_price;     // the entry the stop is measured from
-            trailingPctVal = execOrder.initial_trailing_pct || (isIN ? 0.005 : 0.003);
+            trailBaseGapPct = real.baseGapPct;
+            if (real.trailingActive) {
+                // Effective gap for THIS tier, not the static base ATR gap —
+                // showing the base here is what made the schedule illegible.
+                trailingPctVal = real.gapPct;
+                trailTier = {
+                    index: real.tierIndex, count: real.tierCount,
+                    gainFromHigh: real.gainFromHigh,
+                    nextAt: real.nextAt, nextGapPct: real.nextGapPct,
+                };
+            } else {
+                trailingPctVal = real.baseGapPct;
+                trailTier = { activatesAt: real.activatesAt };
+            }
         } else {
             // Fallback estimate (unmanaged position): mirror the Python logic.
-            const stopLossPct = isIN ? 0.015 : 0.01;
-            const lockThreshold = isIN ? 0.0025 : 0.0015;
-            const baseGap = isIN ? 0.005 : 0.003;
+            // No independent high-water estimate exists here, so gain from
+            // entry stands in for gain from high — same approximation this
+            // branch always used, just now sharing the tier table instead of
+            // a second copy of the ladder.
+            // Mirror config.py risk values (both markets: stop 2.5%; lock
+            // US 0.75% / IN 1.0%; base gap US 0.8% / IN 1.0%). Previously
+            // 0.015/0.01, 0.0025/0.0015 and 0.005/0.003 — none of which
+            // matched the values the executor actually uses.
+            const stopLossPct = 0.025;
+            const lockThreshold = isIN ? 0.010 : 0.0075;
+            const baseGap = isIN ? 0.010 : 0.008;
             const gainPct = avgCost > 0 ? (mktPrice / avgCost) - 1.0 : 0;
             effectiveStopLoss = Math.round(avgCost * (1.0 - stopLossPct) * 100) / 100;
+            trailBaseGapPct = baseGap;
             if (gainPct >= lockThreshold) {
-                let trailGap;
-                if (gainPct >= 0.03) trailGap = baseGap * 0.33;
-                else if (gainPct >= 0.02) trailGap = baseGap * 0.50;
-                else if (gainPct >= 0.01) trailGap = baseGap * 0.67;
-                else if (gainPct >= 0.005) trailGap = baseGap * 0.83;
-                else trailGap = baseGap;
-                trailingTrigger = Math.round(Math.max(mktPrice * (1.0 - trailGap), avgCost) * 100) / 100;
+                const tier = trailTierInfo(baseGap, gainPct);
+                trailingTrigger = Math.round(Math.max(mktPrice * (1.0 - tier.gapPct), avgCost) * 100) / 100;
                 trailingActive = true;
+                trailingPctVal = tier.gapPct;
+                trailTier = {
+                    index: tier.tierIndex, count: tier.tierCount,
+                    gainFromHigh: gainPct,
+                    nextAt: tier.nextAt, nextGapPct: tier.nextGapPct,
+                };
             } else {
                 trailingTrigger = effectiveStopLoss;
                 trailingActive = false;
+                trailingPctVal = baseGap;
+                trailTier = { activatesAt: lockThreshold };
             }
             entryBasis = avgCost;
-            trailingPctVal = baseGap;
         }
 
       return {
@@ -750,7 +922,11 @@ app.get("/api/positions", async (_req, res) => {
           takeProfit: Math.round(avgCost * (1.0 + 0.015) * 100) / 100,
           trailingStop: trailingTrigger,
           trailingActive: trailingActive,
+          // Effective gap for the CURRENT tier (was previously the static
+          // base gap regardless of tier — see trailTier for the schedule).
           trailingPct: trailingPctVal,
+          trailBaseGapPct: trailBaseGapPct,
+          trailTier: trailTier,
           allocation: nav > 0 ? Math.round((mktValue / nav) * 1000) / 10 : 0,
         strategy: strategy
       };

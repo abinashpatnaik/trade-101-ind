@@ -66,6 +66,13 @@ services:
       - TZ=Asia/Kolkata
       - DASHBOARD_HOST=dashboard-in
       - OBSERVE_ONLY=${OBSERVE_ONLY:-false}
+      # HALTED 2026-07-29. The 28-Jul contract note (CNT-26/27-67191195) showed
+      # brokerage billed at 0.5% PER LEG, not the min(Rs20, 0.03%) in
+      # trading_costs.py: real round trip is 1.22% of notional vs 0.106%
+      # modelled, an 11.5x understatement. At ~Rs3,800 sizing every trade needs
+      # >1.2% gross just to break even. Exits stay fully live. Clear this only
+      # after the cost model is corrected AND sizing clears the brokerage cap.
+      - NO_NEW_ENTRIES=${IN_NO_NEW_ENTRIES:-true}
       # IN flattens everything at the close: measured on 50 live round trips,
       # overnight holds lost 4x more per trade than same-day exits and two gap
       # exits were half the period's loss. US deliberately does NOT set this —

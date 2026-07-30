@@ -146,3 +146,59 @@ def test_weekly_pause_disabled_and_fails_open(monkeypatch):
     agent.portfolio = _P()
     agent._trading_db = _Boom()
     assert agent._weekly_loss_paused() is False     # fail OPEN with a warning
+
+
+# --------------------------------------------------- manual entries-only halt
+def test_no_new_entries_reason_names_itself_not_the_weekly_cap(monkeypatch):
+    """The manual halt reuses weekly_paused's gating path, so it must not
+    blame a weekly cap that was never breached — that misreads on the
+    dashboard as a risk event rather than a deliberate halt."""
+    from agents import trader as trader_mod
+    from agents.trader import TradingAgent
+
+    # Patch the config object trader actually holds a reference to, not a
+    # freshly imported one — they are not necessarily the same instance.
+    monkeypatch.setattr(trader_mod.config.agent, "no_new_entries", True,
+                        raising=False)
+    r = TradingAgent._buy_block_reason(True, False, weekly_paused=True)
+    assert "no_new_entries" in r.lower()
+    assert "weekly" not in r.lower()
+    # Off-list names are still reported as off-list.
+    assert TradingAgent._buy_block_reason(False, False, weekly_paused=True) == \
+        "Not in today's approved targets — exit-only"
+
+
+def test_no_new_entries_defaults_off(monkeypatch):
+    """Absent the env var the switch must be inert — a stale default that
+    silently halts a live account is worse than one that trades.
+
+    Builds a fresh AgentConfig rather than reloading the module: a reload
+    rebinds config.config and leaves agents.trader pointing at the old
+    instance, which silently breaks other tests.
+    """
+    from config import AgentConfig
+
+    monkeypatch.delenv("NO_NEW_ENTRIES", raising=False)
+    assert AgentConfig().no_new_entries is False
+    monkeypatch.setenv("NO_NEW_ENTRIES", "true")
+    assert AgentConfig().no_new_entries is True
+
+
+def test_no_new_entries_never_gates_an_exit():
+    """Structural guarantee: the flag is read ONLY on the entry path.
+
+    OBSERVE_ONLY mutes exits too (stops, gap-down, EOD flatten). If
+    no_new_entries ever leaked into one of those branches, a halted account
+    would sit on unmanaged positions — the exact failure this switch exists
+    to avoid.
+    """
+    import inspect
+
+    from agents import trader as trader_mod
+
+    src = inspect.getsource(trader_mod)
+    for line in src.splitlines():
+        if "no_new_entries" in line and not line.strip().startswith("#"):
+            lowered = line.lower()
+            assert "close_position" not in lowered
+            assert "exit" not in lowered or "exits" in lowered
