@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 _IN_DOCKER = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
 _ACTIVE_MARKET = os.environ.get("TRADING_MARKET", "IN").upper()
+
+#: PRAGMA user_version after all migrations have run. Bump this in the same
+#: commit as a new migration block so "did the migration finish, and does it
+#: stay finished" stays assertable from one place.
+#:   1 - pnl_net recomputed fees-only (slippage was double-counted)
+#:   2 - pnl_net recomputed against 0.5%/leg brokerage (contract-note truth)
+SCHEMA_REV = 2
 _DB_FILENAME = f"trading_{_ACTIVE_MARKET}.db"
 
 _DEFAULT_DB_PATH = f"/app/data/{_DB_FILENAME}" if _IN_DOCKER else os.path.join(
@@ -65,6 +72,32 @@ CREATE TABLE IF NOT EXISTS nav_history (
     nav REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_nav_history_ts ON nav_history(timestamp);
+
+-- Broker ledger entries that are NOT attributable to any single trade.
+--
+-- `kind` is the classification that decides how a line may be used:
+--   'funding'  external capital in/out (UPI deposits). Moves NAV but is NOT
+--              performance — must be removed before any return is computed.
+--   'overhead' real money lost that no trade caused (Kite Connect API fee,
+--              DDPI enabling). Belongs in net P&L but must NEVER be amortised
+--              into per-trade figures or win rate.
+--   'transient' posted and later reversed (provisional TDS). Nets to zero;
+--              counting either leg invents a loss or a gain that never was.
+--
+-- Without this table the dashboard can only ever see settlement-level trade
+-- P&L. Over 15 Jun - 29 Jul 2026 that omitted ₹679.36 of overheads — 26% of
+-- the account's entire ₹2,642.46 loss — so the UI read ₹679 better than the
+-- bank did, with no way to see why.
+CREATE TABLE IF NOT EXISTS account_charges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    posting_date TEXT NOT NULL,
+    particulars TEXT NOT NULL,
+    amount REAL NOT NULL,          -- signed: debits negative, credits positive
+    kind TEXT NOT NULL,            -- funding | overhead | transient
+    mode TEXT DEFAULT 'live',
+    UNIQUE(posting_date, particulars, amount)
+);
+CREATE INDEX IF NOT EXISTS idx_account_charges_date ON account_charges(posting_date);
 
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,6 +207,17 @@ class TradingDB:
             if conn.execute("PRAGMA user_version").fetchone()[0] < 1:
                 self._backfill_pnl_net(conn, recompute=True)
                 conn.execute("PRAGMA user_version = 1")
+            # Rev 2: every stored pnl_net was computed with brokerage at
+            # min(₹20, 0.03%) — the resident Zerodha plan. The account is
+            # actually billed 0.5% PER LEG (contract note CNT-26/27-67191195,
+            # and 0.5000% of ₹245,677 turnover across the 15 Jun - 29 Jul P&L
+            # book), so real friction is ~1.22% of notional, not ~0.106%.
+            # Every historical dashboard figure derived from pnl_net was
+            # therefore too optimistic by ~1.1% of notional per round trip.
+            # Recompute once against the corrected schedule.
+            if conn.execute("PRAGMA user_version").fetchone()[0] < 2:
+                self._backfill_pnl_net(conn, recompute=True)
+                conn.execute(f"PRAGMA user_version = {SCHEMA_REV}")
         logger.debug("Database schema verified.")
 
     def _backfill_pnl_net(self, conn, recompute: bool = False) -> None:
@@ -430,6 +474,56 @@ class TradingDB:
                 "sellCount": row["sell_count"],
                 "unknownCount": row["unknown_count"],
             }
+
+    # ------------------------------------------------------------------
+    # Account-level charges (non-trade ledger lines)
+    # ------------------------------------------------------------------
+
+    def record_account_charge(self, posting_date: str, particulars: str,
+                              amount: float, kind: str,
+                              mode: str = "live") -> None:
+        """Store one non-trade ledger line. Idempotent on (date, text, amount)
+        so re-importing an overlapping ledger export cannot double-count."""
+        if kind not in ("funding", "overhead", "transient"):
+            raise ValueError(f"unknown account-charge kind: {kind!r}")
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO account_charges
+                   (posting_date, particulars, amount, kind, mode)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (posting_date, particulars, round(float(amount), 4), kind, mode),
+            )
+
+    def get_account_charges(self, since_date: Optional[str] = None,
+                            mode: Optional[str] = None) -> Dict[str, float]:
+        """Totals by class, for reconciling modelled P&L against real NAV.
+
+        ``overhead`` is the only class that belongs in net P&L. ``funding`` is
+        capital and must be subtracted from any NAV delta before calling the
+        remainder performance. ``transient`` is returned for visibility but is
+        expected to net to ~0 and must not be spent.
+        """
+        clauses: List[str] = []
+        params: List[Any] = []
+        if since_date:
+            clauses.append("posting_date >= ?")
+            params.append(since_date)
+        if mode:
+            clauses.append("mode = ?")
+            params.append(mode)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""SELECT kind, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+                    FROM account_charges {where} GROUP BY kind""",
+                params,
+            ).fetchall()
+        out = {"funding": 0.0, "overhead": 0.0, "transient": 0.0, "count": 0}
+        for r in rows:
+            out[r["kind"]] = round(r["total"], 2)
+            out["count"] += r["n"]
+        return out
 
     # ------------------------------------------------------------------
     # Signals

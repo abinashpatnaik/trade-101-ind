@@ -510,6 +510,11 @@ class TradingAgent:
         approved (the DIACABS contradiction on the dashboard).
         """
         if in_targets and weekly_paused:
+            # The manual switch reuses weekly_paused's gating path, so name it
+            # correctly rather than blaming the weekly cap it never breached.
+            if getattr(config.agent, "no_new_entries", False):
+                return ("New entries manually halted (NO_NEW_ENTRIES) — "
+                        "exit-only")
             return ("Weekly loss limit hit — new entries paused until Monday "
                     "(risk kill-switch, exit-only)")
         if in_targets and not buys_allowed:
@@ -1288,6 +1293,17 @@ class TradingAgent:
                 # Weekly loss kill-switch: entries pause for the rest of the
                 # trading week; exits keep running below regardless.
                 weekly_paused = self._weekly_loss_paused()
+
+                # Manual entries-only kill switch (NO_NEW_ENTRIES). Folded into
+                # weekly_paused so it rides the SAME entry-gating path and can
+                # never reach an exit branch.
+                if getattr(config.agent, "no_new_entries", False):
+                    if not weekly_paused:
+                        logger.warning(
+                            "NO_NEW_ENTRIES is set — all new BUYs blocked; "
+                            "exits (stops, trailing, gap-down, EOD) stay live."
+                        )
+                    weekly_paused = True
 
                 # Always exit-manage open positions, even if they dropped off
                 # today's vetted targets (or during the EOD buffer). Buys stay

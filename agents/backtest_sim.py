@@ -27,15 +27,29 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from config import config
-from trading_costs import round_trip_cost_pct as _rt_cost
+from trading_costs import (
+    PROFIT_LOCK_ARM_MULTIPLE,
+    net_breakeven_pct as _net_be,
+    round_trip_cost_pct as _rt_cost,
+)
 
 logger = logging.getLogger(__name__)
 
 
+def _representative_notional() -> float:
+    """A typical small-account position: 2× the market's min trade value."""
+    return config.wallet.min_trade_value * 2
+
+
 def _default_cost_pct() -> float:
-    """Representative round-trip cost for a typical small-account position
-    (2× the market's min trade value, same-day)."""
-    return _rt_cost(config.wallet.min_trade_value * 2, overnight=False)
+    """Representative round-trip cost, deducted from every simulated trade."""
+    return _rt_cost(_representative_notional(), overnight=False)
+
+
+def _default_breakeven_pct() -> float:
+    """Gain at which an exit nets zero — the profit-lock floor. Fees + one leg
+    of slippage; see trading_costs.net_breakeven_pct."""
+    return _net_be(_representative_notional(), overnight=False)
 
 
 @dataclass
@@ -45,9 +59,12 @@ class SimParams:
     take_profit_pct: float = field(default_factory=lambda: config.risk.take_profit_pct)
     profit_lock_threshold: float = field(default_factory=lambda: config.risk.profit_lock_threshold)
     trailing_gap_base: float = field(default_factory=lambda: config.risk.trailing_gap_base)
-    # Deducted from every simulated trade so verdicts are NET of friction;
-    # also lifts the profit-lock floor to entry×(1+cost) like the live executor.
+    # Deducted from every simulated trade so verdicts are NET of friction.
     round_trip_cost_pct: float = field(default_factory=_default_cost_pct)
+    # Floor for the profit-lock stop AND (×PROFIT_LOCK_ARM_MULTIPLE) the
+    # minimum arm threshold. Separate from round_trip_cost_pct because an exit
+    # decision owes only one leg of slippage, not two.
+    net_breakeven_pct: float = field(default_factory=_default_breakeven_pct)
     warmup_bars: int = 50
     max_window_bars: int = 200
 
@@ -84,6 +101,8 @@ class _Position:
     take_profit_price: float
     initial_trailing_pct: float
     high_water: float
+    # Mirrors OrderExecutor._lock_armed: the profit-lock is a one-way latch.
+    lock_armed: bool = False
 
 
 def simulate_exit(
@@ -94,8 +113,8 @@ def simulate_exit(
     """
     One bar of exit checking. Mirrors OrderExecutor.check_exit_conditions.
 
-    Mutates ``pos.high_water`` exactly like the live tracker (advance on new
-    highs; reset to current price while the profit-lock is inactive).
+    Mutates ``pos.high_water`` exactly like the live tracker: a one-way ratchet,
+    advanced on new highs and never lowered. Also latches ``pos.lock_armed``.
     Returns 'STOP_LOSS' | 'TAKE_PROFIT' | 'TRAILING_STOP' | None.
     """
     if current_price <= 0:
@@ -121,7 +140,21 @@ def simulate_exit(
     config_gap = params.trailing_gap_base
     base_gap = max(atr_gap, config_gap) if atr_gap > 0 else config_gap
 
-    if gain_from_entry >= params.profit_lock_threshold:
+    # Arm threshold is COST-AWARE and can never sit below net break-even —
+    # arming under it makes the break-even floor the trigger and sells at an
+    # instant net loss. Mirrors trading_costs.profit_lock_arm_pct; params carry
+    # the cost so the sim stays broker-free.
+    breakeven_pct = params.net_breakeven_pct
+    arm_pct = max(params.profit_lock_threshold,
+                  breakeven_pct * PROFIT_LOCK_ARM_MULTIPLE)
+
+    # One-way latch, exactly as the live executor: arming is permanent for the
+    # life of the position. Re-testing the threshold each bar left the trigger
+    # unreachable below ~+1.7% gain-from-high and wiped the high-water mark.
+    if gain_from_entry >= arm_pct:
+        pos.lock_armed = True
+
+    if pos.lock_armed:
         if gain_from_high >= 0.03:
             trail_gap = base_gap * 0.33
         elif gain_from_high >= 0.02:
@@ -134,16 +167,14 @@ def simulate_exit(
             trail_gap = base_gap
 
         trigger = pos.high_water * (1.0 - trail_gap)
-        # Never let the trailing stop go below NET break-even (entry + costs),
-        # mirroring the live executor's cost-aware floor.
-        trigger = max(trigger, pos.entry_price * (1.0 + params.round_trip_cost_pct))
+        # Never let the trailing stop go below NET break-even, mirroring the
+        # live executor. Uses net_breakeven_pct (fees + ONE leg of slippage),
+        # not the full round trip — entry slippage is already in entry_price.
+        trigger = max(trigger, pos.entry_price * (1.0 + breakeven_pct))
 
         if current_price <= trigger:
             return "TRAILING_STOP" if current_price >= pos.entry_price else "STOP_LOSS"
-    else:
-        # Profit-lock inactive — reset high to the current price so a later
-        # recovery trails from the recovery point, not a stale high.
-        pos.high_water = current_price
+    # No `else` lowering high_water — see the ratchet note in the docstring.
 
     return None
 

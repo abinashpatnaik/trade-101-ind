@@ -203,6 +203,18 @@ class AgentConfig:
     observe_only: bool = field(
         default_factory=lambda: str(os.getenv("OBSERVE_ONLY", "false")).lower() == "true"
     )
+    # Manual entries-only kill switch. Blocks every NEW BUY while leaving all
+    # exit paths (stops, trailing, gap-down, EOD flatten) fully live — which
+    # is what OBSERVE_ONLY does NOT do, since that one also mutes exits and
+    # would strand open positions unmanaged.
+    # Set 2026-07-29: the 28-Jul contract note showed brokerage is 0.5% PER
+    # LEG (not the min(Rs20, 0.03%) modelled), making the real round trip
+    # 1.22% of notional vs the 0.106% in trading_costs.py. Every entry at the
+    # current ~Rs3,800 sizing needs >1.2% gross just to break even, so new
+    # entries stay off until the cost model and sizing are corrected.
+    no_new_entries: bool = field(
+        default_factory=lambda: str(os.getenv("NO_NEW_ENTRIES", "false")).lower() == "true"
+    )
 
 
 @dataclass

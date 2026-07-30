@@ -34,6 +34,22 @@ def _portfolio(**overrides):
     return base
 
 
+@pytest.fixture(autouse=True)
+def _cheap_costs(monkeypatch):
+    """Pin a low brokerage so the friction gate never decides these tests.
+
+    These cases are about DIRECTIVE parity, not the fee schedule. They used
+    to pass only because the real schedule happened to be cheap; when the
+    28-Jul-2026 contract note corrected brokerage to 0.5%/leg, the cost gate
+    started vetoing every BUY and four unrelated tests went red. Pinning the
+    rate keeps the subject of the test the directive, not Zerodha's pricing.
+    """
+    import trading_costs
+
+    monkeypatch.setattr(trading_costs, "IN_BROKERAGE_PCT", 0.0003)
+    monkeypatch.setattr(trading_costs, "IN_BROKERAGE_CAP", 20.0)
+
+
 @pytest.fixture
 def engine():
     return DecisionEngine()

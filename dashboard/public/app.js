@@ -381,7 +381,7 @@ function renderPositions(positions) {
         <span class="${dir}">${arrow} ${fmtSigned(p.pnl)} (${fmtSignedPct(p.pnlPct)})</span>
       </td>
       <td class="right num">${fmtMoney(p.trailingStop ?? p.stopLoss)}${stopTag(p)}</td>
-      <td class="right num">${p.trailingPct ? fmtPct(p.trailingPct * 100, 1) : "—"}</td>
+      <td class="right num">${trailPctCell(p)}</td>
     </tr>`;
   }).join("");
 }
@@ -395,6 +395,33 @@ function stopTag(p) {
     ? "Active trailing stop — sells if price falls to this level"
     : "Hard stop — trailing lock inactive until >profit threshold; only this protects the position";
   return ` <span class="badge" style="font-size:0.6rem;opacity:0.7;" title="${title}">${label}</span>`;
+}
+
+// The trail gap tightens in 5 steps as a position runs (see order_executor's
+// "Patience Then Lock" schedule): a bare percentage can't show WHERE in that
+// schedule a position sits or what it takes to reach the next, tighter step.
+// This renders the current effective gap plus a tier badge, with the full
+// ladder and next-tier trigger in the tooltip.
+function trailPctCell(p) {
+  if (!p.trailingPct) return "—";
+  const pctText = fmtPct(p.trailingPct * 100, 2);
+  const t = p.trailTier;
+  if (!t) return pctText;
+
+  if (p.trailingActive && t.count) {
+    const gainNow = fmtPct((t.gainFromHigh ?? 0) * 100, 2);
+    const next = t.nextAt != null
+      ? `Tightens to ${fmtPct(t.nextGapPct * 100, 2)} once ${fmtPct(t.nextAt * 100, 1)} above the post-entry high (currently ${gainNow}).`
+      : "Already at the tightest lock — no further tightening.";
+    const title = `Trail gap ${pctText} · tier ${t.index}/${t.count} · base ${fmtPct((p.trailBaseGapPct ?? 0) * 100, 2)}. ${next}`;
+    return `${pctText} <span class="badge" style="font-size:0.55rem;opacity:0.65;" title="${esc(title)}">T${t.index}/${t.count}</span>`;
+  }
+  // Trailing not armed yet — the number shown is the base gap it will use
+  // once it activates; say what activates it.
+  const title = t.activatesAt != null
+    ? `Trailing lock inactive — arms once gain from entry reaches ${fmtPct(t.activatesAt * 100, 2)}. Base gap once armed: ${pctText}.`
+    : pctText;
+  return `<span title="${esc(title)}">${pctText}</span>`;
 }
 
 function patchPositionPrice(symbol, price, wentUp) {

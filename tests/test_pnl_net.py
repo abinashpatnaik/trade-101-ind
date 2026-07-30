@@ -23,7 +23,7 @@ import sqlite3
 
 import pytest
 
-from db import TradingDB
+from db import SCHEMA_REV, TradingDB
 from trading_costs import round_trip_cost_pct
 
 
@@ -164,5 +164,5 @@ def test_recompute_runs_only_once(tmp_path):
                           10, 300.0, 3000.0, pnl=50.0, exit_reason="EOD")
     TradingDB(db_path=path)
     with db._conn() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert c.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_REV
     assert _row(db, rid)["pnl_net"] is not None
