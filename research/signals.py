@@ -103,6 +103,76 @@ class LowRsiUptrend:
         return out
 
 
+class RocketIgnition:
+    """HYPOTHESIS (untested): catch a move already igniting, not predict a
+    quiet name. Encodes the user's "rocket" definition on point-in-time daily
+    bars — every value uses only the last COMPLETED bar as-of the cutoff, so
+    it is lookahead-safe by construction:
+
+      * range expansion — the last bar's High-Low is >= ``range_mult`` x the
+        10-day average true range measured BEFORE that bar (today excluded);
+      * relative volume — the last bar's volume is >= ``vol_mult`` x the prior
+        20-day average;
+      * structure — the close breaks the prior ``breakout_lookback``-day high
+        (base/last-N-bars high, today excluded) AND finishes in the upper
+        ``close_strength`` of its own range (it held the move, not a spike-fade).
+
+    Only names clearing ALL THREE get a score; among them the rank is
+    ``range_expansion x relative_volume`` so the most decisive ignition sorts
+    first. This is a REFERENCE HYPOTHESIS, not a recommendation — no gross
+    edge has been shown for any selection rule here; the point is to let
+    ``run_study``'s matched-random control decide.
+    """
+    name = "rocket_ignition"
+
+    def __init__(self, range_mult: float = 1.5, vol_mult: float = 1.5,
+                 breakout_lookback: int = 20, close_strength: float = 0.5):
+        self.range_mult = range_mult
+        self.vol_mult = vol_mult
+        self.breakout_lookback = breakout_lookback
+        self.close_strength = close_strength
+
+    def rank(self, histories: Dict[str, pd.DataFrame], cutoff) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        need = self.breakout_lookback + 2
+        for sym, df in histories.items():
+            if len(df) < need:
+                continue
+            h, l, c, v = df["High"], df["Low"], df["Close"], df["Volume"]
+
+            # True range series, then the 10-day ATR baseline that EXCLUDES the
+            # last bar (so the bar can be compared against its own history).
+            prev_c = c.shift(1)
+            tr = np.maximum(h - l, np.maximum((h - prev_c).abs(), (l - prev_c).abs()))
+            baseline_atr = float(tr.iloc[-11:-1].mean())
+            if not np.isfinite(baseline_atr) or baseline_atr <= 0:
+                continue
+            last_range = float(h.iloc[-1] - l.iloc[-1])
+            range_expansion = last_range / baseline_atr
+            if range_expansion < self.range_mult:
+                continue
+
+            avg_vol = float(v.iloc[-(self.breakout_lookback + 1):-1].mean())
+            if not np.isfinite(avg_vol) or avg_vol <= 0:
+                continue
+            rel_vol = float(v.iloc[-1]) / avg_vol
+            if rel_vol < self.vol_mult:
+                continue
+
+            prior_high = float(h.iloc[-(self.breakout_lookback + 1):-1].max())
+            if not (float(c.iloc[-1]) > prior_high):
+                continue
+
+            if last_range <= 0:
+                continue
+            close_pos = (float(c.iloc[-1]) - float(l.iloc[-1])) / last_range
+            if close_pos < self.close_strength:
+                continue
+
+            out[sym] = range_expansion * rel_vol
+        return out
+
+
 class AntiMomentum:
     """CONTROL — the mirror of the live rule (worst 20-day performers)."""
     name = "anti_momentum"
@@ -125,5 +195,6 @@ class LiquidityOnly:
 
 
 CATALOGUE = {s.name: s for s in [
-    Momentum20(), PullbackInUptrend(), LowRsiUptrend(), AntiMomentum(), LiquidityOnly(),
+    Momentum20(), PullbackInUptrend(), LowRsiUptrend(), RocketIgnition(),
+    AntiMomentum(), LiquidityOnly(),
 ]}
