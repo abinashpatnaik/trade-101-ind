@@ -45,6 +45,7 @@ from market_session import MarketSession
 from order_executor import OrderExecutor
 from portfolio_tracker import PortfolioTracker
 from price_feed import PriceFeed
+from universe_utils import prefer_nse
 from report_generator import EODReportGenerator
 from report_sender import ReportSender
 from learning_engine import LearningEngine
@@ -290,7 +291,12 @@ class TradingAgent:
 
     def _effective_targets(self) -> list:
         """Vetted targets from the bus (today only) → daily_targets file →
-        static config universe."""
+        static config universe.
+
+        Whatever the source, dual-listed names are collapsed to their NSE leg
+        (``prefer_nse``): a stock on both NSE and BSE is traded once, on the
+        more liquid NSE side, never on both. BSE-only names are untouched.
+        """
         vetted = self.bus.get_state("vetted_targets")
         if vetted and vetted.get("session_date") == self.session.get_session_date():
             approved = vetted.get("approved")
@@ -302,7 +308,7 @@ class TradingAgent:
                         len(approved), len(blocked),
                         ", ".join(f"{s}: {r}" for s, r in list(blocked.items())[:5]),
                     )
-                return sorted(approved)
+                return prefer_nse(sorted(approved))
 
         try:
             data_dir = os.path.dirname(config.agent.trades_csv)
@@ -311,13 +317,13 @@ class TradingAgent:
                 with open(targets_file, "r") as f:
                     parsed = json.load(f)
                 if parsed and isinstance(parsed, list):
-                    return sorted(parsed)
+                    return prefer_nse(sorted(parsed))
         except Exception as exc:
             logger.warning(
                 "Failed to load daily_targets_%s.json, falling back to config: %s",
                 ACTIVE_MARKET, exc,
             )
-        return list(config.universe.tickers)
+        return prefer_nse(list(config.universe.tickers))
 
     # ------------------------------------------------------------------
     # Shutdown handler
