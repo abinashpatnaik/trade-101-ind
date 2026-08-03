@@ -318,7 +318,12 @@ class DecisionEngine:
         if current_price <= 0:
             return 0.01
 
-        max_notional = portfolio_value * self._risk.max_position_size_pct
+        # Intraday leverage (IN MIS): 1.0 = cash/CNC (unchanged). >1.0 lets the
+        # notional exceed cash; the per-trade risk cap in _apply_risk_cap still
+        # bounds the rupee loss at the stop, so leverage raises SIZE, not the
+        # amount a single stop-out can cost.
+        leverage = max(1.0, float(getattr(self._risk, "leverage", 1.0) or 1.0))
+        max_notional = portfolio_value * self._risk.max_position_size_pct * leverage
 
         # Can't even afford $1 worth — skip
         if max_notional < 1.0:
@@ -416,9 +421,16 @@ class DecisionEngine:
         current_price: float,
         available_funds: float,
     ) -> bool:
-        """Return True if available cash covers the intended purchase."""
+        """Return True if available cash covers the intended purchase.
+
+        Under MIS leverage only the MARGIN (cost / leverage) must be covered by
+        cash, not the full notional — mirroring how the broker blocks the order.
+        leverage=1.0 (cash/CNC) reduces this to the original full-cost check.
+        """
         estimated_cost = quantity * current_price * 1.001  # 0.1% slippage buffer
-        return available_funds >= estimated_cost
+        leverage = max(1.0, float(getattr(self._risk, "leverage", 1.0) or 1.0))
+        margin_required = estimated_cost / leverage
+        return available_funds >= margin_required
 
     # ------------------------------------------------------------------
     # Public API
