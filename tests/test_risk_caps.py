@@ -202,3 +202,52 @@ def test_no_new_entries_never_gates_an_exit():
             lowered = line.lower()
             assert "close_position" not in lowered
             assert "exit" not in lowered or "exits" in lowered
+
+
+# --------------------------------------------------------- MIS leverage (IN)
+def test_leverage_default_is_inert(engine, monkeypatch):
+    """leverage=1.0 (default) must reproduce the exact pre-leverage sizing and
+    the full-cash affordability check — merging the feature changes nothing."""
+    monkeypatch.setattr(engine._risk, "leverage", 1.0, raising=False)
+    monkeypatch.setattr(engine._risk, "max_position_size_pct", 0.30, raising=False)
+    # notional capped at 30% of NAV
+    qty = engine._compute_quantity(10_000.0, 100.0, 0.0)
+    assert qty * 100.0 == pytest.approx(3_000.0, rel=1e-6)     # 30% of 10k
+    # affordability needs the FULL cost in cash
+    assert engine._can_afford(30, 100.0, 3_003.0) is True
+    assert engine._can_afford(30, 100.0, 2_999.0) is False
+
+
+def test_leverage_scales_size_and_margin(engine, monkeypatch):
+    """leverage=3 triples the notional cap and lets cash cover only the margin
+    (cost/3), mirroring how the broker blocks an over-margined MIS order."""
+    monkeypatch.setattr(engine._risk, "leverage", 3.0, raising=False)
+    monkeypatch.setattr(engine._risk, "max_position_size_pct", 0.30, raising=False)
+    qty = engine._compute_quantity(10_000.0, 100.0, 0.0)
+    assert qty * 100.0 == pytest.approx(9_000.0, rel=1e-6)     # 30% x 3 of 10k
+    # a 9,000 notional needs only ~3,000 margin in cash
+    assert engine._can_afford(90, 100.0, 3_100.0) is True
+    assert engine._can_afford(90, 100.0, 2_900.0) is False
+
+
+def test_us_config_forces_no_leverage(monkeypatch):
+    """US is a cash account (no MIS) — MAX_LEVERAGE must never leak into it."""
+    monkeypatch.setenv("MAX_LEVERAGE", "5")
+    import importlib
+    import config as C
+    importlib.reload(C)
+    try:
+        assert C.get_us_config().risk.leverage == 1.0
+        assert C.get_india_config().risk.leverage == 5.0
+    finally:
+        monkeypatch.delenv("MAX_LEVERAGE", raising=False)
+        importlib.reload(C)
+
+
+def test_product_is_mis_only_under_leverage(monkeypatch):
+    from zerodha_connector import ZerodhaConnector
+    from config import config
+    monkeypatch.setattr(config.risk, "leverage", 1.0, raising=False)
+    assert ZerodhaConnector._product() == "CNC"
+    monkeypatch.setattr(config.risk, "leverage", 2.5, raising=False)
+    assert ZerodhaConnector._product() == "MIS"

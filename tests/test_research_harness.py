@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from research.harness import StudyResult, run_study
-from research.signals import CATALOGUE, Momentum20, PullbackInUptrend
+from research.signals import CATALOGUE, Momentum20, PullbackInUptrend, RocketIgnition
 
 
 class FakeSource:
@@ -186,6 +186,36 @@ def test_pullback_rejects_extended_names(symbols):
     for sym in picks:
         c = hist[sym]["Close"]
         assert c.iloc[-1] / c.iloc[-20:].max() - 1 <= -0.03
+
+
+def _daily_frame(rows):
+    """rows: list of (open, high, low, close, volume) -> OHLCV daily frame."""
+    idx = pd.bdate_range(end=pd.Timestamp.now().normalize(), periods=len(rows))
+    cols = ["Open", "High", "Low", "Close", "Volume"]
+    return pd.DataFrame(rows, columns=cols, index=idx)
+
+
+def test_rocket_fires_on_ignition_only():
+    """The ignition rule must accept a real breakout (range + volume + strong
+    close) and reject a quiet name and a spike that faded into the close."""
+    quiet_base = [(100, 100.5, 99.5, 100, 1000.0)] * 29
+    # Igniting: last bar breaks the base high on 8x range and 3x volume, closing
+    # near the high.
+    igniting = quiet_base + [(100, 108, 100, 107, 3000.0)]
+    # Quiet: unchanged — no expansion, no breakout.
+    quiet = quiet_base + [(100, 100.5, 99.5, 100, 1000.0)]
+    # Spike-fade: same range/volume/breakout, but closes at the bottom of the
+    # bar — must be rejected by the close-strength filter alone.
+    spike_fade = quiet_base + [(100, 108, 100, 100.2, 3000.0)]
+
+    hist = {"IGNITE": _daily_frame(igniting),
+            "QUIET": _daily_frame(quiet),
+            "FADE": _daily_frame(spike_fade)}
+    scores = RocketIgnition().rank(hist, hist["IGNITE"].index[-1])
+
+    assert "IGNITE" in scores
+    assert "QUIET" not in scores
+    assert "FADE" not in scores
 
 
 # --------------------------------------------------------------- edge study

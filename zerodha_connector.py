@@ -563,6 +563,17 @@ class ZerodhaConnector:
     # Order Execution API
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _product() -> str:
+        """MIS (intraday margin) when leverage is enabled, else CNC (cash).
+
+        MIS gives intraday leverage but the broker auto-squares-off open MIS
+        positions around 15:20 IST — the agent's own EOD flatten must run
+        before that to avoid the broker's auto-squareoff fee.
+        """
+        from config import config
+        return "MIS" if float(getattr(config.risk, "leverage", 1.0) or 1.0) > 1.0 else "CNC"
+
     def place_market_order(self, symbol: str, action: str, quantity: int, **kwargs) -> Optional[str]:
         """Place a market order on NSE."""
         quantity = int(quantity)
@@ -606,7 +617,7 @@ class ZerodhaConnector:
                 tradingsymbol=tradingsymbol,
                 transaction_type=action.upper(),
                 quantity=quantity,
-                product="CNC",
+                product=self._product(),
                 order_type="LIMIT",
                 price=limit_price
             )
@@ -708,7 +719,7 @@ class ZerodhaConnector:
                 tradingsymbol=tradingsymbol,
                 transaction_type=action.upper(),
                 quantity=quantity,
-                product="CNC",
+                product=self._product(),
                 order_type="SL",
                 trigger_price=trigger_rounded,
                 price=limit_price
@@ -738,7 +749,7 @@ class ZerodhaConnector:
                 tradingsymbol=tradingsymbol,
                 transaction_type=action.upper(),
                 quantity=quantity,
-                product="CNC",
+                product=self._product(),
                 order_type="LIMIT",
                 price=round(limit_price, 1)
             )

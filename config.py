@@ -71,7 +71,24 @@ class UniverseConfig:
 @dataclass
 class RiskConfig:
     """Position-level and portfolio-level risk controls."""
-    max_position_size_pct: float = 0.30
+    # Fraction of NAV a single position may deploy (before leverage). Env
+    # MAX_POSITION_SIZE_PCT so order size tunes without a code change; combined
+    # with `leverage` the max notional is NAV x this x leverage.
+    max_position_size_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_POSITION_SIZE_PCT", "0.30"))
+    )
+    # Intraday LEVERAGE (India MIS only). 1.0 = CNC/cash, no leverage — the
+    # historical behaviour and the SAFE default, so merging this changes
+    # nothing until the env is set. >1.0 switches IN orders to the MIS product
+    # and sizes against leveraged buying power (max_notional and the cash
+    # affordability check both scale by this factor).
+    # WARNING: leverage multiplies P&L. On a book without a demonstrated edge
+    # it multiplies LOSSES, not gains. The broker caps intraday leverage per
+    # stock (SEBI peak-margin), so an order above a stock's MIS limit REJECTS.
+    # US is forced to 1.0 (cash account; Alpaca has no MIS product). To reach a
+    # target order size ALSO raise MAX_RISK_PER_TRADE_PCT — the per-trade risk
+    # cap binds first and would otherwise keep orders small. Env: MAX_LEVERAGE.
+    leverage: float = field(default_factory=lambda: float(os.getenv("MAX_LEVERAGE", "1.0")))
     max_daily_loss_pct: float = 0.02
     stop_loss_pct: float = 0.025            # 2.5% hard stop (US default, floor for ATR-dynamic)
     take_profit_pct: float = 9.99  # Effectively disabled so profits can run
@@ -324,6 +341,7 @@ class Config:
 
     def __post_init__(self) -> None:
         assert 0 < self.risk.max_position_size_pct <= 1, "max_position_size_pct must be in (0, 1]"
+        assert self.risk.leverage >= 1.0, "leverage must be >= 1.0 (1.0 = cash/CNC, no leverage)"
         assert 0 < self.risk.max_daily_loss_pct <= 1, "max_daily_loss_pct must be in (0, 1]"
         assert self.sentiment.sentiment_weight + self.sentiment.trend_weight == 1.0, "weights must sum to 1.0"
         assert self.signal.buy_threshold > 0, "buy_threshold must be positive"
@@ -413,6 +431,11 @@ def get_us_config() -> Config:
                      "PANW", "SNPS", "KLAC", "MELI", "CRWD"]
         ),
         risk=RiskConfig(
+            # US is a CASH account and Alpaca has no MIS product, so intraday
+            # leverage is impossible here — force 1.0 regardless of MAX_LEVERAGE
+            # (which is an India-only knob). Enabling it would only produce
+            # order rejections / good-faith violations on unsettled cash.
+            leverage=1.0,
             # 3 -> 5 so the 90% small-account deployment target is reachable:
             # the 0.5% risk cap sizes each position at ~$10-20, so 3 positions
             # capped peak deployment near 60% of a ~$100 NAV.
