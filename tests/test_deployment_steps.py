@@ -55,35 +55,43 @@ def test_thresholds_are_the_agreed_values(monkeypatch):
     assert de_mod.IN_DEPLOY_STEP_NAV == pytest.approx(100_000.0)
 
 
-@pytest.mark.parametrize("market,nav", [("IN", 17_490.0), ("US", 101.16)])
-def test_heat_budget_reaches_the_deploy_target(market, nav, monkeypatch):
-    """Concurrency is limited by the HEAT BUDGET (0.75%/trade, 2.25% total),
-    not by max_open_positions — which is now only an outer bound. The
-    positions the budget permits must still reach the 90% deploy target,
-    otherwise deployment is silently capped below what was configured."""
+@pytest.mark.parametrize("market,nav,risk,possize", [
+    # compose values per market: IN concentrates (1 position, 2.25% risk, 90%
+    # size); US keeps the diversified budget (3 positions, 0.75% risk, 30%).
+    ("IN", 17_490.0, 0.0225, 0.90),
+    ("US", 101.16, 0.0075, 0.30),
+])
+def test_heat_budget_reaches_the_deploy_target(market, nav, risk, possize, monkeypatch):
+    """The positions the heat budget permits must still reach the 90% deploy
+    target, otherwise deployment is silently capped below what was configured.
+    On IN this is now ONE ~90% position; on US, three ~30% positions."""
     de_mod, cfg = _engine_for(market, monkeypatch)
-    risk, heat = 0.0075, 0.0225        # compose values for both markets
+    heat = 0.0225
     tight_stop = 0.025                 # the stop floor => largest position size
-    permitted = int(heat / risk)       # 3
+    permitted = max(1, int(heat / risk))       # IN 1, US 3
     assert permitted <= cfg.risk.max_open_positions, (
         "max_open_positions must not cut below the heat budget")
-    per_position = min(nav * risk / tight_stop, nav * cfg.risk.max_position_size_pct)
+    per_position = min(nav * risk / tight_stop, nav * possize)
     peak = permitted * per_position
     assert peak >= nav * de_mod.SMALL_ACCOUNT_DEPLOY_PCT * 0.99, (
         f"{market}: {permitted} heat-permitted positions reach only "
         f"{peak/nav:.0%} of NAV — cannot hit the 90% target")
 
 
-@pytest.mark.parametrize("market,expected", [("IN", 5), ("US", 5)])
+@pytest.mark.parametrize("market,expected", [("IN", 1), ("US", 5)])
 def test_position_counts(market, expected, monkeypatch):
+    # IN concentrates into ONE position (2026-08-03) so a >Rs10k order engages
+    # the Rs50 NRO brokerage cap; US stays diversified at 5.
     _de, cfg = _engine_for(market, monkeypatch)
     assert cfg.risk.max_open_positions == expected
 
 
 def test_total_risk_at_full_deployment_is_bounded(monkeypatch):
     """All positions stopping out at once must stay inside the daily halt's
-    reach — the halt is what stops a cascade, so it must be able to fire."""
+    reach — the halt is what stops a cascade, so it must be able to fire.
+    IN now runs ONE position at 2.25% risk; 1 x 2.25% = 2.25% > 2% halt."""
     _de, cfg = _engine_for("IN", monkeypatch)
-    worst_case = cfg.risk.max_open_positions * 0.005      # 5 x 0.5% = 2.5%
+    per_trade_risk = 0.0225                              # IN compose value
+    worst_case = cfg.risk.max_open_positions * per_trade_risk
     assert worst_case > cfg.risk.max_daily_loss_pct, (
         "daily halt must trigger before every position can stop out")

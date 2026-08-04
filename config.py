@@ -379,18 +379,22 @@ def get_india_config() -> Config:
             stop_loss_pct=0.025,            # -2.5% hard stop floor (ATR-dynamic widens further)
             profit_lock_threshold=0.010,    # +1.0% before profit-lock activates (covers IN friction)
             trailing_gap_base=0.010,        # 1.0% trailing gap (IN mid-caps are more volatile)
-            # Was 2, to amortise the flat DP charge over larger positions.
-            # That rationale is OBSOLETE: since 2026-07-21 IN flattens at
-            # every close, so trades are INTRADAY — no DP charge, and
-            # brokerage is min(Rs20, 0.03%) which scales linearly, so more
-            # smaller positions carry no fixed-cost penalty.
-            # Raised 2 -> 4 -> 5 to let the 90% deployment target actually be
-            # reachable: the 0.5% risk cap sizes each position at Rs1.7-3.5k,
-            # so N positions cap peak deployment at N x that. At 5 the binding
-            # constraint becomes the 90% deploy cap (as intended) rather than
-            # the position count. More names at the SAME per-trade risk is
-            # better diversified than fewer larger ones.
-            max_open_positions=5,
+            # CONCENTRATED "sniper" sizing (2026-08-03, user-directed, Option 2).
+            # The earlier 5-small-positions rationale assumed the RETAIL cost
+            # model (Rs20 cap, linear) — WRONG for this NRO account, where
+            # brokerage is 0.5% or Rs50/order (whichever lower). That flat Rs50
+            # only engages ABOVE Rs10k/order, so small positions pay the full
+            # 0.5% and the 2x-cost entry gate (2.83% at ~Rs3.7k) starves the
+            # bot. Concentrating into ONE ~90%-NAV position pushes the order
+            # past Rs10k, dropping round-trip cost to ~1.0% and the gate to
+            # ~2.0%, so more names qualify. WARNING: this is a size/variance
+            # change, NOT edge — measured intraday edge is ~zero/negative, so
+            # concentration raises drawdown/ruin risk without raising expected
+            # return. The daily-loss halt (2%), per-trade risk cap and weekly
+            # halt stay ON as circuit breakers; a single stop-out (~2.25% NAV)
+            # trips the daily halt by design. Revert to a diversified count
+            # once NAV is large enough that a >Rs10k order is a safe % of it.
+            max_open_positions=1,
         ),
         wallet=WalletConfig(min_trade_value=3000.0),
         trend=TrendConfig(),
