@@ -82,15 +82,16 @@ services:
       # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
       # each blocked re-entry saves its round-trip friction.
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${IN_MAX_ENTRIES_PER_SYMBOL:-2}
-      # Risk per trade: 0.75% of NAV at the stop (~Rs131 on Rs17.5k).
-      # Raised from 0.5% alongside the heat budget below so a lone signal
-      # deploys ~30% of NAV instead of 20% — fixed per-trade risk alone left
-      # deployment hostage to how many signals happened to fire.
-      # Recorded expectation (2026-07-26, at 0.5%): typical week -Rs297
-      # (-1.70% NAV), P(green week) ~13%, friction ~Rs166/week. Judge live
-      # results against that rather than in hindsight; sizing changes the
-      # stakes, not the ~zero measured edge.
-      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.0075}
+      # CONCENTRATED "sniper" sizing (2026-08-03, Option 2): one position at up
+      # to 90% of NAV so the order clears Rs10k and the Rs50 brokerage cap
+      # engages (cost ~1.0%, entry gate ~2.0% vs 2.83% when tiny). Risk per
+      # trade raised to 2.25% so a lone signal can reach ~90% at a 2.5% stop;
+      # a single stop-out (~2.25% NAV = ~Rs388) intentionally trips the 2%
+      # daily-loss halt. This changes the STAKES, not the ~zero/negative
+      # measured edge — concentration raises drawdown/ruin risk. Drop back to
+      # ~0.0075 and more positions once NAV makes a >Rs10k order a safe slice.
+      - MAX_POSITION_SIZE_PCT=${IN_MAX_POSITION_SIZE:-0.90}
+      - MAX_RISK_PER_TRADE_PCT=${IN_MAX_RISK_PER_TRADE:-0.0225}
       # Total open risk across all positions (heat budget). At 0.75%/trade
       # this allows 3 concurrent positions (0.75 x 3 = 2.25%) and refuses the
       # 4th, so 1 position deploys ~30% of NAV, 2 ~60%, 3 ~90%.

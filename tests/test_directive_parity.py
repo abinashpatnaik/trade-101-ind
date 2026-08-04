@@ -116,11 +116,15 @@ def test_sniper_adx_gate_override(engine):
     assert "ADX" in blocked.reason
 
 
-def test_max_open_positions_override(engine):
+def test_max_open_positions_override(engine, monkeypatch):
+    # Isolate the directive-override mechanism from the config default (IN now
+    # concentrates to 1). Baseline of 3 so a 2nd position is allowed, then the
+    # directive tightens it to 1.
+    monkeypatch.setattr(engine._risk, "max_open_positions", 3, raising=False)
     positions = {
         "TCS.NS": {"quantity": 1, "avg_cost": 100.0, "market_value": 100.0},
     }
-    # IN default max is 2 → second position allowed
+    # baseline max 3 with 1 open → second position allowed
     assert _decide(engine, portfolio=_portfolio(open_positions=positions)).action == "BUY"
     engine.apply_directive({"max_open_positions": 1})
     capped = _decide(engine, portfolio=_portfolio(open_positions=positions))
