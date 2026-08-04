@@ -82,6 +82,14 @@ services:
       # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
       # each blocked re-entry saves its round-trip friction.
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${IN_MAX_ENTRIES_PER_SYMBOL:-2}
+      # NRO intraday brokerage cap: 0.5% OR Rs50/order, whichever lower. Without
+      # this the model uses uncapped 0.5% and cost stays ~1.42% at ANY size, so
+      # the concentrated >Rs10k order gets no benefit and the entry gate never
+      # drops. Rs50 is from the NRO rate card — UNCONFIRMED by a contract note
+      # on an order >Rs10k; the FIRST such executed trade's note confirms or
+      # refutes it (if different, correct this value). With it, cost at ~Rs15k
+      # falls to ~1.0% and the 2x gate to ~2.0%.
+      - IN_BROKERAGE_CAP=${IN_BROKERAGE_CAP:-50}
       # CONCENTRATED "sniper" sizing (2026-08-03, Option 2): one position at up
       # to 90% of NAV so the order clears Rs10k and the Rs50 brokerage cap
       # engages (cost ~1.0%, entry gate ~2.0% vs 2.83% when tiny). Risk per
