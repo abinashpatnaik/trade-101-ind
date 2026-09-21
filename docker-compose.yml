@@ -105,6 +105,15 @@ services:
       # 4th, so 1 position deploys ~30% of NAV, 2 ~60%, 3 ~90%.
       - MAX_PORTFOLIO_HEAT_PCT=${IN_MAX_PORTFOLIO_HEAT:-0.0225}
       - MAX_WEEKLY_LOSS_PCT=${IN_MAX_WEEKLY_LOSS:-0.04}
+      # Pyramid-into-winners (2026-09-21). TESTED on US 5-year point-in-time
+      # data and REJECTED THERE (CI entirely negative, ~712 clusters, 372
+      # worse vs 12 better) — see trade101-pyramid-adds memory. IN has NO
+      # backtest evidence at all, and IN's ~1.0-1.4% round-trip friction is
+      # 3-5x US's ~0.22%, so the same "extra order = extra friction" and
+      # "buys into an already-extended move" mechanisms that lost money on
+      # US friction should bite harder here. Enabled anyway on explicit
+      # instruction after this was flagged twice.
+      - PYRAMID_ENABLED=${PYRAMID_ENABLED:-true}
 
   orchestrator-in:
     <<: *agent-base
@@ -211,6 +220,13 @@ services:
       # TLT belongs to the calendar-flow agent (flow-us): the intraday trader
       # must not adopt, stop-manage, or EOD-flatten it.
       - ALPACA_IGNORE_SYMBOLS=${ALPACA_IGNORE_SYMBOLS:-TLT}
+      # Pyramid-into-winners (2026-09-21). TESTED here: 24x10-day point-in-time
+      # windows, 5 years, 712 symbol-windows, paired same-bars A/B. RESULT WAS
+      # NEGATIVE — net/trade -0.200% (off) vs -0.345% (on), paired-diff 95% CI
+      # [-543%, -440%] entirely below zero, 372/712 clusters worse vs 12/712
+      # better. See trade101-pyramid-adds memory. Enabled anyway on explicit
+      # instruction after this result was surfaced and flagged.
+      - PYRAMID_ENABLED=${PYRAMID_ENABLED:-true}
 
   orchestrator-us:
     <<: *agent-base
