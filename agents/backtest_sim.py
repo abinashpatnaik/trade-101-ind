@@ -67,6 +67,17 @@ class SimParams:
     net_breakeven_pct: float = field(default_factory=_default_breakeven_pct)
     warmup_bars: int = 50
     max_window_bars: int = 200
+    # Pyramiding — mirrors OrderExecutor.check_pyramid_conditions /
+    # DecisionEngine.size_pyramid_add. Off by default; see config.py's
+    # pyramid_* fields for the full rationale (add to proven winners only,
+    # shrinking size per add, hard cap on adds — the structural opposite of
+    # averaging down past a stop-loss).
+    pyramid_enabled: bool = field(default_factory=lambda: config.risk.pyramid_enabled)
+    pyramid_step_atr_multiple: float = field(
+        default_factory=lambda: config.risk.pyramid_step_atr_multiple)
+    pyramid_max_adds: int = field(default_factory=lambda: config.risk.pyramid_max_adds)
+    pyramid_add_size_decay: float = field(
+        default_factory=lambda: config.risk.pyramid_add_size_decay)
 
 
 @dataclass
@@ -77,6 +88,7 @@ class SimTrade:
     exit_price: float
     return_pct: float
     exit_reason: str
+    add_count: int = 0
 
 
 @dataclass
@@ -87,6 +99,7 @@ class SimResult:
     total_return_pct: float = 0.0
     avg_return_pct: float = 0.0
     trades: List[SimTrade] = field(default_factory=list)
+    total_adds: int = 0
     error: Optional[str] = None
     # Day-model ML confidence at every entry-eligible bar (populated only when
     # an ai_validator is supplied). Used to calibrate a per-stock buy threshold.
@@ -103,6 +116,14 @@ class _Position:
     high_water: float
     # Mirrors OrderExecutor._lock_armed: the profit-lock is a one-way latch.
     lock_armed: bool = False
+    # Pyramiding state — mirrors OrderExecutor.OpenOrder's add_count /
+    # last_add_price. quantity is a relative unit (1.0 at entry, not a real
+    # share count — this sim doesn't model portfolio-level position sizing)
+    # so entry_price stays a straightforward volume-weighted blend on each
+    # add, exactly like the live executor's record_add().
+    quantity: float = 1.0
+    add_count: int = 0
+    last_add_price: float = 0.0
 
 
 def simulate_exit(
@@ -179,6 +200,53 @@ def simulate_exit(
     return None
 
 
+def simulate_pyramid_check(pos: _Position, current_price: float,
+                           params: SimParams) -> Optional[float]:
+    """
+    Mirrors OrderExecutor.check_pyramid_conditions + the shrinking-size half
+    of DecisionEngine.size_pyramid_add. Returns the add quantity (in the same
+    relative units as pos.quantity, starting at 1.0) if this bar earns the
+    next pyramid step, else None.
+
+    Deliberately does NOT mirror the portfolio-heat-budget half of
+    size_pyramid_add — this replay is single-position-at-a-time by design
+    (see the module docstring), so there is no multi-position heat budget to
+    model. What matters for parity here is the SHAPE: add only to an armed
+    (proven) position, step spacing from the position's own ATR gap, each
+    add smaller than the last, hard cap on total adds.
+    """
+    if not params.pyramid_enabled or current_price <= 0:
+        return None
+    if not pos.lock_armed:
+        return None
+    if pos.add_count >= params.pyramid_max_adds:
+        return None
+    atr_gap_pct = pos.initial_trailing_pct if pos.initial_trailing_pct > 0 else params.trailing_gap_base
+    step = pos.entry_price * atr_gap_pct * params.pyramid_step_atr_multiple
+    if step <= 0:
+        return None
+    reference = pos.last_add_price if pos.last_add_price > 0 else pos.entry_price
+    if current_price < reference + step:
+        return None
+    return params.pyramid_add_size_decay ** (pos.add_count + 1)
+
+
+def simulate_add(pos: _Position, add_price: float, add_quantity: float) -> None:
+    """Mirrors OrderExecutor.record_add: volume-weighted entry-price blend,
+    advance add_count and last_add_price for the next step."""
+    if add_quantity <= 0 or add_price <= 0:
+        return
+    total_qty = pos.quantity + add_quantity
+    if total_qty <= 0:
+        return
+    pos.entry_price = (
+        (pos.entry_price * pos.quantity) + (add_price * add_quantity)
+    ) / total_qty
+    pos.quantity = total_qty
+    pos.add_count += 1
+    pos.last_add_price = add_price
+
+
 def _entry_levels(price: float, atr: float, params: SimParams) -> Tuple[float, float, float]:
     """Stop/target/trailing levels exactly as DecisionEngine computes on BUY."""
     atr_pct = (atr * 2.0) / price if price > 0 else 0.025
@@ -231,8 +299,15 @@ def replay(
     def _close_position(pos: _Position, ts, price: float, reason: str) -> None:
         ret = ((price / pos.entry_price) - 1.0) * 100.0 if pos.entry_price > 0 else 0.0
         # Net of estimated round-trip friction — a gross win smaller than
-        # costs is a loss and must count as one.
-        ret -= params.round_trip_cost_pct * 100.0
+        # costs is a loss and must count as one. round_trip_cost_pct already
+        # covers the ONE buy leg + ONE sell leg a non-pyramided trade takes;
+        # each pyramid add is its own extra BUY order with its own real
+        # commission/tax, approximated here as one extra half-round-trip
+        # (one leg) of friction per add — an approximation consistent with
+        # this module's existing "representative flat cost" model, not a
+        # precise per-leg fee audit.
+        cost_pct = params.round_trip_cost_pct + (params.round_trip_cost_pct * 0.5 * pos.add_count)
+        ret -= cost_pct * 100.0
         result.trades.append(
             SimTrade(
                 entry_ts=str(pos.entry_ts),
@@ -241,9 +316,11 @@ def replay(
                 exit_price=price,
                 return_pct=ret,
                 exit_reason=reason,
+                add_count=pos.add_count,
             )
         )
         result.n_trades += 1
+        result.total_adds += pos.add_count
         if ret > 0:
             result.wins += 1
         result.total_return_pct += ret
@@ -263,6 +340,12 @@ def replay(
             if reason is not None:
                 _close_position(position, ts, price, reason)
                 position = None
+                continue
+            # No exit this bar — see if this position has earned its next
+            # pyramid add (no-op unless params.pyramid_enabled).
+            add_qty = simulate_pyramid_check(position, price, params)
+            if add_qty is not None:
+                simulate_add(position, price, add_qty)
             continue
 
         # No position — evaluate entry (never enter on the session's last bar)
@@ -310,6 +393,7 @@ def replay(
             take_profit_price=target,
             initial_trailing_pct=trail,
             high_water=price,
+            last_add_price=price,
         )
 
     # Safety: close anything left open at the final bar
