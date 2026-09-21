@@ -156,6 +156,45 @@ class RiskConfig:
     max_weekly_loss_pct: float = field(
         default_factory=lambda: float(os.getenv("MAX_WEEKLY_LOSS_PCT", "0"))
     )
+    # Pyramiding: add to a position that has already proven itself, never to
+    # one that hasn't. OFF by default — this changes P&L shape (more capital
+    # behind winners, none behind losers) but does NOT create edge; a book
+    # with ~zero measured edge sized up on winners still has ~zero edge, just
+    # more variance. This is the deliberate opposite of averaging DOWN past a
+    # stop-loss, which was rejected: that shape adds size exactly where the
+    # position has been proven wrong, with unbounded downside as price keeps
+    # moving away — the classic martingale blow-up. Pyramiding only adds
+    # ABOVE the position's own profit-lock latch (see order_executor.py),
+    # which never arms below net break-even and never disarms once armed, so
+    # every add sits behind a stop that is already at-or-above cost. See
+    # trade101-selection-rule-research memory: TRAILING_STOP is the one exit
+    # type with positive expectancy in this project's own data; STOP_LOSS and
+    # "wait for the bounce" are not — hence add to strength, never to weakness.
+    pyramid_enabled: bool = field(
+        default_factory=lambda: str(os.getenv("PYRAMID_ENABLED", "false")).lower() == "true"
+    )
+    # Step spacing, in multiples of the position's OWN ATR (computed at buy
+    # time, same series that already sizes the trailing gap) — "step markers
+    # from stock performance" rather than a flat percentage, so a volatile
+    # name needs a proportionally bigger move to earn the next add than a
+    # calm one, exactly like the existing trailing-gap logic.
+    pyramid_step_atr_multiple: float = field(
+        default_factory=lambda: float(os.getenv("PYRAMID_STEP_ATR_MULTIPLE", "1.5"))
+    )
+    # Hard ceiling on adds per position, independent of how far price runs.
+    # Small on purpose: this bounds how much of the total position was bought
+    # at a worse price than the original entry.
+    pyramid_max_adds: int = field(
+        default_factory=lambda: int(os.getenv("PYRAMID_MAX_ADDS", "2"))
+    )
+    # Each add is sized at this fraction of the PREVIOUS add's risk budget
+    # (add 1 = 50% of a fresh entry's risk, add 2 = 25%, ...) — a shrinking
+    # pyramid. This is the property that makes it structurally the opposite
+    # of martingale sizing: exposure added per step gets smaller, never
+    # bigger, so no single add can dominate the position's risk.
+    pyramid_add_size_decay: float = field(
+        default_factory=lambda: float(os.getenv("PYRAMID_ADD_SIZE_DECAY", "0.5"))
+    )
 
 
 @dataclass

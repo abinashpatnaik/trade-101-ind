@@ -411,6 +411,63 @@ class DecisionEngine:
             return float(math.floor(cap_qty))        # whole shares, never round up
         return round(cap_qty, 4)
 
+    def size_pyramid_add(
+        self,
+        current_price: float,
+        atr: float,
+        portfolio_value: float,
+        open_positions: Dict,
+        existing_quantity: float,
+        add_index: int,
+    ) -> float:
+        """
+        Size the next pyramid add for a position OrderExecutor has already
+        confirmed has earned it (check_pyramid_conditions returned True).
+        Off by default — 0 whenever config.risk.pyramid_enabled is False.
+
+        Reuses the SAME risk-budget machinery as a fresh entry
+        (available_risk_pct / dynamic_stop_pct), so an add can never push
+        total portfolio heat past max_portfolio_heat_pct, then shrinks the
+        result by pyramid_add_size_decay per step (add 1 = 50% of a fresh
+        entry's risk budget, add 2 = 25%, ...). That geometric shrink is what
+        makes this the structural opposite of martingale/averaging-down
+        sizing, where each successive add would need to GROW to move the
+        average price — here each add matters less than the last.
+
+        Also caps existing_quantity + add so the position's total notional
+        never exceeds max_position_size_pct of portfolio_value — pyramiding
+        must not become a backdoor around the normal position-size cap.
+
+        The stop distance used is the same dynamic_stop_pct a fresh entry
+        would get, not the position's current (tighter, already-profitable)
+        trailing stop — deliberately conservative, since it is not this
+        class's job to know the executor's live stop level; using the wider
+        distance only makes the sized add smaller, never bigger.
+        """
+        if (not getattr(self._risk, "pyramid_enabled", False)
+                or current_price <= 0 or portfolio_value <= 0):
+            return 0.0
+        risk_cap = self.available_risk_pct(open_positions or {})
+        if risk_cap <= 0:
+            return 0.0
+        decay = float(getattr(self._risk, "pyramid_add_size_decay", 0.5) or 0.5)
+        shrunk_risk = risk_cap * (decay ** max(1, add_index))
+        stop_pct = self.dynamic_stop_pct(current_price, atr)
+        if stop_pct <= 0:
+            return 0.0
+        add_qty = (portfolio_value * shrunk_risk) / (current_price * stop_pct)
+
+        leverage = max(1.0, float(getattr(self._risk, "leverage", 1.0) or 1.0))
+        max_notional = portfolio_value * self._risk.max_position_size_pct * leverage
+        headroom_notional = max(0.0, max_notional - existing_quantity * current_price)
+        add_qty = min(add_qty, headroom_notional / current_price)
+
+        if add_qty <= 0:
+            return 0.0
+        if ACTIVE_MARKET == "IN":
+            return float(math.floor(add_qty))
+        return round(add_qty, 4)
+
     def _has_capacity(self, open_positions: Dict) -> bool:
         """Return True if the portfolio can take on another position."""
         return len(open_positions) < self._max_open_positions()

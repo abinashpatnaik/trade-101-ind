@@ -789,6 +789,7 @@ class TradingAgent:
                                 logger.debug("Learning engine update failed: %s", _le)
 
             # --- 6. Exit condition check for existing positions ---
+            exit_fired_this_cycle = False
             if self.executor is not None:
                 with self._positions_lock:
                     exit_trigger = None
@@ -808,6 +809,7 @@ class TradingAgent:
                         else:
                             exit_trigger = None
 
+                exit_fired_this_cycle = exit_trigger is not None
                 if exit_trigger is not None:
                     try:
                         logger.info("Software exit triggered for %s: %s", symbol, exit_trigger)
@@ -847,6 +849,45 @@ class TradingAgent:
                         self.decision_engine.register_cooldown(symbol, is_loss=(pnl < 0))
                     finally:
                         self._exiting.discard(symbol)
+
+            # --- 7. Pyramid add check (opt-in, off by default: PYRAMID_ENABLED) ---
+            # Only ever considered when nothing exited THIS cycle and the
+            # position is still open and not mid-exit — never add to a
+            # position that just triggered a stop/trail/take-profit.
+            if (config.risk.pyramid_enabled and self.executor is not None
+                    and not exit_fired_this_cycle and symbol not in self._exiting
+                    and symbol in self.portfolio.open_positions
+                    and self.executor.check_pyramid_conditions(symbol, current_price)):
+                order = self.executor._open_orders.get(symbol)
+                existing_qty = (order.quantity if order else
+                               float(self.portfolio.open_positions[symbol].get("quantity", 0)))
+                add_index = (order.add_count + 1) if order else 1
+                add_qty = self.decision_engine.size_pyramid_add(
+                    current_price=current_price,
+                    atr=trend_signal_day.atr,
+                    portfolio_value=self.portfolio.portfolio_value,
+                    open_positions=self.portfolio.open_positions,
+                    existing_quantity=existing_qty,
+                    add_index=add_index,
+                )
+                if add_qty > 0:
+                    if config.agent.observe_only:
+                        logger.info(
+                            "[OBSERVE MODE] Would pyramid-add #%d: %.4f %s @ %.4f, skipping.",
+                            add_index, add_qty, symbol, current_price,
+                        )
+                    else:
+                        added = self.executor.execute_pyramid_add(symbol, add_qty, current_price)
+                        if added:
+                            with self._positions_lock:
+                                if self.portfolio.is_simulated:
+                                    self.portfolio.record_trade(
+                                        symbol=symbol, action="BUY", quantity=add_qty,
+                                        price=current_price, pnl=None,
+                                        exit_reason="PYRAMID_ADD",
+                                    )
+                                else:
+                                    self.portfolio.set_pending_reason(symbol, "PYRAMID_ADD")
 
         except Exception as exc:
             # Never let a single-symbol failure crash the full scan loop.

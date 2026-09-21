@@ -54,6 +54,13 @@ class OpenOrder:
     is_fractional: bool = False               # True = software trailing stop
     initial_trailing_pct: float = 0.0         # Dynamic ATR-based gap
     entry_time: float = 0.0                   # time.monotonic() at entry for time-based tightening
+    # Pyramiding (config.risk.pyramid_enabled, off by default). add_count
+    # tracks how many adds this position has taken (capped at
+    # pyramid_max_adds); last_add_price is the reference the NEXT ATR step is
+    # measured from (the original entry until the first add, then each add's
+    # own fill) so steps chain forward rather than all measuring from entry.
+    add_count: int = 0
+    last_add_price: float = 0.0
 
 
 class OrderExecutor:
@@ -211,6 +218,7 @@ class OrderExecutor:
             is_fractional=fractional,
             initial_trailing_pct=initial_trailing_pct,
             entry_time=time.monotonic(),
+            last_add_price=entry_price,
         )
 
     def _cancel_bracket(self, symbol: str) -> None:
@@ -604,6 +612,124 @@ class OrderExecutor:
         # made any later trail restart from a lower high.
 
         return None
+
+    # ------------------------------------------------------------------
+    # Pyramiding — add to a position that has proven itself. Off by default
+    # (config.risk.pyramid_enabled). Deliberately the OPPOSITE shape from
+    # averaging down: every add requires the profit-lock to already be
+    # ARMED (never below net break-even, never disarms — see
+    # check_exit_conditions above), so an add only ever sits behind a stop
+    # that already protects at-or-above cost. See config.py's pyramid_*
+    # fields for why each add is sized smaller than the last, not bigger.
+    # ------------------------------------------------------------------
+
+    def check_pyramid_conditions(self, symbol: str, current_price: float) -> bool:
+        """
+        True when this open position has earned its next pyramid add.
+
+        Requires, in order: pyramiding enabled, an open position, the
+        profit-lock already armed (the trade has proven itself past cost —
+        never add to an unproven position), adds remaining under the
+        configured cap, and price having cleared the next ATR step above the
+        last fill (original entry, or the previous add).
+
+        Sizing is deliberately NOT decided here — that needs portfolio value
+        and the open-positions risk budget, which this class doesn't own.
+        Returns only whether a step has been earned; the caller (the trading
+        agent) sizes the add via DecisionEngine, submits the order, and
+        reports the fill back through record_add().
+        """
+        if not config.risk.pyramid_enabled:
+            return False
+        order = self._open_orders.get(symbol)
+        if order is None or current_price <= 0:
+            return False
+        if not self._lock_armed.get(symbol):
+            return False
+        if order.add_count >= config.risk.pyramid_max_adds:
+            return False
+
+        # Same per-stock ATR-derived gap already computed at buy time for the
+        # trailing stop — "step markers from stock performance" rather than a
+        # flat percentage, so a volatile name needs a proportionally bigger
+        # move to earn the next add than a calm one, exactly like the
+        # trailing gap above.
+        atr_gap_pct = (order.initial_trailing_pct if order.initial_trailing_pct > 0
+                      else config.risk.trailing_gap_base)
+        step = order.entry_price * atr_gap_pct * config.risk.pyramid_step_atr_multiple
+        if step <= 0:
+            return False
+        reference = order.last_add_price if order.last_add_price > 0 else order.entry_price
+        return current_price >= reference + step
+
+    def record_add(self, symbol: str, add_price: float, add_quantity: float) -> None:
+        """
+        Blend a filled pyramid add into the existing position: volume-
+        weighted entry price, combined quantity, advance add_count and
+        last_add_price for the next step.
+
+        Deliberately reuses entry_price/quantity for the blended totals
+        rather than adding new fields — every downstream consumer (the
+        profit-lock / net-break-even floor in check_exit_conditions, P&L in
+        agents/trader.py) already keys off these two fields, so the existing
+        "trailing stop can never sit below net break-even" floor
+        automatically re-derives against the new, higher blended cost basis
+        with no change to that logic — the whole position, adds included,
+        keeps the same invariant a single-lot position always had.
+        """
+        order = self._open_orders.get(symbol)
+        if order is None or add_quantity <= 0 or add_price <= 0:
+            return
+        total_qty = order.quantity + add_quantity
+        if total_qty <= 0:
+            return
+        blended_entry = (
+            (order.entry_price * order.quantity) + (add_price * add_quantity)
+        ) / total_qty
+        prior_qty, prior_entry = order.quantity, order.entry_price
+        order.entry_price = blended_entry
+        order.quantity = total_qty
+        order.add_count += 1
+        order.last_add_price = add_price
+        self._dump_state()
+        logger.info(
+            "PYRAMID ADD #%d for %s: +%.4f @ %.4f (was %.4f @ %.4f) -> "
+            "total qty=%.4f, blended entry=%.4f",
+            order.add_count, symbol, add_quantity, add_price,
+            prior_qty, prior_entry, total_qty, blended_entry,
+        )
+
+    def execute_pyramid_add(self, symbol: str, quantity: float, current_price: float) -> bool:
+        """
+        Place a market BUY for a pyramid add and, on a successful order,
+        blend it into the existing position via record_add().
+
+        Deliberately does NOT go through execute() — that path creates a
+        brand-new OpenOrder and resets trailing_high/lock_armed, which would
+        wipe the very high-water mark and armed latch an add depends on
+        having already cleared. Caller (the trading agent) must have already
+        confirmed check_pyramid_conditions() and sized the add via
+        DecisionEngine.size_pyramid_add() — this method trusts both.
+        """
+        if quantity <= 0 or current_price <= 0:
+            return False
+        if symbol not in self._open_orders:
+            logger.warning("Pyramid add for %s skipped — no tracked open position.", symbol)
+            return False
+        if not self._ibkr.is_connected():
+            logger.error("Pyramid add for %s skipped — broker not connected.", symbol)
+            return False
+        try:
+            order_id = self._ibkr.place_market_order(symbol=symbol, action="BUY", quantity=quantity)
+        except Exception as exc:
+            logger.error("Failed to place pyramid-add BUY for %s: %s", symbol, exc, exc_info=True)
+            return False
+        if not order_id:
+            logger.error("Broker returned None for pyramid-add BUY of %s", symbol)
+            return False
+        self.record_add(symbol, current_price, quantity)
+        self._record_order_intent(symbol, "PYRAMID_ADD", order_id, current_price, quantity)
+        return True
 
     def close_position(self, symbol: str, quantity: float, outsideRth: bool = False) -> bool:
         """
