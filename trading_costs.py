@@ -75,7 +75,25 @@ US_ROUND_TRIP_PCT = 0.0002          # SEC + TAF, generously rounded (0.02%)
 
 # --- Slippage allowance -------------------------------------------------------
 # Marketable-limit fills drift from LTP by roughly the spread; per leg.
+# IN: unmeasured, kept at the original conservative default.
 ASSUMED_SLIPPAGE_PER_LEG = 0.001    # 0.1% per leg -> 0.2% round trip
+# US: MEASURED 2026-09-23 against real Alpaca fills, not assumed. Joined all
+# 88 live BUY orders in data/order_intents_US.csv (signal price at order time)
+# to their actual filled_avg_price via the Alpaca Orders API. Result: mean
+# slippage -0.022%, 95% CI [-0.13%, +0.08%] (bootstrap matches), robust to
+# outliers (dropping the 3 best + 3 worst fills barely moves it: +0.013%).
+# The old 0.1% assumption sits OUTSIDE this CI on the high side — it was
+# never validated, just carried over from the IN default. Set to the CI's
+# upper bound (0.08%), not the point estimate (~0%), to stay conservative:
+# n=88 is not huge, and this only measured the BUY leg — order_executor.py
+# does not log a signal price for SELLs, so exit-side slippage is still
+# unmeasured and assumed similar. Re-measure periodically; if it holds up,
+# revisit whether 0.08% itself is still conservative enough to trust as-is.
+US_ASSUMED_SLIPPAGE_PER_LEG = 0.0008  # 0.08% per leg -> 0.16% round trip
+
+
+def _slippage_per_leg(market: str) -> float:
+    return US_ASSUMED_SLIPPAGE_PER_LEG if market == "US" else ASSUMED_SLIPPAGE_PER_LEG
 
 
 def round_trip_cost_pct(notional: float, overnight: bool = False,
@@ -121,7 +139,7 @@ def round_trip_cost_pct(notional: float, overnight: bool = False,
 
     pct = fees / notional
     if include_slippage:
-        pct += 2 * ASSUMED_SLIPPAGE_PER_LEG
+        pct += 2 * _slippage_per_leg(market)
     return pct
 
 
@@ -146,7 +164,7 @@ def net_breakeven_pct(notional: float, overnight: bool = False,
     """
     fees = round_trip_cost_pct(notional, overnight=overnight, market=market,
                                include_slippage=False)
-    return fees + ASSUMED_SLIPPAGE_PER_LEG
+    return fees + _slippage_per_leg((market or ACTIVE_MARKET).upper())
 
 
 #: A profit-lock must arm strictly ABOVE net break-even, never at it. Arming AT
