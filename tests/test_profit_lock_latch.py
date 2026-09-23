@@ -290,3 +290,28 @@ def test_net_breakeven_charges_slippage_once_not_twice():
     assert net_breakeven_pct(n, market="IN") == pytest.approx(
         fees + ASSUMED_SLIPPAGE_PER_LEG)
     assert net_breakeven_pct(n, market="IN") < round_trip_cost_pct(n, market="IN")
+
+
+def test_us_slippage_is_measured_not_the_in_default():
+    """US and IN slippage assumptions are independent. US was measured
+    2026-09-23 against 88 real Alpaca fills (order_intents_US.csv joined to
+    actual filled_avg_price): mean -0.022%, 95% CI [-0.13%, +0.08%], the old
+    shared 0.1%/leg sat outside that CI. Set to the CI's conservative upper
+    bound, 0.08%/leg -- lower than IN's unmeasured 0.1%/leg default, but NOT
+    changing IN, which has no equivalent measurement. If this regresses back
+    to 0.1%, either the US constant was accidentally reverted or someone
+    re-coupled the two markets to one shared constant again."""
+    from trading_costs import (US_ASSUMED_SLIPPAGE_PER_LEG, ASSUMED_SLIPPAGE_PER_LEG,
+                               net_breakeven_pct, round_trip_cost_pct)
+
+    assert US_ASSUMED_SLIPPAGE_PER_LEG == pytest.approx(0.0008)
+    assert US_ASSUMED_SLIPPAGE_PER_LEG < ASSUMED_SLIPPAGE_PER_LEG
+
+    n = 1000.0
+    us_fees = round_trip_cost_pct(n, market="US", include_slippage=False)
+    assert net_breakeven_pct(n, market="US") == pytest.approx(
+        us_fees + US_ASSUMED_SLIPPAGE_PER_LEG)
+    # IN must be completely unaffected by the US-specific measurement.
+    assert net_breakeven_pct(3800.0, market="IN") == pytest.approx(
+        round_trip_cost_pct(3800.0, market="IN", include_slippage=False)
+        + ASSUMED_SLIPPAGE_PER_LEG)
