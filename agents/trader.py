@@ -1013,8 +1013,19 @@ class TradingAgent:
     # EOD close-all
     # ------------------------------------------------------------------
 
-    def _evaluate_ml_hold(self, symbol: str) -> bool:
-        """True if the SWING model predicts holding overnight is favourable."""
+    def _evaluate_ml_hold(
+        self,
+        symbol: str,
+        threshold: float = 0.65,
+        apply_sentiment_discount: bool = True,
+    ) -> bool:
+        """True if the SWING model's confidence clears `threshold`.
+
+        Default threshold/discount reproduce the original general-case
+        behaviour (0.65, sentiment-discounted to a 0.50 floor). The
+        loser-specific EOD carve-out calls this with its own flat threshold
+        and no discount.
+        """
         if not config.ai.enabled or not getattr(self, "ai_validator", None) or not self.ai_validator.enabled:
             return False
 
@@ -1032,9 +1043,7 @@ class TradingAgent:
                 trend_signal, sentiment_score, mode="swing"
             )
 
-            # Base threshold 0.65, discounted by positive sentiment (max 0.15).
-            threshold = 0.65
-            if sentiment_score > 0:
+            if apply_sentiment_discount and sentiment_score > 0:
                 discount = min(0.15, sentiment_score * 0.15)
                 threshold -= discount
                 logger.info(
@@ -1064,11 +1073,14 @@ class TradingAgent:
             if qty <= 0:
                 continue
 
+            eod_current_price = self.price_feed.get_current_price(symbol) or 0.0
+            avg_cost = float(position.get("avg_cost", 0.0))
+            is_losing = eod_current_price > 0 and avg_cost > 0 and eod_current_price < avg_cost
+
             # --- OVERNIGHT HOLD: ML-swing conviction ONLY ---
-            # Losers are cut same-day: holding a losing day-trade into
-            # delivery adds the DP charge (~0.8% on small positions) and
-            # overnight gap risk to a trade that is already negative. Only
-            # positions the SWING model actively likes stay overnight.
+            # Winners/flat: holding a day-trade into delivery adds the DP
+            # charge (~0.8% on small positions) and overnight gap risk, so
+            # only positions the SWING model actively likes stay overnight.
             # Markets can opt out entirely via risk.allow_overnight_hold —
             # on IN the swing model's picks still lost 4x more per trade than
             # same-day exits, so gap risk is not worth its conviction there.
@@ -1080,8 +1092,31 @@ class TradingAgent:
                 logger.info("ML model predicts overnight swing. Holding %s overnight.", symbol)
                 continue
 
+            # Losers: a separate, narrower carve-out. Rather than force-
+            # crystallizing the loss at EOD, give the position one more
+            # session if the swing model still clears a lower, dedicated
+            # bar. Independent of allow_overnight_hold — see config.py.
+            if (
+                reason == "EOD"
+                and is_losing
+                and config.risk.hold_losing_swing_threshold > 0
+                and self._evaluate_ml_hold(
+                    symbol,
+                    threshold=config.risk.hold_losing_swing_threshold,
+                    apply_sentiment_discount=False,
+                )
+            ):
+                logger.info(
+                    "%s is down (%.4f < avg %.4f) but swing confidence clears the "
+                    "%.0f%% hold-the-loser bar — holding overnight instead of "
+                    "crystallizing the loss.",
+                    symbol, eod_current_price, avg_cost,
+                    config.risk.hold_losing_swing_threshold * 100,
+                )
+                continue
+
             try:
-                current_price = self.price_feed.get_current_price(symbol) or 0.0
+                current_price = eod_current_price
                 if config.agent.observe_only:
                     logger.info(
                         "[OBSERVE MODE] Would close %s for EOD/shutdown (reason=%s), skipping.",
