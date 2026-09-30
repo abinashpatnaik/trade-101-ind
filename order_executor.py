@@ -662,6 +662,40 @@ class OrderExecutor:
         reference = order.last_add_price if order.last_add_price > 0 else order.entry_price
         return current_price >= reference + step
 
+    def pyramid_status(self, symbol: str) -> Optional[str]:
+        """
+        Read-only, human-readable summary of where a held position stands
+        relative to its next pyramid step. Exists because "BUY signal but
+        SYMBOL is already held" (the normal fresh-entry decision, unrelated
+        to and older than pyramiding) reads as a dead end when pyramiding is
+        enabled and could still add to the position on this same tick, or
+        has already ruled it out for a specific, checkable reason. Callers
+        append this to that message rather than leaving it to imply nothing
+        more will happen.
+
+        None when there is nothing pyramid-relevant to say (feature off, no
+        tracked position) — callers should omit the suffix entirely then,
+        not show a blank parenthetical.
+        """
+        if not config.risk.pyramid_enabled:
+            return None
+        order = self._open_orders.get(symbol)
+        if order is None:
+            return None
+        if not self._lock_armed.get(symbol):
+            return "pyramid: not armed yet — needs to clear the profit-lock threshold first"
+        if order.add_count >= config.risk.pyramid_max_adds:
+            return f"pyramid: max adds reached ({order.add_count}/{config.risk.pyramid_max_adds})"
+        atr_gap_pct = (order.initial_trailing_pct if order.initial_trailing_pct > 0
+                      else config.risk.trailing_gap_base)
+        step = order.entry_price * atr_gap_pct * config.risk.pyramid_step_atr_multiple
+        reference = order.last_add_price if order.last_add_price > 0 else order.entry_price
+        if step <= 0:
+            return f"pyramid: armed, add {order.add_count + 1}/{config.risk.pyramid_max_adds} pending"
+        next_at = reference + step
+        return (f"pyramid: armed, next add ({order.add_count + 1}/"
+               f"{config.risk.pyramid_max_adds}) at {next_at:.2f}")
+
     def record_add(self, symbol: str, add_price: float, add_quantity: float) -> None:
         """
         Blend a filled pyramid add into the existing position: volume-
