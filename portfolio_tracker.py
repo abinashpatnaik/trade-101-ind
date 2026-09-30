@@ -244,6 +244,50 @@ class PortfolioTracker:
                             if symbol in positions:
                                 # Still present — clear any pending missing streak.
                                 self._missing_syncs.pop(symbol, None)
+
+                                # A pyramid add (or any other mid-position
+                                # top-up) grows the broker's real quantity
+                                # without the position ever closing or a new
+                                # one opening, so neither the close-detection
+                                # above nor the new-position detection below
+                                # ever sees it — it was silently missing from
+                                # Execution History, and the eventual full
+                                # exit's SELL quantity then didn't match the
+                                # original entry's BUY quantity. Record the
+                                # delta as its own BUY at the price implied
+                                # by the change in the broker's own blended
+                                # avg_cost — same "trust the broker's
+                                # confirmed numbers" approach used everywhere
+                                # else in this method, not a guess from our
+                                # side.
+                                new_pos = positions[symbol]
+                                old_qty = float(old_pos.get("quantity", 0))
+                                new_qty = float(new_pos.get("quantity", 0))
+                                if new_qty > old_qty + 1e-9:
+                                    added_qty = new_qty - old_qty
+                                    old_avg = float(old_pos.get("avg_cost", 0.0))
+                                    new_avg = float(new_pos.get("avg_cost", old_avg))
+                                    add_price = (
+                                        (new_qty * new_avg - old_qty * old_avg) / added_qty
+                                        if added_qty > 0 else new_avg
+                                    )
+                                    if add_price <= 0:
+                                        add_price = new_avg
+                                    reason = self.pending_reasons.pop(symbol, "BROKER_SYNC_ADD")
+                                    logger.info(
+                                        "Broker position grew for %s: %.4f -> %.4f "
+                                        "(reason=%s). Recording BUY for the delta "
+                                        "(qty=%.4f) at implied price %.4f.",
+                                        symbol, old_qty, new_qty, reason, added_qty, add_price,
+                                    )
+                                    self.record_trade(
+                                        symbol=symbol,
+                                        action="BUY",
+                                        quantity=added_qty,
+                                        price=add_price,
+                                        pnl=0.0,
+                                        exit_reason=reason,
+                                    )
                                 continue
                             if symbol not in positions:
                                 qty = float(old_pos.get("quantity", 0))
