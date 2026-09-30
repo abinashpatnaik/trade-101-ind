@@ -78,6 +78,14 @@ services:
       # exits were half the period's loss. US deliberately does NOT set this —
       # daily flattening would exhaust its PDT day-trade budget.
       - ALLOW_OVERNIGHT_HOLD=${IN_ALLOW_OVERNIGHT_HOLD:-false}
+      # Separate, narrower carve-out (2026-09-30): a LOSING position still
+      # gets held overnight if swing confidence clears 45% — independent of
+      # ALLOW_OVERNIGHT_HOLD above. Explicitly requested and enabled here
+      # despite the measured finding right above (overnight holds lost 4x
+      # more per trade on IN) — that measurement covered the general
+      # "swing likes it" case at a 65% bar, not this specific lower,
+      # losers-only one. Revisit with real fill data once this has run.
+      - HOLD_LOSING_SWING_THRESHOLD=${IN_HOLD_LOSING_SWING_THRESHOLD:-0.45}
       # Churn cap. Live IN logs: one symbol entered 5x in a single day; a cap
       # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
       # each blocked re-entry saves its round-trip friction.
@@ -210,6 +218,8 @@ services:
       # round trips on a $49 account = 54x turnover, where friction ($5.95)
       # exceeded the entire gross loss ($3.79). A cap of 2 blocks 26% of BUYs.
       # US keeps ALLOW_OVERNIGHT_HOLD unset — see the IN block for why.
+      # Losers-only carve-out at a lower 45% swing bar — see the IN block.
+      - HOLD_LOSING_SWING_THRESHOLD=${US_HOLD_LOSING_SWING_THRESHOLD:-0.45}
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${US_MAX_ENTRIES_PER_SYMBOL:-2}
       # Risk per trade: 0.75% of NAV at the stop. Weekly kill-switch below
       # pauses NEW entries after a -4% NAV week (net of costs).

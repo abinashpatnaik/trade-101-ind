@@ -115,6 +115,19 @@ class RiskConfig:
     allow_overnight_hold: bool = field(
         default_factory=lambda: str(os.getenv("ALLOW_OVERNIGHT_HOLD", "true")).lower() == "true"
     )
+    # Narrow carve-out for LOSING positions specifically: if the SWING model's
+    # confidence clears this bar at EOD, hold overnight instead of force-
+    # closing at a loss. Independent of allow_overnight_hold above (which
+    # gates the general "swing likes it, hold it" case at a much higher 0.65
+    # threshold, sentiment-discounted to a 0.50 floor, and is OFF on IN
+    # because THAT case measured 4x worse losses there — see the comment on
+    # allow_overnight_hold). This is a deliberately separate, explicitly
+    # requested rule applied to losers only, chosen to run on both markets
+    # despite that prior finding. 0.0 (the default) disables it entirely —
+    # every position still exits same-day at EOD unless this is set.
+    hold_losing_swing_threshold: float = field(
+        default_factory=lambda: float(os.getenv("HOLD_LOSING_SWING_THRESHOLD", "0.0"))
+    )
     # Max BUY entries per symbol per session (0 = unlimited).
     # Churn is the one lever with a PROVEN payoff: measured expectancy is
     # negative (-0.214%/trade over 4,407 US trades), so each avoided round trip
