@@ -221,3 +221,13 @@ def test_check_suggests_tickers_and_never_shows_fake_zero(t212, monkeypatch, cap
     out = capsys.readouterr().out
     assert "unknown" in out and "£0.00" not in out
     assert "HLMAX_EQ (Halma plc, GBX)" in out
+
+
+def test_precision_steps_down_one_decimal_at_a_time(t212, monkeypatch):
+    b, fake = t212
+    monkeypatch.setattr(B.settings, "qty_decimals", 4)
+    reject = Resp(400, {"code": "QuantityPrecisionMismatch"})
+    fake.order_responses = [reject, reject, Resp(200, {"id": 8})]
+    fake.history = [filled(8, "VWRPl_EQ", 0.01, 1348.0)]
+    assert b.execute(Order("BUY", "VWRP.L", 0.0142, 1348.0, "test"))[3] == 0.01
+    assert [c[2]["quantity"] for c in fake.calls if c[0] == "POST"] == [0.0142, 0.014, 0.01]
