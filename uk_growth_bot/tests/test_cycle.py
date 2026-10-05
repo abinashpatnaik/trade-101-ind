@@ -227,3 +227,51 @@ def test_status_prints_summary(env, monkeypatch, tmp_path, capsys):
     assert main.status() == 0
     out = capsys.readouterr().out
     assert "Mode paper" in out and "Holdings: none" in out
+
+
+@pytest.mark.parametrize("hhmm,last_run,expected", [
+    ("10:29", None, False),          # too early
+    ("10:30", None, True),
+    ("15:59", None, True),
+    ("16:00", None, False),          # after the window: orders would queue until tomorrow's open
+    ("22:00", None, False),          # a container restarted in the evening must not trade
+    ("11:00", "2027-03-01", False),  # already ran today
+])
+def test_cycle_only_runs_inside_trading_hours(monkeypatch, hhmm, last_run, expected):
+    from datetime import datetime
+    monkeypatch.setattr(main, "_lse_open", lambda d: True)
+    h, m = map(int, hhmm.split(":"))
+    assert main._cycle_due(datetime(2027, 3, 1, h, m, tzinfo=main.TZ), last_run) is expected
+
+
+def test_cycle_never_runs_on_a_closed_day(monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(main, "_lse_open", lambda d: False)
+    assert main._cycle_due(datetime(2027, 3, 1, 11, 0, tzinfo=main.TZ), None) is False
+
+
+def test_failed_cycle_is_not_retried_the_same_day(env, monkeypatch):
+    from datetime import datetime
+    calls = []
+
+    def boom(today, ledger, broker=None):
+        calls.append(today)
+        raise RuntimeError("broker exploded mid-cycle")
+
+    monkeypatch.setattr(main, "run_cycle", boom)
+    monkeypatch.setattr(main, "_lse_open", lambda d: True)
+    monkeypatch.setattr(main, "Ledger", lambda: env)
+    monkeypatch.setattr(main.ml_model, "load_report", lambda: object())
+    now = datetime(2027, 3, 1, 11, 0, tzinfo=main.TZ)
+
+    class Clock:
+        @staticmethod
+        def now(tz=None):
+            return now
+
+    monkeypatch.setattr(main, "datetime", Clock)
+    ticks = iter(range(3))
+    monkeypatch.setattr(main.time, "sleep", lambda s: next(ticks))
+    with pytest.raises(StopIteration):
+        main.loop()                  # three scheduler ticks at 11:00 on the same day
+    assert len(calls) == 1

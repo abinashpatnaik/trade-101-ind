@@ -55,7 +55,9 @@ class Settings:
     t212_env: str = field(default_factory=lambda: _env("T212_ENV", "demo").lower())
     t212_api_key: str = field(default_factory=lambda: _env("T212_API_KEY", ""))
     t212_api_secret: str = field(default_factory=lambda: _env("T212_API_SECRET", ""))
-    qty_decimals: int = field(default_factory=lambda: _i("UK_QTY_DECIMALS", 2))
+    # Fractional-share precision. 0.01 of a £1,300 ETF is a £13 step, too
+    # coarse for £200 a month; the broker steps down if Trading 212 refuses it.
+    qty_decimals: int = field(default_factory=lambda: _i("UK_QTY_DECIMALS", 4))
     data_dir: str = field(default_factory=lambda: _env(
         "UK_DATA_DIR", "/app/data" if os.path.exists("/.dockerenv") else
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")))
@@ -115,6 +117,9 @@ class Settings:
     # Schedule (Europe/London)
     run_hour: int = 10
     run_minute: int = 30
+    # Cycles only start inside this window: a market order sent after the
+    # 16:30 close is queued by the broker until the next open.
+    run_until_hour: int = 16
     report_weekday: int = 4   # Friday
     report_hour: int = 17
     retrain_weekday: int = 6  # Sunday

@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 from datetime import date, datetime, timedelta
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -299,6 +300,12 @@ def train() -> None:
     ml_model.train(closes)
 
 
+def _cycle_due(now: datetime, last_run: Optional[str]) -> bool:
+    return (_lse_open(now.date())
+            and (settings.run_hour, settings.run_minute) <= (now.hour, now.minute) < (settings.run_until_hour, 0)
+            and last_run != now.date().isoformat())
+
+
 def loop() -> None:
     ledger = Ledger()
     logger.info("UK growth bot started in %s mode", settings.mode.upper())
@@ -307,10 +314,11 @@ def loop() -> None:
         today = now.date()
         week = f"{now.isocalendar()[0]}W{now.isocalendar()[1]}"
         try:
-            if (_lse_open(today) and (now.hour, now.minute) >= (settings.run_hour, settings.run_minute)
-                    and ledger.get_state("last_run") != today.isoformat()):
-                run_cycle(today, ledger)
+            if _cycle_due(now, ledger.get_state("last_run")):
+                # Marked before running: a cycle that fails part-way (after
+                # some orders went through) must not be retried the same day.
                 ledger.set_state("last_run", today.isoformat())
+                run_cycle(today, ledger)
             if (now.weekday() == settings.report_weekday and now.hour >= settings.report_hour
                     and ledger.get_state("last_report") != week):
                 send_report(today, ledger)

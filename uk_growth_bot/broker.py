@@ -222,7 +222,7 @@ class Trading212Broker:
             if held + 1e-9 < order.quantity:
                 logger.error("Refusing to sell %s %s: Trading 212 holds %s", order.quantity, order.ticker, held)
                 return None
-        for decimals in sorted({settings.qty_decimals, 1, 0}, reverse=True):
+        for decimals in range(settings.qty_decimals, -1, -1):
             f = 10 ** decimals
             qty = math.floor(order.quantity * f + 1e-9) / f
             if qty <= 0:
