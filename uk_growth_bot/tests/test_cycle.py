@@ -104,7 +104,8 @@ def test_weekly_report_renders(env, closes, monkeypatch):
     assert report.send(rep) is False   # no credentials -> skipped, never raises
 
 
-def test_live_cycle_against_fake_trading212(env, closes, monkeypatch, tmp_path):
+@pytest.mark.parametrize("env_name", ["live", "demo"])
+def test_live_cycle_against_fake_trading212(env, closes, monkeypatch, tmp_path, env_name):
     from uk_growth_bot import broker as B
     from uk_growth_bot.tests.test_trading212 import FakeT212, Resp
 
@@ -131,19 +132,42 @@ def test_live_cycle_against_fake_trading212(env, closes, monkeypatch, tmp_path):
 
     fake = AutoFill()
     monkeypatch.setattr(settings, "mode", "live")
+    monkeypatch.setattr(settings, "t212_env", env_name)
     monkeypatch.setattr(settings, "data_dir", str(tmp_path))
     monkeypatch.setattr(B.time, "sleep", lambda s: None)
     monkeypatch.setattr(main, "make_broker", lambda: B.Trading212Broker(session=fake))
     main._today = today
     main.run_cycle(today, env)
 
-    assert env.net_contributions() == pytest.approx(150.0)        # +200 deposit, -50 withdrawal
-    assert len(env.dividends()) == 1
     buys = [c[2] for c in fake.calls if c[0] == "POST"]
     assert buys and all(b["quantity"] > 0 for b in buys)
     spent = sum(t.quantity * t.price for t in env.txns())
-    assert spent <= 123.45 + 0.01                                   # capped at broker's available cash
+    if env_name == "live":
+        assert env.net_contributions() == pytest.approx(150.0)    # +200 deposit, -50 withdrawal
+        assert len(env.dividends()) == 1
+        assert spent <= 123.45 + 0.01                               # capped at broker's available cash
+    else:
+        # practice account: pretend £200/month, regardless of its virtual balance
+        assert env.net_contributions() == pytest.approx(200.0)
+        assert not any(c[1].startswith("/equity/history/transactions") for c in fake.calls)
+        assert spent <= 123.45 + 0.01
     for t in env.txns():
         assert t.price == pytest.approx(float(last[t.symbol]), abs=1e-4)   # pence converted to £
     notes = " ".join(d["text"] for d in env.decisions(today))
-    assert "Trading 212 contribution" in notes
+    assert ("Trading 212 contribution" if env_name == "live" else "Monthly contribution") in notes
+
+
+def test_first_live_run_books_existing_isa_cash_as_opening_balance(env, monkeypatch):
+    class Broker:
+        def cash_flows(self):
+            return [(date(2027, 2, 1), 200.0, "contribution", "t212:d1")]
+
+        def cash(self):
+            return 950.0
+
+    monkeypatch.setattr(settings, "mode", "live")
+    monkeypatch.setattr(settings, "t212_env", "live")
+    main._record_contributions(env, Broker(), date(2027, 3, 1))
+    assert env.net_contributions() == pytest.approx(950.0)          # 200 deposit + 750 opening
+    main._record_contributions(env, Broker(), date(2027, 3, 2))
+    assert env.net_contributions() == pytest.approx(950.0)          # only once

@@ -4,6 +4,7 @@
     python -m uk_growth_bot.main run-once   # one investing cycle now
     python -m uk_growth_bot.main report     # build + send the weekly report now
     python -m uk_growth_bot.main train      # retrain the ML model now
+    python -m uk_growth_bot.main check      # read-only broker connection test (no orders)
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import pandas as pd
 
 from . import market_data, ml_model, report
 from . import universe as U
-from .broker import make_broker
+from .broker import Trading212Broker, make_broker
 from .config import settings
 from .ledger import Ledger
 from .planner import Planner, fees
@@ -40,8 +41,15 @@ def _lse_open(d: date) -> bool:
         return True
 
 
+def _simulated_funding() -> bool:
+    """Paper mode, and the Trading 212 practice account (whose pre-loaded
+    virtual cash isn't a deposit): the bot credits itself a pretend monthly
+    contribution and only ever spends that."""
+    return settings.mode == "paper" or (settings.broker == "trading212" and settings.t212_env == "demo")
+
+
 def _record_contributions(ledger: Ledger, broker, today: date) -> None:
-    if settings.mode == "paper":
+    if _simulated_funding():
         if settings.paper_starting_cash > 0 and not ledger.get_state("initial_funded"):
             ledger.record_cash_flow(today, settings.paper_starting_cash, "contribution", "initial")
             ledger.set_state("initial_funded", True)
@@ -56,6 +64,14 @@ def _record_contributions(ledger: Ledger, broker, today: date) -> None:
             if ledger.record_cash_flow(day, amount, kind, ref):
                 ledger.log_decision(today, f"Trading 212 {kind}: £{amount:,.2f} on {day.isoformat()}.")
         actual = broker.cash()
+        if not ledger.get_state("opened"):
+            # First live run: cash already in the ISA that the recent history
+            # doesn't explain (e.g. older deposits) becomes the opening balance.
+            if actual is not None and not ledger.txns() and actual - ledger.cash() >= 1.0:
+                opening = round(actual - ledger.cash(), 2)
+                ledger.record_cash_flow(today, opening, "contribution", "opening balance")
+                ledger.log_decision(today, f"Opening balance £{opening:,.2f} taken from Trading 212.")
+            ledger.set_state("opened", True)
         if actual is not None and abs(actual - ledger.cash()) >= 1.0:
             ledger.log_decision(today, f"WARNING: Trading 212 shows £{actual:,.2f} available but the ledger "
                                        f"expects £{ledger.cash():,.2f}. Was something traded by hand?")
@@ -105,8 +121,8 @@ def run_cycle(today: date, ledger: Ledger) -> None:
         return
     prices = market_data.latest_prices(closes)
 
-    if not (settings.mode == "live" and settings.broker == "trading212"):
-        _record_dividends(ledger, today)  # Trading 212 reports real dividends instead
+    if _simulated_funding() or settings.broker != "trading212":
+        _record_dividends(ledger, today)  # real Trading 212 accounts report actual dividends
     _record_contributions(ledger, broker, today)
     _check_positions(ledger, broker, today)
 
@@ -165,6 +181,37 @@ def send_report(today: date, ledger: Ledger) -> None:
     logger.info("Weekly report written to %s", path)
 
 
+def check() -> int:
+    """Read-only Trading 212 smoke test. Places no orders, whatever the mode."""
+    if settings.broker != "trading212":
+        print("check supports UK_BROKER=trading212 only")
+        return 2
+    print(f"Trading 212 {settings.t212_env.upper()} environment "
+          f"({'PRACTICE, fake money' if settings.t212_env == 'demo' else 'REAL MONEY'}); "
+          f"bot mode: {settings.mode}")
+    if not settings.t212_api_key:
+        print("FAIL: T212_API_KEY is not set")
+        return 1
+    b = Trading212Broker()
+    if not b.ready():
+        print("FAIL: Trading 212 rejected the key or is unreachable (see log above)")
+        return 1
+    print(f"OK   authenticated; available cash £{b.cash() or 0:,.2f}")
+    mapping = b.instrument_map()
+    missing = [t for t in U.ALL if t not in mapping]
+    for t in U.ALL:
+        print(f"{'OK  ' if t in mapping else 'MISS'} {t:<8} -> {mapping.get(t, '(not found)')}")
+    positions = b.positions() or {}
+    print(f"OK   {len(positions)} open position(s): {positions or 'none'}")
+    flows = b.cash_flows()
+    print(f"OK   {len(flows)} recent deposit/withdrawal/fee/dividend record(s)")
+    if missing:
+        print(f"WARN {len(missing)} ticker(s) not found; the bot will skip them. Fix with e.g. "
+              f"UK_T212_TICKERS={missing[0]}=<Trading 212 ticker>")
+    print("Done — no orders were placed.")
+    return 0
+
+
 def train() -> None:
     closes = market_data.history(U.ALL.keys(), period="10y")
     ml_model.train(closes)
@@ -205,8 +252,13 @@ def main(argv: list) -> None:
         send_report(today, Ledger())
     elif cmd == "train":
         train()
-    else:
+    elif cmd == "check":
+        sys.exit(check())
+    elif cmd == "loop":
         loop()
+    else:
+        print(__doc__)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

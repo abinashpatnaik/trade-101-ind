@@ -167,3 +167,28 @@ def test_cash_flows_classify_deposits_withdrawals_fees_dividends(t212):
     assert flows["t212:w1"][1:] == (-50.0, "withdrawal")
     assert flows["t212:f1"][1:] == (-0.5, "fee")
     assert flows["t212:v1"][1:] == (1.25, "dividend")
+
+
+def test_check_command_is_read_only(t212, monkeypatch, capsys):
+    from uk_growth_bot import main
+    b, fake = t212
+    monkeypatch.setattr(main, "Trading212Broker", lambda: b)
+    monkeypatch.setattr(B.settings, "mode", "live")       # even in live mode
+    assert main.check() == 0
+    out = capsys.readouterr().out
+    assert "PRACTICE" in out and "OK   VWRP.L" in out and "MISS" in out and "no orders" in out
+    assert not [c for c in fake.calls if c[0] != "GET"]
+
+
+def test_check_fails_cleanly_without_key(monkeypatch, capsys):
+    from uk_growth_bot import main
+    monkeypatch.setattr(B.settings, "t212_api_key", "")
+    assert main.check() == 1
+
+
+def test_unknown_command_does_not_start_the_bot(monkeypatch):
+    from uk_growth_bot import main
+    monkeypatch.setattr(main, "loop", lambda: pytest.fail("loop must not start"))
+    with pytest.raises(SystemExit) as e:
+        main.main(["x", "chek"])
+    assert e.value.code == 2
