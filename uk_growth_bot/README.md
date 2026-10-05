@@ -142,8 +142,17 @@ There's nothing new to pay for: it runs on the existing server, and the market d
 pip install -r uk_growth_bot/requirements.txt pytest
 python -m pytest uk_growth_bot/tests          # 47 tests, no network
 UK_DATA_DIR=/tmp/ukbot python -m uk_growth_bot.main run-once   # one paper cycle (needs internet)
-python -m uk_growth_bot.main check | report | train | loop
+python -m uk_growth_bot.main check | plan | status | report | train | loop
 ```
+
+## Diagnostics on the server
+
+GitHub → Actions → **UK bot ops (read-only)** → Run workflow, then pick one:
+- `status`: the container's recent log, holdings, cash and the last week's decisions;
+- `plan`: a dry run of today's cycle (research, targets and the orders it *would* place) against a throwaway copy of the ledger;
+- `check`: the Trading 212 connection test.
+
+None of them places orders or restarts anything.
 
 ## Files
 

@@ -5,26 +5,30 @@
     python -m uk_growth_bot.main report     # build + send the weekly report now
     python -m uk_growth_bot.main train      # retrain the ML model now
     python -m uk_growth_bot.main check      # read-only broker connection test (no orders)
+    python -m uk_growth_bot.main plan       # dry run of today's cycle: prints orders, sends none
+    python -m uk_growth_bot.main status     # ledger, recent decisions, model state
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
+import tempfile
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from . import market_data, ml_model, report
 from . import universe as U
-from .broker import Trading212Broker, make_broker
+from .broker import PaperBroker, Trading212Broker, make_broker
 from .config import settings
 from .ledger import Ledger
 from .planner import Planner, fees
-from .research import run_research
+from .research import run_research, top_candidates
 from .tax import Txn, tax_position
 
 logger = logging.getLogger("uk_growth_bot")
@@ -110,8 +114,8 @@ def _check_positions(ledger: Ledger, broker, today: date) -> None:
                                        f"{mine.get(t, 0):g}. Manual trades are not managed — please reconcile.")
 
 
-def run_cycle(today: date, ledger: Ledger) -> None:
-    broker = make_broker()
+def run_cycle(today: date, ledger: Ledger, broker=None):
+    broker = broker or make_broker()
     if settings.mode == "live" and not broker.ready():
         logger.error("%s not reachable/authenticated — skipping today's cycle.", settings.broker)
         return
@@ -167,6 +171,75 @@ def run_cycle(today: date, ledger: Ledger) -> None:
     nav = ledger.cash() + sum(q * prices.get(t, 0.0) for t, q in ledger.holdings().items())
     ledger.record_nav(today, nav, ledger.cash())
     logger.info("Cycle done: %d orders, NAV £%.2f", len(plan.orders), nav)
+    return research, plan
+
+
+class _DryRunBroker:
+    """Reads from the real broker; 'fills' orders on paper and never sends them."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    def execute(self, order):
+        return PaperBroker().execute(order)
+
+
+def dry_run(today: date) -> int:
+    """Full research + planning cycle against a throwaway copy of the ledger.
+    Places no orders and leaves the real ledger untouched."""
+    real = Ledger()
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = os.path.join(tmp, "dry_run.db")
+        if os.path.exists(real.path):
+            shutil.copy(real.path, copy)
+        ledger = Ledger(path=copy, mode=real.mode)
+        out = run_cycle(today, ledger, broker=_DryRunBroker(make_broker()))
+        if not out:
+            print("DRY RUN: cycle skipped (see log above)")
+            return 1
+        research, plan = out
+        print(f"DRY RUN {today.isoformat()} — mode {settings.mode}, broker {settings.broker}"
+              f"{' (' + settings.t212_env + ')' if settings.broker == 'trading212' else ''}. No orders sent.")
+        print(f"Market data: {len(research.features)} assets with features; regime "
+              f"{'RISK-ON' if research.risk_on else 'RISK-OFF'}")
+        model = ml_model.load_report()
+        print("ML: " + (f"AUC {model.auc:.3f}, {'ACTIVE' if model.active else 'not used (below quality bar)'}"
+                        if model else "no model trained yet"))
+        print(f"News sentiment fetched for {len(research.sentiment)} name(s)")
+        print("Top growth candidates: " + ", ".join(
+            f"{t} {research.scores[t]:+.2f}" for t in top_candidates(research)))
+        print("Targets: " + ", ".join(f"{t} {w:.0%}" for t, w in sorted(plan.targets.items(), key=lambda kv: -kv[1])))
+        for o in plan.orders:
+            print(f"WOULD {o.side} {o.quantity:g} {o.ticker} (~£{o.value:,.2f}): {o.reason}")
+        if not plan.orders:
+            print("WOULD place no orders")
+        for n in plan.notes:
+            print(f"NOTE {n}")
+        print(f"Cash available to the plan: £{ledger.cash():,.2f} (after simulated fills)")
+    return 0
+
+
+def status() -> int:
+    ledger = Ledger()
+    today = datetime.now(TZ).date()
+    print(f"Mode {settings.mode}, broker {settings.broker} ({settings.t212_env}), account {settings.account_type}")
+    print(f"Last cycle: {ledger.get_state('last_run')}; last report: {ledger.get_state('last_report')}; "
+          f"last training: {ledger.get_state('last_train')}")
+    model = ml_model.load_report()
+    print("ML: " + (f"AUC {model.auc:.3f}, {'ACTIVE' if model.active else 'not used'}, trained {model.trained_at}"
+                    if model else "no model yet"))
+    print(f"Contributed £{ledger.net_contributions():,.2f}; ledger cash £{ledger.cash():,.2f}")
+    holdings = ledger.holdings()
+    print("Holdings: " + (", ".join(f"{t} {q:g}" for t, q in holdings.items()) or "none"))
+    nav = ledger.nav_history()
+    if nav:
+        print(f"Latest NAV £{nav[-1]['nav']:,.2f} on {nav[-1]['day']}")
+    for d in ledger.decisions(today - timedelta(days=7))[-25:]:
+        print(f"{d['day']}  {d['text']}")
+    return 0
 
 
 def send_report(today: date, ledger: Ledger) -> None:
@@ -263,6 +336,10 @@ def main(argv: list) -> None:
         train()
     elif cmd == "check":
         sys.exit(check())
+    elif cmd == "plan":
+        sys.exit(dry_run(today))
+    elif cmd == "status":
+        sys.exit(status())
     elif cmd == "loop":
         loop()
     else:

@@ -1,0 +1,46 @@
+name: UK bot ops (read-only)
+
+# Manual diagnostics for uk_growth_bot on the Hetzner host. Nothing here
+# places orders, edits the ledger or restarts containers:
+#   status - recent container log + ledger summary
+#   plan   - dry run of today's investing cycle (prints orders, sends none)
+#   check  - Trading 212 connection test
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "What to run"
+        type: choice
+        options: [status, plan, check]
+        default: status
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          known_hosts: unnecessary
+          if_key_exists: replace
+
+      - name: Run ${{ inputs.command }}
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
+          CMD: ${{ inputs.command }}
+        run: |
+          case "$CMD" in status|plan|check) ;; *) echo "unknown command"; exit 2;; esac
+          ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "CMD=$CMD bash -s" <<'REMOTE'
+          cd ~/trading-agent
+          if ! docker compose config --services 2>/dev/null | grep -qx uk-growth-bot; then
+            echo "UK bot not enabled (COMPOSE_PROFILES has no uk)"; exit 1
+          fi
+          if [ "$CMD" = status ]; then
+            echo "=== container"; docker ps --filter name=uk-growth-bot --format '{{.Names}}  {{.Status}}'
+            echo "=== last 150 log lines"; docker logs --tail 150 uk-growth-bot 2>&1
+            echo "=== ledger"
+          fi
+          docker compose run --rm -T uk-growth-bot python -m uk_growth_bot.main "$CMD" 2>&1 | grep -v 'level=warning'
+          REMOTE

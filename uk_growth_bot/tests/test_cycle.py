@@ -193,3 +193,37 @@ def test_live_cycle_buys_nothing_when_broker_cash_is_unknown(env, closes, monkey
     main.run_cycle(main._today, env)
     assert not env.txns()
     assert any("no purchases today" in d["text"] for d in env.decisions(main._today))
+
+
+def test_dry_run_sends_no_orders_and_leaves_ledger_untouched(env, closes, monkeypatch, tmp_path, capsys):
+    from uk_growth_bot import broker as B
+    from uk_growth_bot.tests.test_trading212 import FakeT212, Resp
+
+    class Fake(FakeT212):
+        def request(self, method, url, timeout=None, json=None, **kw):
+            if url.endswith("/equity/metadata/instruments"):
+                self.calls.append((method, url, json))
+                return Resp(200, [{"ticker": f"{t.split('.')[0]}l_EQ", "shortName": t.split(".")[0],
+                                   "currencyCode": "GBP"} for t in U.ALL])
+            return super().request(method, url, timeout=timeout, json=json, **kw)
+
+    fake = Fake()
+    monkeypatch.setattr(settings, "mode", "live")
+    monkeypatch.setattr(settings, "t212_env", "demo")
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(B.time, "sleep", lambda s: None)
+    monkeypatch.setattr(main, "make_broker", lambda: B.Trading212Broker(session=fake))
+    main._today = date(2027, 3, 1)
+    assert main.dry_run(main._today) == 0
+    out = capsys.readouterr().out
+    assert "WOULD BUY" in out and "No orders sent" in out
+    assert not [c for c in fake.calls if c[0] == "POST"]
+    real = main.Ledger()
+    assert not real.txns() and real.net_contributions() == 0
+
+
+def test_status_prints_summary(env, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    assert main.status() == 0
+    out = capsys.readouterr().out
+    assert "Mode paper" in out and "Holdings: none" in out
