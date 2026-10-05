@@ -72,11 +72,27 @@ A copy is saved to `data/uk/reports/`.
 
 ## Setup
 
-1. **Open an IBKR UK account** (General Investment Account, cash, GBP base currency). Set up a **£200/month standing order** into it on `UK_CONTRIBUTION_DAY`. In live mode, cash that arrives is detected as a contribution automatically.
-2. Copy the new `UK_*` / `IBEAM_*` keys from `.env.example` into the host's `.env`. Add `COMPOSE_PROFILES=uk`. Keep `UK_TRADING_MODE=paper`.
-3. Deploy as usual (merge to `main`) or run `docker compose up -d --build` on the host. This starts `uk-ibeam` (it keeps the IBKR Client Portal Gateway logged in) and `uk-growth-bot`.
-4. **2FA:** IBKR requires it for live accounts. Approve the IBeam login on IBKR Mobile; see the [IBeam docs](https://github.com/Voyz/ibeam) for automating it. You can also log IBeam into your **IBKR paper account** to test the real broker path.
-5. Watch a few weekly reports in paper mode. Then set `UK_TRADING_MODE=live` and restart `uk-growth-bot`.
+### Stage 1 — paper mode (no broker, no real money)
+
+In paper mode the bot keeps its own simulated ledger. On `UK_CONTRIBUTION_DAY`
+each month it credits itself a **pretend** `UK_MONTHLY_CONTRIBUTION` (£200) and
+"buys" at real market prices with modelled fees. You don't need an IBKR account
+or a standing order yet.
+
+1. In the host's `.env`, set `COMPOSE_PROFILES=uk` and `UK_TRADING_MODE=paper`. Optionally set `UK_REPORT_RECIPIENT`.
+2. Deploy as usual (merge to `main`), or run `docker compose up -d --build` on the host. Only `uk-growth-bot` starts.
+3. Read the weekly reports for a few weeks to a few months.
+
+### Stage 2 — live mode (real money)
+
+1. **Open an IBKR UK account:** a General Investment Account (cash, not margin) with GBP as the base currency.
+2. **Set up a £200/month standing order** from your bank into IBKR, landing on or just before `UK_CONTRIBUTION_DAY`. In live mode the bot doesn't credit itself money. It reads IBKR's cash balance and treats new cash as your contribution.
+3. In `.env`, set `IBEAM_ACCOUNT` / `IBEAM_PASSWORD`, `COMPOSE_PROFILES=uk,uk-live` and `UK_TRADING_MODE=live`, then redeploy. This adds `uk-ibeam`, which keeps the IBKR Client Portal Gateway logged in.
+4. **2FA:** IBKR requires it for live accounts. Approve the IBeam login on IBKR Mobile; see the [IBeam docs](https://github.com/Voyz/ibeam) for automating it.
+
+Optional dress rehearsal between the stages: log IBeam into your **IBKR paper account** while keeping `UK_TRADING_MODE=live`. That tests real order placement with IBKR's fake money (fund the paper account in IBKR's portal).
+
+Note: the paper ledger and the live ledger are kept separately, so live mode starts from zero.
 
 Before going live, also check:
 - **every ticker** in `universe.py`: that it still exists, which share class it is, and that it has UK *reporting fund* status;

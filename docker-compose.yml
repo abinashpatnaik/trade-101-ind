@@ -340,15 +340,15 @@ services:
   # =========================================================================
   # UK (LSE / IBKR GIA) — standalone long-term growth investing bot.
   # Independent code (uk_growth_bot/), no Redis, no shared agents. OFF by
-  # default: the services only start when the host .env sets
-  # COMPOSE_PROFILES=uk. It also defaults to PAPER mode — set
-  # UK_TRADING_MODE=live only after IBeam is logged in and paper looks right.
+  # default. Paper mode (simulated money, no broker): COMPOSE_PROFILES=uk.
+  # Live mode adds the IBKR gateway: COMPOSE_PROFILES=uk,uk-live and
+  # UK_TRADING_MODE=live.
   # =========================================================================
 
   ibeam:
     image: voyz/ibeam:latest
     container_name: uk-ibeam
-    profiles: ["uk"]
+    profiles: ["uk-live"]
     environment:
       - IBEAM_ACCOUNT=${IBEAM_ACCOUNT}
       - IBEAM_PASSWORD=${IBEAM_PASSWORD}
