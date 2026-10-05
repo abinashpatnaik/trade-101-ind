@@ -171,3 +171,25 @@ def test_first_live_run_books_existing_isa_cash_as_opening_balance(env, monkeypa
     assert env.net_contributions() == pytest.approx(950.0)          # 200 deposit + 750 opening
     main._record_contributions(env, Broker(), date(2027, 3, 2))
     assert env.net_contributions() == pytest.approx(950.0)          # only once
+
+
+def test_live_cycle_buys_nothing_when_broker_cash_is_unknown(env, closes, monkeypatch):
+    from uk_growth_bot.broker import PaperBroker
+
+    class Blind(PaperBroker):
+        def ready(self):
+            return True
+
+        def cash(self):
+            return None
+
+        def execute(self, order):
+            pytest.fail("must not trade without a known balance")
+
+    monkeypatch.setattr(settings, "mode", "live")
+    monkeypatch.setattr(settings, "t212_env", "demo")
+    monkeypatch.setattr(main, "make_broker", Blind)
+    main._today = date(2027, 3, 1)
+    main.run_cycle(main._today, env)
+    assert not env.txns()
+    assert any("no purchases today" in d["text"] for d in env.decisions(main._today))

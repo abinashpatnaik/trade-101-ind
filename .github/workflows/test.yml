@@ -31,3 +31,6 @@ jobs:
         env:
           TRADING_MARKET: IN
         run: pytest tests/ -q
+
+      - name: Run UK growth bot tests
+        run: pytest uk_growth_bot/tests -q

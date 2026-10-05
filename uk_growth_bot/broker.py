@@ -69,12 +69,28 @@ class Trading212Broker:
             self.s.headers["Authorization"] = settings.t212_api_key
         self._wait_until: Dict[str, float] = {}
         self._map: Optional[Dict[str, str]] = None
+        self._insts: List[Dict] = []
 
     # --- transport ----------------------------------------------------
+    def _cooldown(self, key: str, headers, refused: bool) -> None:
+        """Remember how long to hold off this endpoint.
+
+        Trading 212's x-ratelimit-reset has been seen to lie in the past, so a
+        spent quota always waits at least one full x-ratelimit-period.
+        """
+        remaining = headers.get("x-ratelimit-remaining")
+        if not refused and (remaining is None or int(float(remaining)) > 0):
+            return
+        period = float(headers.get("x-ratelimit-period") or 0) or 5.0
+        reset = float(headers.get("x-ratelimit-reset") or 0)
+        if reset > 1e11:  # milliseconds
+            reset /= 1000
+        self._wait_until[key] = max(reset, time.time() + period)
+
     def _call(self, method: str, path: str, **kw) -> Tuple[int, Any]:
         """(status, body). status 0 = no response (outcome unknown)."""
         key = method + re.sub(r"/\d+$", "/{id}", path.split("?")[0])
-        for attempt in range(2):
+        for attempt in range(3):
             wait = self._wait_until.get(key, 0) - time.time()
             if wait > 0:
                 time.sleep(min(wait, 65))
@@ -83,11 +99,8 @@ class Trading212Broker:
             except requests.RequestException as exc:
                 logger.error("Trading 212 %s %s: no response (%s)", method, path, exc)
                 return 0, None
-            remaining, reset = r.headers.get("x-ratelimit-remaining"), r.headers.get("x-ratelimit-reset")
-            if remaining is not None and reset and int(float(remaining)) <= 0:
-                self._wait_until[key] = float(reset)
-            if r.status_code == 429 and attempt == 0:
-                self._wait_until[key] = float(reset) if reset else time.time() + 10
+            self._cooldown(key, r.headers, refused=r.status_code == 429)
+            if r.status_code == 429 and attempt < 2:
                 continue  # a 429 was refused, never executed — safe to retry
             try:
                 body = r.json()
@@ -163,6 +176,7 @@ class Trading212Broker:
                     json.dump(insts, fh)
         overrides = dict(kv.split("=", 1) for kv in
                          filter(None, os.getenv("UK_T212_TICKERS", "").replace(" ", "").split(",")))
+        self._insts = insts
         self._map = {}
         for ours in U.ALL:
             if ours in overrides:
@@ -178,6 +192,14 @@ class Trading212Broker:
             else:
                 logger.warning("No Trading 212 instrument for %s; set UK_T212_TICKERS=%s=<ticker>", ours, ours)
         return self._map
+
+    def suggest(self, ours: str, n: int = 3) -> List[Dict]:
+        """Instruments whose name matches the asset's, for fixing a missing ticker."""
+        self.instrument_map()
+        word = U.ALL[ours].name.split()[0].lower() if ours in U.ALL else ours.split(".")[0].lower()
+        hits = [i for i in self._insts if word in str(i.get("name", "")).lower()]
+        hits.sort(key=lambda i: i.get("currencyCode") not in ("GBP", "GBX"))
+        return hits[:n]
 
     def positions(self) -> Optional[Dict[str, float]]:
         rows = self._get("/equity/positions")
