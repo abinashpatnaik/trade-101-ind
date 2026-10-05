@@ -212,7 +212,7 @@ def test_check_suggests_tickers_and_never_shows_fake_zero(t212, monkeypatch, cap
     b, fake = t212
     monkeypatch.setattr(main, "Trading212Broker", lambda: b)
     monkeypatch.setattr(b, "cash", lambda: None)
-    INSTRUMENTS.append({"ticker": "CPGl_EQ_X", "shortName": "CPGX", "name": "Compass Group PLC",
+    INSTRUMENTS.append({"ticker": "HLMAX_EQ", "shortName": "HLMX", "name": "Halma plc",
                         "currencyCode": "GBX"})
     try:
         assert main.check() == 0
@@ -220,4 +220,4 @@ def test_check_suggests_tickers_and_never_shows_fake_zero(t212, monkeypatch, cap
         INSTRUMENTS.pop()
     out = capsys.readouterr().out
     assert "unknown" in out and "£0.00" not in out
-    assert "CPGl_EQ_X (Compass Group PLC, GBX)" in out
+    assert "HLMAX_EQ (Halma plc, GBX)" in out
