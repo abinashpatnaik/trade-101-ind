@@ -192,6 +192,8 @@ def check() -> int:
     if not settings.t212_api_key:
         print("FAIL: T212_API_KEY is not set")
         return 1
+    if not settings.t212_api_secret:
+        print("WARN T212_API_SECRET is not set — only old key-only API keys work without it")
     b = Trading212Broker()
     if not b.ready():
         print("FAIL: Trading 212 rejected the key or is unreachable (see log above)")
