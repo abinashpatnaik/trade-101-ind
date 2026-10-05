@@ -186,6 +186,7 @@ def send(report: Dict[str, str]) -> bool:
             s.starttls()
             s.login(sender, password)
             s.sendmail(sender, [to], msg.as_string())
+        logger.info("Weekly report emailed to %s", to)
         return True
     except Exception as exc:
         logger.error("Sending weekly report failed: %s", exc)

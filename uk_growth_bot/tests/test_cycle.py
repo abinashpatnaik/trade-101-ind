@@ -275,3 +275,18 @@ def test_failed_cycle_is_not_retried_the_same_day(env, monkeypatch):
     with pytest.raises(StopIteration):
         main.loop()                  # three scheduler ticks at 11:00 on the same day
     assert len(calls) == 1
+
+
+def test_report_command_exit_code_reflects_email(env, closes, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(main, "Ledger", lambda: env)
+    main._today = date(2027, 3, 1)
+    monkeypatch.setattr(main.report, "send", lambda rep: True)
+    with pytest.raises(SystemExit) as e:
+        main.main(["x", "report"])
+    assert e.value.code == 0
+    monkeypatch.setattr(main.report, "send", lambda rep: False)
+    with pytest.raises(SystemExit) as e:
+        main.main(["x", "report"])
+    assert e.value.code == 1
+    assert list((tmp_path / "reports").glob("weekly_*.txt"))
