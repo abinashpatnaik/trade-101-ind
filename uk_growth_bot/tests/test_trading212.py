@@ -192,3 +192,32 @@ def test_unknown_command_does_not_start_the_bot(monkeypatch):
     with pytest.raises(SystemExit) as e:
         main.main(["x", "chek"])
     assert e.value.code == 2
+
+
+def test_429_with_stale_reset_header_waits_a_full_period(t212, monkeypatch):
+    b, fake = t212
+    slept = []
+    monkeypatch.setattr(B.time, "sleep", lambda s: slept.append(s))
+    stale = {"x-ratelimit-remaining": "0", "x-ratelimit-period": "5", "x-ratelimit-reset": "1"}
+    responses = [Resp(200, {"cash": {"availableToTrade": 1}}, stale),
+                 Resp(429, None, stale), Resp(200, {"cash": {"availableToTrade": 123.45}})]
+    monkeypatch.setattr(fake, "request", lambda *a, **k: responses.pop(0))
+    assert b.ready()
+    assert b.cash() == pytest.approx(123.45)       # previously came back as None -> "£0.00"
+    assert slept and all(s >= 4.9 for s in slept)  # waited out the 5s window, not the stale reset
+
+
+def test_check_suggests_tickers_and_never_shows_fake_zero(t212, monkeypatch, capsys):
+    from uk_growth_bot import main
+    b, fake = t212
+    monkeypatch.setattr(main, "Trading212Broker", lambda: b)
+    monkeypatch.setattr(b, "cash", lambda: None)
+    INSTRUMENTS.append({"ticker": "CPGl_EQ_X", "shortName": "CPGX", "name": "Compass Group PLC",
+                        "currencyCode": "GBX"})
+    try:
+        assert main.check() == 0
+    finally:
+        INSTRUMENTS.pop()
+    out = capsys.readouterr().out
+    assert "unknown" in out and "£0.00" not in out
+    assert "CPGl_EQ_X (Compass Group PLC, GBX)" in out

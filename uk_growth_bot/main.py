@@ -138,6 +138,9 @@ def run_cycle(today: date, ledger: Ledger) -> None:
     broker_cash = broker.cash()
     if broker_cash is not None:
         cash = min(cash, broker_cash)  # never plan to spend money the broker doesn't show
+    elif settings.mode == "live":
+        cash = 0.0  # balance unknown: buy nothing today rather than guess
+        ledger.log_decision(today, "Couldn't read the broker's cash balance; no purchases today.")
     plan = Planner(today, research, holdings, prices, cash, txns, tax,
                    {t: ledger.first_buy_day(t) for t in holdings},
                    date.fromisoformat(paused) if paused else None, rebalance_due).run()
@@ -198,7 +201,9 @@ def check() -> int:
     if not b.ready():
         print("FAIL: Trading 212 rejected the key or is unreachable (see log above)")
         return 1
-    print(f"OK   authenticated; available cash £{b.cash() or 0:,.2f}")
+    cash = b.cash()
+    print(f"OK   authenticated; available cash " + (f"£{cash:,.2f}" if cash is not None
+                                                      else "unknown (lookup failed — see log above)"))
     mapping = b.instrument_map()
     missing = [t for t in U.ALL if t not in mapping]
     for t in U.ALL:
@@ -207,9 +212,11 @@ def check() -> int:
     print(f"OK   {len(positions)} open position(s): {positions or 'none'}")
     flows = b.cash_flows()
     print(f"OK   {len(flows)} recent deposit/withdrawal/fee/dividend record(s)")
-    if missing:
-        print(f"WARN {len(missing)} ticker(s) not found; the bot will skip them. Fix with e.g. "
-              f"UK_T212_TICKERS={missing[0]}=<Trading 212 ticker>")
+    for t in missing:
+        options = ", ".join(f"{i.get('ticker')} ({i.get('name')}, {i.get('currencyCode')})"
+                            for i in b.suggest(t)) or "no similar names"
+        print(f"WARN {t} not found; the bot will skip it. Closest Trading 212 instruments: {options}. "
+              f"Fix with UK_T212_TICKERS={t}=<ticker>")
     print("Done — no orders were placed.")
     return 0
 
