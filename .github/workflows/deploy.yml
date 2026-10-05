@@ -58,10 +58,15 @@ jobs:
           } | ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST '
             set -e; mkdir -p ~/trading-agent; cd ~/trading-agent
             umask 077; touch .env; chmod 600 .env
+            # A .env without a final newline would glue the first appended
+            # line onto the last existing one, corrupting both.
+            if [ -s .env ] && [ -n "$(tail -c1 .env)" ]; then echo >> .env; fi
             n=0
             while IFS= read -r line; do
               k="${line%%=*}"
               case "$k" in ""|*[!A-Za-z0-9_]*) continue;; esac
+              # Repair lines an earlier run glued onto another setting.
+              sed -i "s/^\(.\+\)\(${k}=\)/\1\n\2/" .env
               sed -i "/^${k}=/d" .env
               printf "%s\n" "$line" >> .env
               n=$((n+1))
