@@ -243,7 +243,7 @@ def status() -> int:
     return 0
 
 
-def send_report(today: date, ledger: Ledger) -> None:
+def send_report(today: date, ledger: Ledger, echo: bool = False) -> bool:
     closes = market_data.history(U.ALL.keys(), period="2y")
     prices = market_data.latest_prices(closes)
     research = run_research(closes, ledger.holdings())
@@ -254,8 +254,11 @@ def send_report(today: date, ledger: Ledger) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
         fh.write(rep["text"])
-    report.send(rep)
-    logger.info("Weekly report written to %s", path)
+    if echo:
+        print(rep["text"])
+    sent = report.send(rep)
+    logger.info("Weekly report written to %s; emailed: %s", path, "yes" if sent else "NO")
+    return sent
 
 
 def check() -> int:
@@ -339,7 +342,7 @@ def main(argv: list) -> None:
     if cmd == "run-once":
         run_cycle(today, Ledger())
     elif cmd == "report":
-        send_report(today, Ledger())
+        sys.exit(0 if send_report(today, Ledger(), echo=True) else 1)
     elif cmd == "train":
         train()
     elif cmd == "check":

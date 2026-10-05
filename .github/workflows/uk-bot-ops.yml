@@ -5,13 +5,15 @@ name: UK bot ops (read-only)
 #   status - recent container log + ledger summary
 #   plan   - dry run of today's investing cycle (prints orders, sends none)
 #   check  - Trading 212 connection test
+#   report - build the weekly report now and email it to the configured
+#            recipient (the same email Friday's scheduled run sends)
 on:
   workflow_dispatch:
     inputs:
       command:
         description: "What to run"
         type: choice
-        options: [status, plan, check]
+        options: [status, plan, check, report]
         default: status
 
 jobs:
@@ -31,7 +33,7 @@ jobs:
           HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
           CMD: ${{ inputs.command }}
         run: |
-          case "$CMD" in status|plan|check) ;; *) echo "unknown command"; exit 2;; esac
+          case "$CMD" in status|plan|check|report) ;; *) echo "unknown command"; exit 2;; esac
           ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "CMD=$CMD bash -s" <<'REMOTE'
           cd ~/trading-agent
           if ! docker compose config --services 2>/dev/null | grep -qx uk-growth-bot; then
