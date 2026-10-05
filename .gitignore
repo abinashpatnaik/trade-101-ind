@@ -23,3 +23,6 @@ trading_agent/*.json
 
 # Mobile app lives in its own repository; keep its build artifacts out of this one
 *.apk
+
+# UK growth bot runtime state (ledger, model, reports)
+uk_growth_bot/data/
