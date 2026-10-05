@@ -3,6 +3,9 @@ name: Deploy Trading Agent to Hetzner
 on:
   push:
     branches: [ main ]
+  # Manual re-run (Actions tab), e.g. after changing a secret. It redeploys
+  # the whole stack, same as a push.
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -25,9 +28,65 @@ jobs:
         run: |
           rsync -avz -e "ssh -o StrictHostKeyChecking=no" --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='logs' --exclude='data' ./ $HETZNER_USERNAME@$HETZNER_HOST:~/trading-agent/
 
+      # UK growth bot settings: secrets from GitHub Actions Secrets, plain
+      # settings from Actions Variables. Values travel over SSH stdin (never on
+      # a command line), and only non-empty ones are written, so anything
+      # unset in GitHub leaves the server's existing .env line alone.
+      - name: Write UK bot settings to server .env
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
+          T212_API_KEY: ${{ secrets.T212_API_KEY }}
+          T212_API_SECRET: ${{ secrets.T212_API_SECRET }}
+          COMPOSE_PROFILES: ${{ vars.COMPOSE_PROFILES }}
+          UK_TRADING_MODE: ${{ vars.UK_TRADING_MODE }}
+          T212_ENV: ${{ vars.T212_ENV }}
+          UK_REPORT_RECIPIENT: ${{ vars.UK_REPORT_RECIPIENT }}
+        run: |
+          # Single quotes stop docker compose expanding any "$" in a value.
+          put() {
+            if [ -z "$2" ]; then return 0; fi
+            case "$2" in *"'"*) printf '%s=%s\n' "$1" "$2" ;; *) printf "%s='%s'\n" "$1" "$2" ;; esac
+          }
+          {
+            put T212_API_KEY "$T212_API_KEY"
+            put T212_API_SECRET "$T212_API_SECRET"
+            put COMPOSE_PROFILES "$COMPOSE_PROFILES"
+            put UK_TRADING_MODE "$UK_TRADING_MODE"
+            put T212_ENV "$T212_ENV"
+            put UK_REPORT_RECIPIENT "$UK_REPORT_RECIPIENT"
+          } | ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST '
+            set -e; mkdir -p ~/trading-agent; cd ~/trading-agent
+            umask 077; touch .env; chmod 600 .env
+            n=0
+            while IFS= read -r line; do
+              k="${line%%=*}"
+              case "$k" in ""|*[!A-Za-z0-9_]*) continue;; esac
+              sed -i "/^${k}=/d" .env
+              printf "%s\n" "$line" >> .env
+              n=$((n+1))
+            done
+            echo "Updated $n UK bot setting(s) in .env (values not shown)"'
+
       - name: Start Container Stack on Hetzner
         env:
           HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
           HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
         run: |
           ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "mkdir -p ~/trading-agent/logs ~/trading-agent/data && cd ~/trading-agent && docker compose kill && docker compose rm -f && docker compose up -d --build"
+
+      # Read-only: authenticates with Trading 212 and lists cash, positions and
+      # ticker mapping. Places no orders. Skipped unless the uk profile is on.
+      - name: UK bot connection check (read-only)
+        continue-on-error: true
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST '
+            cd ~/trading-agent
+            if docker compose config --services | grep -qx uk-growth-bot; then
+              docker compose run --rm uk-growth-bot python -m uk_growth_bot.main check
+            else
+              echo "UK bot not enabled (COMPOSE_PROFILES has no uk) — skipping check"
+            fi'

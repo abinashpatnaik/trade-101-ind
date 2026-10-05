@@ -99,14 +99,13 @@ order path.
    - **orders: execute**.
 
    If the app offers IP restrictions, limit the key to the server's IP.
-2. In the host's `.env`, set:
-   ```
-   COMPOSE_PROFILES=uk
-   UK_TRADING_MODE=paper
-   T212_ENV=demo
-   T212_API_KEY=<key>
-   T212_API_SECRET=<secret>
-   ```
+2. Put the settings in place, using **either** of these:
+   - **GitHub (recommended):** under repo Settings → Secrets and variables → Actions:
+     - add *Secrets* `T212_API_KEY` and `T212_API_SECRET`;
+     - add *Variables* `COMPOSE_PROFILES=uk`, `UK_TRADING_MODE=paper`, `T212_ENV=demo` (optionally `UK_REPORT_RECIPIENT`).
+
+     Every deploy writes them into the server's `.env`: values go over SSH stdin, the file is made owner-only, and settings left unset in GitHub don't touch the server. The deploy then runs the read-only `check` and prints it in the Actions log. Re-run it any time from the Actions tab ("Run workflow"); this redeploys the whole stack.
+   - **By hand on the host:** put the same lines in `~/trading-agent/.env`.
 3. Run the **read-only connection check**. It places no orders, whatever the mode:
    ```bash
    cd ~/trading-agent && docker compose run --rm uk-growth-bot python -m uk_growth_bot.main check
