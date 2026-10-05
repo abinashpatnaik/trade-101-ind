@@ -340,15 +340,16 @@ services:
   # =========================================================================
   # UK (LSE / IBKR GIA) — standalone long-term growth investing bot.
   # Independent code (uk_growth_bot/), no Redis, no shared agents. OFF by
-  # default. Paper mode (simulated money, no broker): COMPOSE_PROFILES=uk.
-  # Live mode adds the IBKR gateway: COMPOSE_PROFILES=uk,uk-live and
-  # UK_TRADING_MODE=live.
+  # default — enable with COMPOSE_PROFILES=uk. Defaults to PAPER mode
+  # (pretend money). Live uses a Trading 212 Stocks & Shares ISA via API key
+  # (no extra container). The optional IBKR route also needs the gateway:
+  # COMPOSE_PROFILES=uk,uk-ibkr.
   # =========================================================================
 
   ibeam:
     image: voyz/ibeam:latest
     container_name: uk-ibeam
-    profiles: ["uk-live"]
+    profiles: ["uk-ibkr"]
     environment:
       - IBEAM_ACCOUNT=${IBEAM_ACCOUNT}
       - IBEAM_PASSWORD=${IBEAM_PASSWORD}
@@ -363,6 +364,11 @@ services:
     profiles: ["uk"]
     environment:
       - UK_TRADING_MODE=${UK_TRADING_MODE:-paper}
+      - UK_BROKER=${UK_BROKER:-trading212}
+      - UK_ACCOUNT_TYPE=${UK_ACCOUNT_TYPE:-isa}
+      - T212_ENV=${T212_ENV:-demo}
+      - T212_API_KEY=${T212_API_KEY:-}
+      - T212_API_SECRET=${T212_API_SECRET:-}
       - IBKR_GATEWAY_URL=https://ibeam:5000
       - UK_MONTHLY_CONTRIBUTION=${UK_MONTHLY_CONTRIBUTION:-200}
       - UK_CONTRIBUTION_DAY=${UK_CONTRIBUTION_DAY:-1}

@@ -5,7 +5,7 @@ import pytest
 
 from uk_growth_bot import universe as U
 from uk_growth_bot.config import settings
-from uk_growth_bot.planner import Planner, Research, compose, fees
+from uk_growth_bot.planner import Planner, Research, compose, fees, round_qty
 from uk_growth_bot.tax import Txn, tax_position
 
 TODAY = date(2026, 10, 5)
@@ -46,6 +46,7 @@ def test_tilt_moves_core_weights_toward_stronger_signal():
     assert out.targets["CNX1.L"] > out.targets["VUAG.L"]
 
 
+@pytest.mark.usefixtures("gia_ibkr")
 def test_monthly_contribution_buys_one_underweight_slot():
     out = plan(cash=200.0)
     assert len(out.orders) == 1
@@ -54,6 +55,7 @@ def test_monthly_contribution_buys_one_underweight_slot():
     assert o.value + fees(o.ticker, "BUY", o.value) <= 200 - settings.cash_reserve
 
 
+@pytest.mark.usefixtures("gia_ibkr")
 def test_small_cash_is_carried_forward():
     assert plan(cash=60.0).orders == []
 
@@ -79,6 +81,7 @@ def test_thesis_broken_stock_is_sold_even_inside_min_hold():
     assert any(o.side == "SELL" and o.ticker == "RR.L" for o in out.orders)
 
 
+@pytest.mark.usefixtures("gia_ibkr")
 def test_rotation_sale_deferred_when_gain_exceeds_allowance():
     txns = [Txn(date(2025, 1, 2), "RR.L", "BUY", 1000, 1.0)]  # £9k unrealised gain at £10
     r = research({"RR.L": -0.9, **{a.ticker: 0.5 for a in U.SATELLITE_CANDIDATES if a.ticker != "RR.L"}})
@@ -87,12 +90,14 @@ def test_rotation_sale_deferred_when_gain_exceeds_allowance():
     assert any("Deferred selling RR.L" in n for n in out.notes)
 
 
+@pytest.mark.usefixtures("gia_ibkr")
 def test_rebuy_blocked_within_30_days_uses_twin():
     txns = [Txn(date(2026, 9, 1), "VWRP.L", "BUY", 10, 9.0), Txn(date(2026, 9, 20), "VWRP.L", "SELL", 10, 10.0)]
     out = plan(txns=txns)
     assert [o.ticker for o in out.orders] == ["FWRG.L"]
 
 
+@pytest.mark.usefixtures("gia_ibkr")
 def test_harvest_switches_into_twin_within_allowance():
     txns = [Txn(date(2024, 1, 2), "VWRP.L", "BUY", 1000, 5.0)]  # £5/share gain
     out = plan(cash=0, holdings={"VWRP.L": 1000}, txns=txns, held_since={"VWRP.L": date(2024, 1, 2)},
@@ -112,6 +117,7 @@ def test_quarterly_rebalance_trims_overweight_slot():
     assert any(o.side == "BUY" for o in out.orders)
 
 
+@pytest.mark.usefixtures("gia_ibkr")
 def test_stamp_duty_only_on_uk_share_purchases():
     assert fees("VWRP.L", "BUY", 1000) == pytest.approx(3.0)
     assert fees("AZN.L", "BUY", 1000) == pytest.approx(8.0)
@@ -121,3 +127,47 @@ def test_stamp_duty_only_on_uk_share_purchases():
 def test_compose_renormalises_missing_signals():
     assert compose(0.5, None, None) == pytest.approx(0.5)
     assert compose(1.0, -1.0, None) == pytest.approx((0.6 - 0.25) / 0.85)
+
+
+# --- Stocks & Shares ISA on Trading 212 (the default) ----------------------
+
+def test_isa_contribution_is_spread_fractionally_and_fully_invested():
+    out = plan(cash=200.0)
+    buys = [o for o in out.orders if o.side == "BUY"]
+    assert len(buys) >= 2                                  # no £3 minimum, so it splits by target
+    assert any(o.quantity != int(o.quantity) for o in buys)
+    spent = sum(o.value + fees(o.ticker, "BUY", o.value) for o in buys)
+    assert 200 - settings.cash_reserve - 0.5 <= spent <= 200 - settings.cash_reserve
+
+
+def test_isa_rotation_sells_even_with_a_large_gain():
+    txns = [Txn(date(2025, 1, 2), "RR.L", "BUY", 1000, 1.0)]
+    r = research({"RR.L": -0.9, **{a.ticker: 0.5 for a in U.SATELLITE_CANDIDATES if a.ticker != "RR.L"}})
+    out = plan(holdings={"RR.L": 1000}, txns=txns, held_since={"RR.L": date(2025, 1, 2)}, r=r)
+    assert any(o.side == "SELL" and o.ticker == "RR.L" for o in out.orders)
+    assert not any("Deferred" in n for n in out.notes)
+
+
+def test_isa_has_no_harvest_and_no_30_day_rule():
+    txns = [Txn(date(2024, 1, 2), "VWRP.L", "BUY", 1000, 5.0)]
+    out = plan(cash=0, holdings={"VWRP.L": 1000}, txns=txns, held_since={"VWRP.L": date(2024, 1, 2)},
+               today=date(2027, 3, 1))
+    assert not any(o.side == "SELL" for o in out.orders)
+    txns = [Txn(date(2026, 9, 1), "VWRP.L", "BUY", 10, 9.0), Txn(date(2026, 9, 20), "VWRP.L", "SELL", 10, 10.0)]
+    assert "VWRP.L" in [o.ticker for o in plan(txns=txns).orders]
+
+
+def test_isa_fees_are_stamp_duty_only():
+    assert fees("VWRP.L", "BUY", 1000) == 0
+    assert fees("AZN.L", "BUY", 1000) == pytest.approx(5.0)
+    assert fees("AZN.L", "SELL", 1000) == 0
+
+
+def test_round_qty_fractional_on_t212():
+    assert round_qty(1.239) == pytest.approx(1.23)
+    assert round_qty(0.004) == 0
+
+
+@pytest.mark.usefixtures("gia_ibkr")
+def test_round_qty_whole_shares_outside_t212():
+    assert round_qty(1.99) == 1

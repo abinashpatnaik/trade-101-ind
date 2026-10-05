@@ -7,8 +7,9 @@ Order of operations each run:
      sleeve of the best-ranked growth stocks + (bear regime, derisk mode) gilts.
   2. Sells, only for: broken satellite theses, satellite names that fell out of
      the top ranks after the minimum hold, quarterly drift rebalancing, and the
-     Feb-Apr CGT-allowance harvest (sell -> buy the twin fund). Every
-     discretionary sale is capped so realised gains stay inside the allowance.
+     Feb-Apr CGT-allowance harvest (sell -> buy the twin fund). In a GIA every
+     discretionary sale is capped so realised gains stay inside the allowance;
+     in an ISA none of the tax rules apply.
   3. Buys: available cash goes to the most underweight slot, in orders big
      enough that the minimum commission stays a small fraction.
 """
@@ -42,7 +43,7 @@ class Research:
 class Order:
     side: str
     ticker: str
-    quantity: int
+    quantity: float
     est_price: float
     reason: str
 
@@ -66,6 +67,16 @@ def fees(ticker: str, side: str, value: float) -> float:
     asset = U.ALL.get(ticker)
     stamp = settings.stamp_duty_pct * value if side == "BUY" and asset and asset.stamp_duty else 0.0
     return round(commission + stamp, 2)
+
+
+def round_qty(q: float) -> float:
+    """Round DOWN to what the broker accepts: whole shares, or fractional."""
+    if q <= 0:
+        return 0.0
+    if not settings.fractional:
+        return float(math.floor(q + 1e-9))
+    f = 10 ** settings.qty_decimals
+    return math.floor(q * f + 1e-9) / f
 
 
 def compose(mom: Optional[float], ml: Optional[float], sent: Optional[float]) -> float:
@@ -94,7 +105,9 @@ class Planner:
         self.paused_since, self.rebalance_due = paused_since, rebalance_due
         self.orders: List[Order] = []
         self.notes: List[str] = []
-        self.allowance_left = tax.allowance_remaining if settings.tax_aware else math.inf
+        # In an ISA gains are tax-free, so no sale is ever capped or deferred.
+        gated = settings.tax_aware and not settings.is_isa
+        self.allowance_left = tax.allowance_remaining if gated else math.inf
         self.sold: Dict[str, float] = {}
 
     # ------------------------------------------------------------------
@@ -114,7 +127,10 @@ class Planner:
         return out
 
     def _blocked(self, t: str) -> bool:
-        return recently_sold(self.txns, t, self.today) is not None or t in self.sold
+        if t in self.sold:
+            return True
+        # HMRC's 30-day matching rule only matters outside an ISA.
+        return not settings.is_isa and recently_sold(self.txns, t, self.today) is not None
 
     def _held_days(self, t: str) -> int:
         start = self.held_since.get(t)
@@ -126,7 +142,8 @@ class Planner:
 
     def _sell(self, t: str, qty: float, reason: str, force: bool = False, partial_ok: bool = False) -> bool:
         """Queue a sale, respecting the CGT allowance unless *force*."""
-        qty = math.floor(min(qty, self._qty(t)))
+        held = self._qty(t)
+        qty = held if qty >= held - 1e-9 else round_qty(qty)
         if qty <= 0 or t not in self.prices:
             return False
         gain = self._sale_gain(t, qty)
@@ -136,7 +153,7 @@ class Planner:
                                   f"£{self.allowance_left:,.0f} CGT allowance left this tax year.")
                 return False
             per_share = gain / qty
-            qty = math.floor(self.allowance_left / per_share) if per_share > 0 else qty
+            qty = round_qty(self.allowance_left / per_share) if per_share > 0 else qty
             if qty <= 0:
                 self.notes.append(f"Rebalance of {t} postponed: no CGT allowance left this tax year.")
                 return False
@@ -225,7 +242,8 @@ class Planner:
     def _harvest(self) -> List[Order]:
         """Use the year's CGT allowance: sell a core ETF at a gain, buy its twin."""
         buys: List[Order] = []
-        if not (settings.tax_aware and settings.harvest_allowance and in_harvest_window(self.today)):
+        if settings.is_isa or not (settings.tax_aware and settings.harvest_allowance
+                                   and in_harvest_window(self.today)):
             return buys
         for t in list(self.holdings):
             asset = U.ALL.get(t)
@@ -238,14 +256,14 @@ class Planner:
             gps = self.prices[t] - cost / held if held else 0.0
             if gps <= 0:
                 continue
-            qty = math.floor(min(self._qty(t), self.allowance_left / gps))
+            qty = round_qty(min(self._qty(t), self.allowance_left / gps))
             saved = qty * gps * self.tax.cgt_rate
             switch_cost = fees(t, "SELL", qty * self.prices[t]) + fees(twin, "BUY", qty * self.prices[t])
             if qty <= 0 or qty * gps < 100 or saved < 3 * switch_cost:
                 continue
             if self._sell(t, qty, f"CGT allowance harvest: realising ~£{qty * gps:,.0f} tax-free gain"):
                 proceeds = qty * self.prices[t] - fees(t, "SELL", qty * self.prices[t])
-                bq = math.floor((proceeds - fees(twin, "BUY", proceeds)) /
+                bq = round_qty((proceeds - fees(twin, "BUY", proceeds)) /
                                 (self.prices[twin] * (1 + settings.slippage_pct)))
                 if bq > 0:
                     buys.append(Order("BUY", twin, bq, self.prices[twin],
@@ -278,8 +296,8 @@ class Planner:
             if budget - amount < settings.min_order_value:
                 amount = budget
             price = self.prices[t] * (1 + settings.slippage_pct)
-            qty = math.floor((amount - fees(t, "BUY", amount)) / price)
-            if qty < 1:
+            qty = round_qty((amount - fees(t, "BUY", amount)) / price)
+            if qty <= 0:
                 self.notes.append(f"£{amount:,.0f} isn't enough for one share of {t} "
                                   f"(£{self.prices[t]:,.2f}); cash carried forward.")
                 continue

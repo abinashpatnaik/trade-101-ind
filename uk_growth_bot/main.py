@@ -50,7 +50,17 @@ def _record_contributions(ledger: Ledger, broker, today: date) -> None:
             if ledger.record_cash_flow(due, settings.monthly_contribution, "contribution", "monthly"):
                 ledger.log_decision(today, f"Monthly contribution £{settings.monthly_contribution:,.0f} received.")
         return
-    # Live: anything IBKR holds beyond what the ledger explains is a deposit
+    if hasattr(broker, "cash_flows"):
+        # Trading 212 reports deposits, withdrawals, fees and dividends itself.
+        for day, amount, kind, ref in broker.cash_flows():
+            if ledger.record_cash_flow(day, amount, kind, ref):
+                ledger.log_decision(today, f"Trading 212 {kind}: £{amount:,.2f} on {day.isoformat()}.")
+        actual = broker.cash()
+        if actual is not None and abs(actual - ledger.cash()) >= 1.0:
+            ledger.log_decision(today, f"WARNING: Trading 212 shows £{actual:,.2f} available but the ledger "
+                                       f"expects £{ledger.cash():,.2f}. Was something traded by hand?")
+        return
+    # IBKR: anything it holds beyond what the ledger explains is a deposit
     # (dividends are booked first, so they are not mistaken for one).
     actual = broker.cash()
     if actual is None:
@@ -80,14 +90,14 @@ def _check_positions(ledger: Ledger, broker, today: date) -> None:
     mine = ledger.holdings()
     for t in set(actual) | set(mine):
         if abs(actual.get(t, 0) - mine.get(t, 0)) > 1e-6:
-            ledger.log_decision(today, f"WARNING: IBKR holds {actual.get(t, 0):g} {t}, ledger says "
+            ledger.log_decision(today, f"WARNING: {settings.broker} holds {actual.get(t, 0):g} {t}, ledger says "
                                        f"{mine.get(t, 0):g}. Manual trades are not managed — please reconcile.")
 
 
 def run_cycle(today: date, ledger: Ledger) -> None:
     broker = make_broker()
     if settings.mode == "live" and not broker.ready():
-        logger.error("IBKR gateway not authenticated — skipping today's cycle.")
+        logger.error("%s not reachable/authenticated — skipping today's cycle.", settings.broker)
         return
     closes = market_data.history(U.ALL.keys(), period="2y")
     if closes.empty:
@@ -95,7 +105,8 @@ def run_cycle(today: date, ledger: Ledger) -> None:
         return
     prices = market_data.latest_prices(closes)
 
-    _record_dividends(ledger, today)
+    if not (settings.mode == "live" and settings.broker == "trading212"):
+        _record_dividends(ledger, today)  # Trading 212 reports real dividends instead
     _record_contributions(ledger, broker, today)
     _check_positions(ledger, broker, today)
 
@@ -107,7 +118,11 @@ def run_cycle(today: date, ledger: Ledger) -> None:
     quarter = f"{today.year}Q{(today.month - 1) // 3 + 1}"
     rebalance_due = today.month in (1, 4, 7, 10) and ledger.get_state("last_rebalance") != quarter
     paused = ledger.get_state("paused_since")
-    plan = Planner(today, research, holdings, prices, ledger.cash(), txns, tax,
+    cash = ledger.cash()
+    broker_cash = broker.cash()
+    if broker_cash is not None:
+        cash = min(cash, broker_cash)  # never plan to spend money the broker doesn't show
+    plan = Planner(today, research, holdings, prices, cash, txns, tax,
                    {t: ledger.first_buy_day(t) for t in holdings},
                    date.fromisoformat(paused) if paused else None, rebalance_due).run()
 
@@ -120,11 +135,11 @@ def run_cycle(today: date, ledger: Ledger) -> None:
             continue
         fill = broker.execute(order)
         if not fill:
-            ledger.log_decision(today, f"FAILED {order.side} {order.quantity} {order.ticker} — will retry next run.")
+            ledger.log_decision(today, f"FAILED {order.side} {order.quantity:g} {order.ticker} — re-planned next run.")
             continue
-        price, fee, oid = fill
-        ledger.record_txn(Txn(today, order.ticker, order.side, order.quantity, price, fee), order.reason, oid)
-        ledger.log_decision(today, f"{order.side} {order.quantity} {order.ticker} @ £{price:,.2f}: {order.reason}")
+        price, fee, oid, qty = fill
+        ledger.record_txn(Txn(today, order.ticker, order.side, qty, price, fee), order.reason, oid)
+        ledger.log_decision(today, f"{order.side} {qty:g} {order.ticker} @ £{price:,.2f}: {order.reason}")
 
     if rebalance_due:
         ledger.set_state("last_rebalance", quarter)

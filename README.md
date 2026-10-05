@@ -6,8 +6,8 @@ one codebase:
 - **India** — NSE via Zerodha Kite Connect
 - **US** — NASDAQ via Alpaca
 
-A separate, standalone **UK long-term growth investing bot** (IBKR GIA, LSE
-ETFs + growth shares, UK-tax-aware, weekly email report) lives in
+A separate, standalone **UK long-term growth investing bot** (Trading 212
+Stocks & Shares ISA, LSE ETFs + growth shares, weekly email report) lives in
 [`uk_growth_bot/`](uk_growth_bot/README.md). It shares no code with the agents
 below and is off unless the host sets `COMPOSE_PROFILES=uk`.
 

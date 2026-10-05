@@ -35,9 +35,7 @@ def env(tmp_path, monkeypatch, closes):
     return Ledger(path=str(tmp_path / "l.db"), mode="paper")
 
 
-def test_twelve_months_of_paper_investing(env, closes, monkeypatch):
-    monkeypatch.setattr(settings, "regime_action", "ignore")  # pause is covered in test_planner
-    ledger = env
+def _run_year(ledger):
     days = [d.date() for d in pd.bdate_range("2026-11-02", "2027-10-29") if d.day <= 7]
     run_days = sorted({min(d for d in days if (d.year, d.month) == ym)
                        for ym in {(d.year, d.month) for d in days}})
@@ -46,15 +44,28 @@ def test_twelve_months_of_paper_investing(env, closes, monkeypatch):
         main.run_cycle(d, ledger)
         assert ledger.cash() >= -0.01
         assert all(q > 0 for q in ledger.holdings().values())
-
     assert ledger.net_contributions() == pytest.approx(12 * 200)
-    txns = ledger.txns()
+    assert "VWRP.L" in {U.core_slot(t) or t for t in ledger.holdings()}
+    return ledger.txns(), ledger.nav_history()[-1]
+
+
+def test_twelve_months_isa_on_trading212(env, monkeypatch):
+    monkeypatch.setattr(settings, "regime_action", "ignore")  # pause is covered in test_planner
+    txns, nav = _run_year(env)
+    etf_fees = [t.fees for t in txns if U.ALL[t.symbol].kind != "stock"]
+    assert etf_fees and all(f == 0 for f in etf_fees)
+    assert any(t.quantity != int(t.quantity) for t in txns)   # fractional shares
+    assert nav["cash"] < 5                                     # every pound invested
+
+
+@pytest.mark.usefixtures("gia_ibkr")
+def test_twelve_months_gia_on_ibkr(env, monkeypatch):
+    monkeypatch.setattr(settings, "regime_action", "ignore")
+    txns, nav = _run_year(env)
     assert sum(t.side == "BUY" for t in txns) >= 10
     assert all(t.fees >= 3.0 for t in txns)
-    nav = ledger.nav_history()[-1]
-    assert nav["nav"] > 0 and nav["cash"] < 200 + 1   # money is invested, not idling
-    held_slots = {U.core_slot(t) or t for t in ledger.holdings()}
-    assert "VWRP.L" in held_slots
+    assert all(t.quantity == int(t.quantity) for t in txns)
+    assert nav["cash"] < 200 + 1
 
 
 def test_rerunning_a_day_does_not_double_book_contributions(env):
@@ -88,5 +99,51 @@ def test_weekly_report_renders(env, closes, monkeypatch):
                        run_research(c, env.holdings()), tax_position(env.txns(), [], today), None, c)
     for section in ("HOLDINGS", "ACTIVITY THIS WEEK", "RESEARCH", "UK TAX", "OUTLOOK"):
         assert section in rep["text"]
+    assert "Stocks & Shares ISA" in rep["text"] and "of £20,000.00" in rep["text"]
     assert "£" in rep["subject"] and "<pre" in rep["html"]
     assert report.send(rep) is False   # no credentials -> skipped, never raises
+
+
+def test_live_cycle_against_fake_trading212(env, closes, monkeypatch, tmp_path):
+    from uk_growth_bot import broker as B
+    from uk_growth_bot.tests.test_trading212 import FakeT212, Resp
+
+    today = date(2027, 3, 1)
+    last = closes[closes.index <= pd.Timestamp(today)].iloc[-1]
+
+    class AutoFill(FakeT212):
+        next_id = 100
+
+        def request(self, method, url, timeout=None, json=None, **kw):
+            path = url.split("/api/v0", 1)[1]
+            if path == "/equity/metadata/instruments":
+                return Resp(200, [{"ticker": f"{t.split('.')[0]}l_EQ", "shortName": t.split(".")[0],
+                                   "currencyCode": "GBP"} for t in U.ALL])
+            if method == "POST" and path == "/equity/orders/market":
+                self.calls.append((method, path, json))
+                AutoFill.next_id += 1
+                ours = json["ticker"].replace("l_EQ", ".L")
+                self.history.append({"order": {"id": AutoFill.next_id, "status": "FILLED"},
+                                     "fill": {"price": float(last[ours]) * 100,  # pence, like London lines
+                                              "quantity": abs(json["quantity"])}})
+                return Resp(200, {"id": AutoFill.next_id})
+            return super().request(method, url, timeout=timeout, json=json, **kw)
+
+    fake = AutoFill()
+    monkeypatch.setattr(settings, "mode", "live")
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(B.time, "sleep", lambda s: None)
+    monkeypatch.setattr(main, "make_broker", lambda: B.Trading212Broker(session=fake))
+    main._today = today
+    main.run_cycle(today, env)
+
+    assert env.net_contributions() == pytest.approx(150.0)        # +200 deposit, -50 withdrawal
+    assert len(env.dividends()) == 1
+    buys = [c[2] for c in fake.calls if c[0] == "POST"]
+    assert buys and all(b["quantity"] > 0 for b in buys)
+    spent = sum(t.quantity * t.price for t in env.txns())
+    assert spent <= 123.45 + 0.01                                   # capped at broker's available cash
+    for t in env.txns():
+        assert t.price == pytest.approx(float(last[t.symbol]), abs=1e-4)   # pence converted to £
+    notes = " ".join(d["text"] for d in env.decisions(today))
+    assert "Trading 212 contribution" in notes

@@ -20,7 +20,7 @@ from .ledger import Ledger
 from .ml_model import ModelReport
 from .planner import Research
 from .research import regime_text, top_candidates
-from .tax import TaxPosition, pool_cost_basis
+from .tax import TaxPosition, pool_cost_basis, rates_for, tax_year_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -128,20 +128,33 @@ def build(today: date, ledger: Ledger, prices: Dict[str, float], targets: Dict[s
                      f"{'ACTIVE' if model.active else 'NOT USED (below quality bar)'}; trained {model.trained_at}")
     else:
         lines.append("ML model: not trained yet — decisions use momentum and news only.")
+    if settings.is_isa:
+        start, end = tax_year_bounds(tax.tax_year)
+        subscribed = sum(a for d, a, k in ledger.cash_flows() if k == "contribution" and start <= d <= end)
+        isa_limit = rates_for(tax.tax_year)["isa_allowance"]
+        lines += [
+            "", f"UK TAX — {tax.label} (Stocks & Shares ISA)", "-" * 64,
+            "Gains and dividends are tax-free; nothing to declare on Self Assessment.",
+            f"ISA subscriptions this tax year: {money(subscribed)} of {money(isa_limit)}"
+            + (" — NEARLY FULL, extra money would need a GIA." if subscribed > 0.9 * isa_limit else "."),
+        ]
+    else:
+        lines += [
+            "", f"UK TAX — {tax.label} (General Investment Account, estimates)", "-" * 64,
+            f"Realised gains {money(tax.realised_gains)}, losses {money(tax.realised_losses)}, "
+            f"net {money(tax.net_gains)}",
+            f"CGT allowance {money(tax.allowance)}; remaining {money(tax.allowance_remaining)}; "
+            f"estimated CGT {money(tax.estimated_cgt)} at {tax.cgt_rate:.0%}",
+            f"Dividends {money(tax.dividends)} of {money(tax.dividend_allowance)} allowance; "
+            f"estimated dividend tax {money(tax.estimated_dividend_tax)}",
+            "Self Assessment: " + ("REPORT these disposals on your return." if tax.must_report
+                                   else "nothing to report on current figures."),
+            "Net loss: claim it on Self Assessment (within 4 years) to carry it forward against future gains."
+            if tax.net_gains < 0 else None,
+            "Accumulating ETFs: the fund's 'excess reportable income' is taxable dividend income "
+            "even though no cash is paid — check each fund's annual report.",
+        ]
     lines += [
-        "", f"UK TAX — {tax.label} (General Investment Account, estimates)", "-" * 64,
-        f"Realised gains {money(tax.realised_gains)}, losses {money(tax.realised_losses)}, "
-        f"net {money(tax.net_gains)}",
-        f"CGT allowance {money(tax.allowance)}; remaining {money(tax.allowance_remaining)}; "
-        f"estimated CGT {money(tax.estimated_cgt)} at {tax.cgt_rate:.0%}",
-        f"Dividends {money(tax.dividends)} of {money(tax.dividend_allowance)} allowance; "
-        f"estimated dividend tax {money(tax.estimated_dividend_tax)}",
-        "Self Assessment: " + ("REPORT these disposals on your return." if tax.must_report
-                               else "nothing to report on current figures."),
-        "Net loss: claim it on Self Assessment (within 4 years) to carry it forward against future gains."
-        if tax.net_gains < 0 else None,
-        "Accumulating ETFs: IBKR/fund 'excess reportable income' is taxable dividend income "
-        "even though no cash is paid — check each fund's annual report.",
         "", "OUTLOOK", "-" * 64,
         f"Next contribution: {money(settings.monthly_contribution)} on/after {next_contrib.isoformat()}",
         "Illustration only (not a forecast) — value in 10 years at £{:,.0f}/month: "
