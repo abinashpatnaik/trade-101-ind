@@ -50,7 +50,7 @@ SATELLITE_CANDIDATES: List[Asset] = [
         ("REL.L", "RELX"), ("RR.L", "Rolls-Royce"), ("III.L", "3i Group"),
         ("EXPN.L", "Experian"), ("HLMA.L", "Halma"), ("SGE.L", "Sage Group"),
         ("AUTO.L", "Auto Trader"), ("DPLM.L", "Diploma"), ("BA.L", "BAE Systems"),
-        ("GAW.L", "Games Workshop"), ("CPG.L", "Compass Group"), ("SMT.L", "Scottish Mortgage IT"),
+        ("GAW.L", "Games Workshop"), ("SMT.L", "Scottish Mortgage IT"),
     ]
 ]
 
