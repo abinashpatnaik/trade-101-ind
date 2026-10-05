@@ -6,6 +6,11 @@ one codebase:
 - **India** — NSE via Zerodha Kite Connect
 - **US** — NASDAQ via Alpaca
 
+A separate, standalone **UK long-term growth investing bot** (IBKR GIA, LSE
+ETFs + growth shares, UK-tax-aware, weekly email report) lives in
+[`uk_growth_bot/`](uk_growth_bot/README.md). It shares no code with the agents
+below and is off unless the host sets `COMPOSE_PROFILES=uk`.
+
 The market is chosen at process start by `TRADING_MARKET` (`IN` / `US`). Each
 market runs its own agent stack — orchestrator, trader, scanner, vetting,
 strategy, trainer — coordinating over a shared Redis bus, with XGBoost models

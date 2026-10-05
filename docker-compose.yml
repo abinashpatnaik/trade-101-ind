@@ -338,6 +338,48 @@ services:
       - FLOW_ALLOC_PCT=${FLOW_ALLOC_PCT:-0.5}
 
   # =========================================================================
+  # UK (LSE / IBKR GIA) — standalone long-term growth investing bot.
+  # Independent code (uk_growth_bot/), no Redis, no shared agents. OFF by
+  # default: the services only start when the host .env sets
+  # COMPOSE_PROFILES=uk. It also defaults to PAPER mode — set
+  # UK_TRADING_MODE=live only after IBeam is logged in and paper looks right.
+  # =========================================================================
+
+  ibeam:
+    image: voyz/ibeam:latest
+    container_name: uk-ibeam
+    profiles: ["uk"]
+    environment:
+      - IBEAM_ACCOUNT=${IBEAM_ACCOUNT}
+      - IBEAM_PASSWORD=${IBEAM_PASSWORD}
+    # Gateway stays on the internal network only — never publish port 5000.
+    restart: unless-stopped
+
+  uk-growth-bot:
+    build:
+      context: ./uk_growth_bot
+      dockerfile: Dockerfile
+    container_name: uk-growth-bot
+    profiles: ["uk"]
+    environment:
+      - UK_TRADING_MODE=${UK_TRADING_MODE:-paper}
+      - IBKR_GATEWAY_URL=https://ibeam:5000
+      - UK_MONTHLY_CONTRIBUTION=${UK_MONTHLY_CONTRIBUTION:-200}
+      - UK_CONTRIBUTION_DAY=${UK_CONTRIBUTION_DAY:-1}
+      - UK_INCOME_TAX_BAND=${UK_INCOME_TAX_BAND:-basic}
+      - UK_REGIME_ACTION=${UK_REGIME_ACTION:-pause}
+      - UK_SATELLITE_PCT=${UK_SATELLITE_PCT:-0.25}
+      - UK_NO_NEW_BUYS=${UK_NO_NEW_BUYS:-false}
+      - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+      - UK_REPORT_RECIPIENT=${UK_REPORT_RECIPIENT:-}
+      - REPORT_RECIPIENT=${REPORT_RECIPIENT}
+      - TZ=Europe/London
+    volumes:
+      - ./data/uk:/app/data
+    restart: unless-stopped
+
+  # =========================================================================
   # Dashboards (unchanged)
   # =========================================================================
 

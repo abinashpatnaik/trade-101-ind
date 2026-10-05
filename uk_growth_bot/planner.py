@@ -1,0 +1,320 @@
+"""Turns research + current holdings into a small set of investing orders.
+
+Pure logic (no network/broker), so it is fully unit-testable.
+
+Order of operations each run:
+  1. Target weights: core ETFs (base weights tilted by signals) + a satellite
+     sleeve of the best-ranked growth stocks + (bear regime, derisk mode) gilts.
+  2. Sells, only for: broken satellite theses, satellite names that fell out of
+     the top ranks after the minimum hold, quarterly drift rebalancing, and the
+     Feb-Apr CGT-allowance harvest (sell -> buy the twin fund). Every
+     discretionary sale is capped so realised gains stay inside the allowance.
+  3. Buys: available cash goes to the most underweight slot, in orders big
+     enough that the minimum commission stays a small fraction.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Dict, List, Optional
+
+import pandas as pd
+
+from . import universe as U
+from .config import settings
+from .tax import TaxPosition, Txn, estimate_sale_gain, in_harvest_window, pool_cost_basis, recently_sold
+
+
+@dataclass
+class Research:
+    features: pd.DataFrame                 # index = ticker
+    scores: Dict[str, float]               # composite signal in [-1, 1]
+    momentum: Dict[str, float] = field(default_factory=dict)
+    ml: Dict[str, float] = field(default_factory=dict)
+    sentiment: Dict[str, float] = field(default_factory=dict)
+    headlines: Dict[str, List[str]] = field(default_factory=dict)
+    risk_on: bool = True
+
+
+@dataclass
+class Order:
+    side: str
+    ticker: str
+    quantity: int
+    est_price: float
+    reason: str
+
+    @property
+    def value(self) -> float:
+        return self.quantity * self.est_price
+
+
+@dataclass
+class Plan:
+    orders: List[Order]
+    targets: Dict[str, float]
+    notes: List[str]
+    paused_since: Optional[date]
+
+
+def fees(ticker: str, side: str, value: float) -> float:
+    if value <= 0:
+        return 0.0
+    commission = max(settings.commission_min, settings.commission_pct * value)
+    asset = U.ALL.get(ticker)
+    stamp = settings.stamp_duty_pct * value if side == "BUY" and asset and asset.stamp_duty else 0.0
+    return round(commission + stamp, 2)
+
+
+def compose(mom: Optional[float], ml: Optional[float], sent: Optional[float]) -> float:
+    parts = [(settings.w_momentum, mom), (settings.w_ml, ml), (settings.w_sentiment, sent)]
+    parts = [(w, v) for w, v in parts if v is not None]
+    total = sum(w for w, _ in parts)
+    return sum(w * v for w, v in parts) / total if total else 0.0
+
+
+def _slot(ticker: str) -> str:
+    return U.core_slot(ticker) or ticker
+
+
+def _months_between(a: date, b: date) -> int:
+    return (b.year - a.year) * 12 + b.month - a.month
+
+
+class Planner:
+    def __init__(self, today: date, research: Research, holdings: Dict[str, float],
+                 prices: Dict[str, float], cash: float, txns: List[Txn], tax: TaxPosition,
+                 held_since: Dict[str, date], paused_since: Optional[date] = None,
+                 rebalance_due: bool = False) -> None:
+        self.today, self.r, self.prices, self.txns = today, research, prices, txns
+        self.holdings = {t: q for t, q in holdings.items() if q > 0}
+        self.cash, self.tax, self.held_since = cash, tax, held_since
+        self.paused_since, self.rebalance_due = paused_since, rebalance_due
+        self.orders: List[Order] = []
+        self.notes: List[str] = []
+        self.allowance_left = tax.allowance_remaining if settings.tax_aware else math.inf
+        self.sold: Dict[str, float] = {}
+
+    # ------------------------------------------------------------------
+    def _qty(self, t: str) -> float:
+        return self.holdings.get(t, 0.0) - self.sold.get(t, 0.0)
+
+    def _value(self, t: str) -> float:
+        return self._qty(t) * self.prices.get(t, 0.0)
+
+    def total_value(self) -> float:
+        return self.cash + sum(self._value(t) for t in self.holdings)
+
+    def _slot_values(self) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for t in self.holdings:
+            out[_slot(t)] = out.get(_slot(t), 0.0) + self._value(t)
+        return out
+
+    def _blocked(self, t: str) -> bool:
+        return recently_sold(self.txns, t, self.today) is not None or t in self.sold
+
+    def _held_days(self, t: str) -> int:
+        start = self.held_since.get(t)
+        return (self.today - start).days if start else 0
+
+    def _sale_gain(self, t: str, qty: float) -> float:
+        price = self.prices[t]
+        return estimate_sale_gain(self.txns, t, qty, price, fees(t, "SELL", qty * price), self.today)
+
+    def _sell(self, t: str, qty: float, reason: str, force: bool = False, partial_ok: bool = False) -> bool:
+        """Queue a sale, respecting the CGT allowance unless *force*."""
+        qty = math.floor(min(qty, self._qty(t)))
+        if qty <= 0 or t not in self.prices:
+            return False
+        gain = self._sale_gain(t, qty)
+        if gain > self.allowance_left and not force:
+            if not partial_ok:
+                self.notes.append(f"Deferred selling {t}: £{gain:,.0f} gain would exceed the "
+                                  f"£{self.allowance_left:,.0f} CGT allowance left this tax year.")
+                return False
+            per_share = gain / qty
+            qty = math.floor(self.allowance_left / per_share) if per_share > 0 else qty
+            if qty <= 0:
+                self.notes.append(f"Rebalance of {t} postponed: no CGT allowance left this tax year.")
+                return False
+            gain = self._sale_gain(t, qty)
+            reason += " (trimmed to stay inside CGT allowance)"
+        self.orders.append(Order("SELL", t, qty, self.prices[t], reason))
+        self.sold[t] = self.sold.get(t, 0.0) + qty
+        if gain > 0:
+            self.allowance_left -= gain
+        return True
+
+    # ------------------------------------------------------------------
+    def _satellite(self) -> List[str]:
+        feats, scores = self.r.features, self.r.scores
+        cands = [a.ticker for a in U.SATELLITE_CANDIDATES if a.ticker in feats.index]
+        ranked = sorted(cands, key=lambda t: scores.get(t, -1), reverse=True)
+        rank = {t: i + 1 for i, t in enumerate(ranked)}
+        held = [t for t in self.holdings if U.ALL.get(t) and U.ALL[t].kind == "stock"]
+        keep: List[str] = []
+        for t in held:
+            f = feats.loc[t] if t in feats.index else None
+            broken = f is not None and f["drawdown_1y"] < -0.35 and f["dist_sma200"] < 0
+            if broken:
+                self._sell(t, self._qty(t), "Thesis broken: down >35% from 1y high and below 200-day trend",
+                           force=True)
+            elif rank.get(t, 99) > settings.satellite_exit_rank and \
+                    self._held_days(t) >= settings.satellite_min_hold_days:
+                if not self._sell(t, self._qty(t), f"Rotating out: now ranked #{rank.get(t, '?')} "
+                                                   f"of {len(ranked)} growth candidates"):
+                    keep.append(t)
+            else:
+                keep.append(t)
+        for t in ranked:
+            if len(keep) >= settings.max_satellite_stocks:
+                break
+            f = feats.loc[t]
+            sent = self.r.sentiment.get(t, 0.0)
+            if t in keep or self._blocked(t) or f["mom_6m"] <= 0 or f["dist_sma200"] <= 0:
+                continue
+            if sent <= settings.negative_news_veto:
+                self.notes.append(f"Skipped {t}: strongly negative news flow ({sent:+.2f}).")
+                continue
+            keep.append(t)
+        return keep
+
+    def targets(self) -> Dict[str, float]:
+        sat = self._satellite()
+        per_stock = settings.satellite_pct / max(1, settings.max_satellite_stocks)
+        t: Dict[str, float] = {}
+        derisk = not self.r.risk_on and settings.regime_action == "derisk"
+        if derisk:
+            t[U.DEFENSIVE.ticker] = settings.satellite_pct
+            for s in sat:
+                if s in self.holdings:
+                    self._sell(s, self._qty(s), "Bear regime: moving satellite sleeve to gilts")
+        else:
+            for s in sat:
+                t[s] = per_stock
+        core_total = 1.0 - sum(t.values())
+        raw = {a.ticker: a.base_weight * (1 + settings.max_tilt * self.r.scores.get(a.ticker, 0.0))
+               for a in U.CORE}
+        norm = sum(raw.values())
+        for k, v in raw.items():
+            t[k] = core_total * v / norm
+        return t
+
+    # ------------------------------------------------------------------
+    def _rebalance(self, targets: Dict[str, float]) -> None:
+        total = self.total_value()
+        if total <= 0:
+            return
+        for slot, cur in self._slot_values().items():
+            excess_w = cur / total - targets.get(slot, 0.0)
+            if excess_w <= settings.rebalance_drift:
+                continue
+            excess = excess_w * total
+            force = excess_w > 2 * settings.rebalance_drift
+            for t in [h for h in self.holdings if _slot(h) == slot]:
+                q = min(self._qty(t), excess / self.prices[t])
+                if self._sell(t, q, f"Quarterly rebalance: {slot} is {excess_w:.0%} over target",
+                              force=force, partial_ok=True):
+                    excess -= q * self.prices[t]
+                if excess <= 0:
+                    break
+
+    def _harvest(self) -> List[Order]:
+        """Use the year's CGT allowance: sell a core ETF at a gain, buy its twin."""
+        buys: List[Order] = []
+        if not (settings.tax_aware and settings.harvest_allowance and in_harvest_window(self.today)):
+            return buys
+        for t in list(self.holdings):
+            asset = U.ALL.get(t)
+            if self.allowance_left < 100 or not asset or asset.kind != "core_etf" or not asset.twin:
+                continue
+            twin = asset.twin
+            if twin not in self.prices or self._blocked(twin) or t not in self.prices:
+                continue
+            held, cost = pool_cost_basis(self.txns, t)
+            gps = self.prices[t] - cost / held if held else 0.0
+            if gps <= 0:
+                continue
+            qty = math.floor(min(self._qty(t), self.allowance_left / gps))
+            saved = qty * gps * self.tax.cgt_rate
+            switch_cost = fees(t, "SELL", qty * self.prices[t]) + fees(twin, "BUY", qty * self.prices[t])
+            if qty <= 0 or qty * gps < 100 or saved < 3 * switch_cost:
+                continue
+            if self._sell(t, qty, f"CGT allowance harvest: realising ~£{qty * gps:,.0f} tax-free gain"):
+                proceeds = qty * self.prices[t] - fees(t, "SELL", qty * self.prices[t])
+                bq = math.floor((proceeds - fees(twin, "BUY", proceeds)) /
+                                (self.prices[twin] * (1 + settings.slippage_pct)))
+                if bq > 0:
+                    buys.append(Order("BUY", twin, bq, self.prices[twin],
+                                      f"Harvest switch from {t} (same exposure, new cost basis)"))
+        return buys
+
+    def _ticker_for_slot(self, slot: str) -> Optional[str]:
+        asset = U.ALL[slot]
+        if asset.kind != "core_etf":
+            return None if self._blocked(slot) else slot
+        options = sorted([x for x in (slot, asset.twin) if x], key=lambda x: -self._qty(x))
+        for x in options:
+            if not self._blocked(x) and x in self.prices:
+                return x
+        return None
+
+    def _buys(self, targets: Dict[str, float], budget: float) -> None:
+        total = self.total_value()
+        vals = self._slot_values()
+        deficits = sorted(((targets[s] * total - vals.get(s, 0.0), s) for s in targets), reverse=True)
+        for deficit, slot in deficits:
+            if budget < settings.min_order_value:
+                break
+            if deficit <= 0:
+                continue
+            t = self._ticker_for_slot(slot)
+            if not t:
+                continue
+            amount = min(budget, max(deficit, settings.min_order_value))
+            if budget - amount < settings.min_order_value:
+                amount = budget
+            price = self.prices[t] * (1 + settings.slippage_pct)
+            qty = math.floor((amount - fees(t, "BUY", amount)) / price)
+            if qty < 1:
+                self.notes.append(f"£{amount:,.0f} isn't enough for one share of {t} "
+                                  f"(£{self.prices[t]:,.2f}); cash carried forward.")
+                continue
+            self.orders.append(Order("BUY", t, qty, self.prices[t],
+                                     f"Invest into most underweight holding ({slot}: target "
+                                     f"{targets[slot]:.0%}, now {vals.get(slot, 0.0) / total:.0%})"))
+            budget -= qty * self.prices[t] + fees(t, "BUY", qty * self.prices[t])
+
+    # ------------------------------------------------------------------
+    def run(self) -> Plan:
+        targets = self.targets()
+        if self.rebalance_due:
+            self._rebalance(targets)
+        harvest_buys = self._harvest()
+
+        paused_since = self.paused_since
+        if self.r.risk_on or settings.regime_action == "ignore":
+            paused_since = None
+        elif paused_since is None:
+            paused_since = self.today
+
+        proceeds = sum(o.value - fees(o.ticker, "SELL", o.value) for o in self.orders if o.side == "SELL")
+        budget = self.cash + proceeds - settings.cash_reserve
+        budget -= sum(o.value + fees(o.ticker, "BUY", o.value) for o in harvest_buys)
+        self.orders.extend(harvest_buys)
+
+        if settings.no_new_buys:
+            self.notes.append("New buys disabled (UK_NO_NEW_BUYS).")
+        elif paused_since and _months_between(paused_since, self.today) < settings.max_pause_months:
+            self.notes.append(f"Bear-market regime (global equities below 200-day average) since "
+                              f"{paused_since.isoformat()}: holding £{max(budget, 0):,.0f} in cash, "
+                              f"resuming within {settings.max_pause_months} months at the latest.")
+        else:
+            if paused_since:
+                self.notes.append("Pause limit reached: investing despite the bear regime "
+                                  "(time in the market beats timing it).")
+            self._buys(targets, budget)
+        return Plan(self.orders, targets, self.notes, paused_since)
