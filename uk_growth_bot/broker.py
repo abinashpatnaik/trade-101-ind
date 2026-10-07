@@ -36,13 +36,13 @@ def normalise_gbp(price: float, reference_gbp: float) -> float:
     return price
 
 
-class PaperBroker:
+class SimBroker:
     """Fills at the reference price plus modelled slippage."""
 
     def execute(self, order: Order) -> Optional[Fill]:
         slip = settings.slippage_pct if order.side == "BUY" else -settings.slippage_pct
         price = round(order.est_price * (1 + slip), 4)
-        return price, fees(order.ticker, order.side, order.quantity * price), "paper", order.quantity
+        return price, fees(order.ticker, order.side, order.quantity * price), "sim", order.quantity
 
     def cash(self) -> Optional[float]:
         return None
@@ -412,6 +412,6 @@ class IBKRBroker:
 
 
 def make_broker():
-    if settings.mode != "live":
-        return PaperBroker()
+    if not settings.uses_broker:
+        return SimBroker()
     return Trading212Broker() if settings.broker == "trading212" else IBKRBroker()

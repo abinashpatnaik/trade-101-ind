@@ -47,6 +47,14 @@ class Ledger:
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         with self._conn() as c:
             c.executescript(_SCHEMA)
+            # "paper" used to mean the internal simulation; it now means the
+            # broker's practice account. Relabel old simulation records once
+            # so the practice account starts from an empty ledger.
+            if not c.execute("SELECT 1 FROM state WHERE key='_schema:sim_rename'").fetchone():
+                for table in ("txns", "cash_flows", "nav_history", "decisions"):
+                    c.execute(f"UPDATE {table} SET mode='sim' WHERE mode='paper'")
+                c.execute("UPDATE state SET key='sim:' || substr(key, 7) WHERE key LIKE 'paper:%'")
+                c.execute("INSERT INTO state (key, value) VALUES ('_schema:sim_rename', 'true')")
 
     @contextmanager
     def _conn(self):

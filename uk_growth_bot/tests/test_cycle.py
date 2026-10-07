@@ -32,7 +32,7 @@ def env(tmp_path, monkeypatch, closes):
     monkeypatch.setattr(main.market_data, "dividends_per_share", lambda t, since=None: pd.Series(dtype=float))
     monkeypatch.setattr("uk_growth_bot.research.sentiment",
                         lambda t, n: {"score": 0.0, "n": 0, "headlines": []})
-    return Ledger(path=str(tmp_path / "l.db"), mode="paper")
+    return Ledger(path=str(tmp_path / "l.db"), mode="sim")
 
 
 def _run_year(ledger):
@@ -104,8 +104,8 @@ def test_weekly_report_renders(env, closes, monkeypatch):
     assert report.send(rep) is False   # no credentials -> skipped, never raises
 
 
-@pytest.mark.parametrize("env_name", ["live", "demo"])
-def test_live_cycle_against_fake_trading212(env, closes, monkeypatch, tmp_path, env_name):
+@pytest.mark.parametrize("mode,env_name", [("live", "live"), ("live", "demo"), ("paper", "demo")])
+def test_live_cycle_against_fake_trading212(env, closes, monkeypatch, tmp_path, mode, env_name):
     from uk_growth_bot import broker as B
     from uk_growth_bot.tests.test_trading212 import FakeT212, Resp
 
@@ -131,7 +131,7 @@ def test_live_cycle_against_fake_trading212(env, closes, monkeypatch, tmp_path, 
             return super().request(method, url, timeout=timeout, json=json, **kw)
 
     fake = AutoFill()
-    monkeypatch.setattr(settings, "mode", "live")
+    monkeypatch.setattr(settings, "mode", mode)
     monkeypatch.setattr(settings, "t212_env", env_name)
     monkeypatch.setattr(settings, "data_dir", str(tmp_path))
     monkeypatch.setattr(B.time, "sleep", lambda s: None)
@@ -174,9 +174,9 @@ def test_first_live_run_books_existing_isa_cash_as_opening_balance(env, monkeypa
 
 
 def test_live_cycle_buys_nothing_when_broker_cash_is_unknown(env, closes, monkeypatch):
-    from uk_growth_bot.broker import PaperBroker
+    from uk_growth_bot.broker import SimBroker
 
-    class Blind(PaperBroker):
+    class Blind(SimBroker):
         def ready(self):
             return True
 
@@ -226,7 +226,7 @@ def test_status_prints_summary(env, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(settings, "data_dir", str(tmp_path))
     assert main.status() == 0
     out = capsys.readouterr().out
-    assert "Mode paper" in out and "Holdings: none" in out
+    assert "Mode sim" in out and "SIMULATION" in out and "Holdings: none" in out
 
 
 @pytest.mark.parametrize("hhmm,last_run,expected", [
