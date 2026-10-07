@@ -183,7 +183,8 @@ class Trading212Broker:
                 self._map[ours] = overrides[ours]
                 continue
             sym = ours.split(".")[0]
-            exact = [i for i in insts if i.get("ticker") == f"{sym}l_EQ"]
+            exact = [i for i in insts if i.get("ticker") == f"{sym}l_EQ"
+                     and i.get("currencyCode", "GBP") in ("GBP", "GBX")]
             loose = [i for i in insts if str(i.get("shortName", "")).upper() == sym
                      and i.get("currencyCode") in ("GBP", "GBX")]
             match = (exact or loose)[:1]

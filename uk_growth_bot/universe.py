@@ -16,10 +16,12 @@ class Asset:
     ticker: str          # yfinance ticker (".L" = London)
     name: str
     kind: str            # core_etf | stock | defensive
-    base_weight: float = 0.0   # share of the CORE sleeve (core ETFs only)
+    # Core funds: the bot holds at most one fund per group, so it can't load
+    # up on a single theme (e.g. Nasdaq-100 AND semiconductors).
+    group: str = ""
     # A different fund tracking a similar index. Switching into it is a
     # disposal of the original for CGT, but not a re-purchase of the same
-    # security, so HMRC's 30-day rule doesn't undo a harvested gain.
+    # security, so HMRC's 30-day rule doesn't undo a harvested gain (GIA only).
     twin: Optional[str] = None
     stamp_duty: bool = False   # UK shares / investment trusts pay 0.5% SDRT on buys
 
@@ -28,16 +30,24 @@ class Asset:
         return self.ticker.split(".")[0]
 
 
-CORE: List[Asset] = [
-    Asset("VWRP.L", "Vanguard FTSE All-World (Acc)", "core_etf", 0.50, twin="FWRG.L"),
-    Asset("VUAG.L", "Vanguard S&P 500 (Acc)", "core_etf", 0.25, twin="CSP1.L"),
-    Asset("CNX1.L", "iShares NASDAQ 100 (Acc)", "core_etf", 0.25, twin="EQQQ.L"),
+# The core sleeve holds the best-ranked few of these (settings.core_funds),
+# at most one per group. Lines must be priced in GBP and tradable on the
+# broker; anything that isn't is dropped at runtime before planning.
+CORE_POOL: List[Asset] = [
+    Asset("VWRP.L", "Vanguard FTSE All-World (Acc)", "core_etf", "global", twin="FWRG.L"),
+    Asset("VUAG.L", "Vanguard S&P 500 (Acc)", "core_etf", "us_large", twin="CSP1.L"),
+    Asset("CNX1.L", "iShares NASDAQ 100 (Acc)", "core_etf", "tech", twin="EQQQ.L"),
+    Asset("SMGB.L", "VanEck Semiconductor", "core_etf", "tech"),
+    Asset("EMIM.L", "iShares Core MSCI EM IMI (Acc)", "core_etf", "emerging"),
+    Asset("WLDS.L", "iShares MSCI World Small Cap (Acc)", "core_etf", "small_cap"),
+    Asset("IWQU.L", "iShares MSCI World Quality Factor", "core_etf", "quality"),
+    Asset("VMID.L", "Vanguard FTSE 250", "core_etf", "uk_mid"),
 ]
 
 TWINS: List[Asset] = [
-    Asset("FWRG.L", "Invesco FTSE All-World (Acc)", "core_etf", twin="VWRP.L"),
-    Asset("CSP1.L", "iShares Core S&P 500 (Acc)", "core_etf", twin="VUAG.L"),
-    Asset("EQQQ.L", "Invesco EQQQ NASDAQ-100", "core_etf", twin="CNX1.L"),
+    Asset("FWRG.L", "Invesco FTSE All-World (Acc)", "core_etf", "global", twin="VWRP.L"),
+    Asset("CSP1.L", "iShares Core S&P 500 (Acc)", "core_etf", "us_large", twin="VUAG.L"),
+    Asset("EQQQ.L", "Invesco EQQQ NASDAQ-100", "core_etf", "tech", twin="CNX1.L"),
 ]
 
 DEFENSIVE = Asset("IGLT.L", "iShares Core UK Gilts", "defensive")
@@ -56,7 +66,7 @@ SATELLITE_CANDIDATES: List[Asset] = [
 
 REGIME_INDEX = "VWRP.L"
 
-ALL: Dict[str, Asset] = {a.ticker: a for a in CORE + TWINS + SATELLITE_CANDIDATES + [DEFENSIVE]}
+ALL: Dict[str, Asset] = {a.ticker: a for a in CORE_POOL + TWINS + SATELLITE_CANDIDATES + [DEFENSIVE]}
 
 
 def get(ticker: str) -> Asset:
@@ -64,8 +74,8 @@ def get(ticker: str) -> Asset:
 
 
 def core_slot(ticker: str) -> Optional[str]:
-    """The CORE ticker whose slot *ticker* fills (itself or its twin)."""
-    for a in CORE:
+    """The core-pool fund whose slot *ticker* fills (itself or its twin)."""
+    for a in CORE_POOL:
         if ticker in (a.ticker, a.twin):
             return a.ticker
     return None

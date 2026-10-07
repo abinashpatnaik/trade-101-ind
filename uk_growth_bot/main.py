@@ -112,6 +112,20 @@ def _check_positions(ledger: Ledger, broker, today: date) -> None:
                                        f"{mine.get(t, 0):g}. Manual trades are not managed — please reconcile.")
 
 
+def _untradable(broker, tickers, holdings) -> set:
+    """Assets the bot must not buy: not priced in GBP, or not offered by the
+    broker. Existing holdings are kept so they can still be valued and sold."""
+    blocked = set(market_data.non_gbp(tickers))
+    if settings.uses_broker and settings.broker == "trading212":
+        mapping = broker.instrument_map() if hasattr(broker, "instrument_map") else None
+        if mapping:  # an empty map means the lookup failed; execute() refuses those orders anyway
+            blocked |= {t for t in U.ALL if t not in mapping}
+    blocked -= set(holdings)
+    if blocked:
+        logger.warning("Not buying (not GBP or not on %s): %s", settings.broker, ", ".join(sorted(blocked)))
+    return blocked
+
+
 def run_cycle(today: date, ledger: Ledger, broker=None):
     broker = broker or make_broker()
     if settings.uses_broker and not broker.ready():
@@ -130,7 +144,9 @@ def run_cycle(today: date, ledger: Ledger, broker=None):
 
     holdings = ledger.holdings()
     txns = ledger.txns()
-    research = run_research(closes, holdings)
+    blocked = _untradable(broker, closes.columns, holdings)
+    prices = {t: p for t, p in prices.items() if t not in blocked}
+    research = run_research(closes, holdings, exclude=blocked)
     tax = tax_position(txns, ledger.dividends(), today)
 
     quarter = f"{today.year}Q{(today.month - 1) // 3 + 1}"

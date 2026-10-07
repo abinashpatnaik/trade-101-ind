@@ -52,6 +52,12 @@ def history(tickers: Iterable[str], period: str = "6y") -> pd.DataFrame:
     return closes
 
 
+def non_gbp(tickers: Iterable[str]) -> set:
+    """Tickers seen by history() quoted in a currency other than sterling.
+    Trading 212 ISAs only trade in the account currency, so these are skipped."""
+    return {t for t in tickers if _currency_cache.get(t, "GBp") not in ("GBp", "GBX", "GBP")}
+
+
 def latest_prices(closes: pd.DataFrame) -> Dict[str, float]:
     last = closes.ffill().iloc[-1]
     return {t: float(v) for t, v in last.items() if pd.notna(v) and v > 0}

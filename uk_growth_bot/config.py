@@ -77,6 +77,13 @@ class Settings:
 
     # Portfolio shape: aggressive growth = all equity, concentrated tilts.
     satellite_pct: float = field(default_factory=lambda: _f("UK_SATELLITE_PCT", 0.25))
+    # Core sleeve: hold the best-ranked N funds from universe.CORE_POOL (at
+    # most one per group), weighted by rank. A held fund is only replaced once
+    # it falls below core_exit_rank AND has been held core_min_hold_days.
+    core_funds: int = field(default_factory=lambda: _i("UK_CORE_FUNDS", 3))
+    core_rank_weights: tuple = (0.45, 0.30, 0.25)
+    core_exit_rank: int = field(default_factory=lambda: _i("UK_CORE_EXIT_RANK", 5))
+    core_min_hold_days: int = field(default_factory=lambda: _i("UK_CORE_MIN_HOLD_DAYS", 90))
     max_satellite_stocks: int = field(default_factory=lambda: _i("UK_MAX_SATELLITE_STOCKS", 2))
     # How far signals may move a core ETF's weight, relative to its base
     # weight (0.3 = a 50% base can range 35%-65% before renormalising).

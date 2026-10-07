@@ -28,19 +28,38 @@ Trading 212's API is still labelled **beta** (v0) and may change. Orders can onl
 
 | Sleeve | Default | What's in it |
 |---|---|---|
-| Core (75%) | VWRP 50% · VUAG 25% · CNX1 25% of the core | Accumulating global / S&P 500 / Nasdaq-100 ETFs. No stamp duty. |
+| Core (75%) | 3 ETFs, weighted 45% / 30% / 25% of the core by rank | Chosen by the bot from a vetted pool of growth ETFs (below). No stamp duty. |
 | Satellite (25%) | up to 2 stocks, 12.5% each | Best-ranked UK growth names from a candidate list (AZN, LSEG, RELX, RR, 3i, Experian, Halma, Sage, …). 0.5% stamp duty on buys, even in an ISA. |
+
+**Core fund pool.** The bot holds the 3 best-ranked funds, at most one per group,
+so it never doubles up on the same market:
+
+| Group | Fund |
+|---|---|
+| global | VWRP Vanguard FTSE All-World |
+| us_large | VUAG Vanguard S&P 500 |
+| tech | CNX1 iShares Nasdaq-100 · SMGB VanEck Semiconductor |
+| emerging | EMIM iShares Core MSCI EM IMI |
+| small_cap | WLDS iShares MSCI World Small Cap |
+| quality | IWQU iShares MSCI World Quality Factor |
+| uk_mid | VMID Vanguard FTSE 250 |
+
+A held fund is kept until it falls below rank #5 (`UK_CORE_EXIT_RANK`), and never
+in its first 90 days (`UK_CORE_MIN_HOLD_DAYS`), so the core changes rarely. Each
+run, funds that aren't priced in GBP or aren't offered by Trading 212 are
+skipped (and logged); funds already held stay. `UK_CORE_FUNDS` sets how many are held.
 
 **Every trading day at 10:30 UK time:**
 1. **Research.** Each candidate gets a score in [-1, 1] that blends three signals:
    - **momentum** (60% weight): 3-, 6- and 12-month returns, adjusted for risk;
    - **ML** (25%): an XGBoost model's probability of beating the median over the next ~3 months;
    - **news sentiment** (15%): UK Yahoo / Google News headlines.
-2. **Targets.** Signals tilt the core weights by up to ±30% of each ETF's base weight. The satellite picks need positive 6-month momentum, a price above the 200-day average, and no strongly negative news.
+2. **Targets.** The core is the top 3 pool funds as above, and its weights are tilted by up to ±30% by score. The satellite picks need positive 6-month momentum, a price above the 200-day average, and no strongly negative news.
 3. **Monthly contribution.** New money is spread across whichever holdings are *below* target, in fractional shares, so the portfolio rebalances itself without selling.
 4. **Selling** only happens when:
    - a satellite stock's thesis breaks: it is down more than 35% from its 1-year high *and* below its 200-day average;
    - a satellite stock drops below rank #5, after being held at least 180 days;
+   - a core fund drops below rank #5, after being held at least 90 days; the money moves to the fund replacing it;
    - a quarterly rebalance finds a holding more than 10 percentage points over target.
 5. **Bear market** (global equities below their 200-day average): with `pause`, new money is held in cash for up to 3 months, then invested anyway. With `derisk`, the satellite sleeve also moves into gilts.
 
@@ -136,7 +155,7 @@ There's nothing new to pay for: it runs on the existing server, and the market d
 
 ```bash
 pip install -r uk_growth_bot/requirements.txt pytest
-python -m pytest uk_growth_bot/tests          # 70 tests, no network
+python -m pytest uk_growth_bot/tests          # 75 tests, no network
 UK_TRADING_MODE=sim UK_DATA_DIR=/tmp/ukbot python -m uk_growth_bot.main run-once   # one simulated cycle (needs internet)
 python -m uk_growth_bot.main check | plan | status | report | train | loop
 ```
@@ -152,7 +171,7 @@ None of them places orders or restarts anything.
 
 ## Files
 
-`config.py` settings · `universe.py` assets & twins · `tax.py` CGT engine (GIA) ·
+`config.py` settings · `universe.py` core fund pool, stocks & twins · `tax.py` CGT engine (GIA) ·
 `market_data.py` GBP-normalised prices · `features.py` · `sentiment.py` ·
 `ml_model.py` · `research.py` · `planner.py` decision logic (pure, tested) ·
 `broker.py` simulation + Trading 212 + IBKR · `ledger.py` SQLite ledger · `report.py` · `main.py` scheduler.
