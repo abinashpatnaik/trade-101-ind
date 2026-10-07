@@ -1,15 +1,21 @@
-name: UK bot ops (read-only)
+name: Growth bots ops (read-only)
 
-# Manual diagnostics for uk_growth_bot on the Hetzner host. Nothing here
-# places orders, edits the ledger or restarts containers:
+# Manual diagnostics for the investing bots on the Hetzner host
+# (uk = uk_growth_bot on Trading 212, in = in_growth_bot on Zerodha).
+# Nothing here places orders, edits a ledger or restarts containers:
 #   status - recent container log + ledger summary
 #   plan   - dry run of today's investing cycle (prints orders, sends none)
-#   check  - Trading 212 connection test
+#   check  - broker connection test (Trading 212 / Zerodha)
 #   report - build the weekly report now and email it to the configured
 #            recipient (the same email Friday's scheduled run sends)
 on:
   workflow_dispatch:
     inputs:
+      bot:
+        description: "Which bot"
+        type: choice
+        options: [uk, in]
+        default: uk
       command:
         description: "What to run"
         type: choice
@@ -32,17 +38,20 @@ jobs:
           HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
           HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
           CMD: ${{ inputs.command }}
+          BOT: ${{ inputs.bot }}
         run: |
           case "$CMD" in status|plan|check|report) ;; *) echo "unknown command"; exit 2;; esac
-          ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "CMD=$CMD bash -s" <<'REMOTE'
+          case "$BOT" in uk|in) ;; *) echo "unknown bot"; exit 2;; esac
+          ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "CMD=$CMD BOT=$BOT bash -s" <<'REMOTE'
           cd ~/trading-agent
-          if ! docker compose config --services 2>/dev/null | grep -qx uk-growth-bot; then
-            echo "UK bot not enabled (COMPOSE_PROFILES has no uk)"; exit 1
+          SVC="$BOT-growth-bot"; MOD="${BOT}_growth_bot.main"
+          if ! docker compose config --services 2>/dev/null | grep -qx "$SVC"; then
+            echo "$SVC not enabled on this host"; exit 1
           fi
           if [ "$CMD" = status ]; then
-            echo "=== container"; docker ps --filter name=uk-growth-bot --format '{{.Names}}  {{.Status}}'
-            echo "=== last 150 log lines"; docker logs --tail 150 uk-growth-bot 2>&1
+            echo "=== container"; docker ps --filter name="$SVC" --format '{{.Names}}  {{.Status}}'
+            echo "=== last 150 log lines"; docker logs --tail 150 "$SVC" 2>&1
             echo "=== ledger"
           fi
-          docker compose run --rm -T uk-growth-bot python -m uk_growth_bot.main "$CMD" 2>&1 | grep -v 'level=warning'
+          docker compose run --rm -T "$SVC" python -m "$MOD" "$CMD" 2>&1 | grep -v 'level=warning'
           REMOTE

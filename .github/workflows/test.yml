@@ -34,3 +34,6 @@ jobs:
 
       - name: Run UK growth bot tests
         run: pytest uk_growth_bot/tests -q
+
+      - name: Run India growth bot tests
+        run: pytest in_growth_bot/tests -q

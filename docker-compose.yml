@@ -390,6 +390,49 @@ services:
       - ./data/uk:/app/data
     restart: unless-stopped
 
+  # India growth investing bot (Zerodha, long-term NSE shares). Separate from
+  # agent-in (intraday) but shares its Zerodha account: it reuses agent-in's
+  # cached Kite token (./data/kite_access_token.txt) and ring-fences its own
+  # cash and shares in ./data/in_growth_reserved.json, which agent-in honours.
+  # Starts in simulation; real orders need IN_TRADING_MODE=live.
+  in-growth-bot:
+    build:
+      context: ./in_growth_bot
+      dockerfile: Dockerfile
+    container_name: in-growth-bot
+    environment:
+      - IN_TRADING_MODE=${IN_TRADING_MODE:-sim}
+      - IN_MONTHLY_CONTRIBUTION=${IN_MONTHLY_CONTRIBUTION:-25000}
+      - IN_CONTRIBUTION_DAY=${IN_CONTRIBUTION_DAY:-1}
+      - IN_STARTING_CASH=${IN_STARTING_CASH:-0}
+      - IN_POSITIONS=${IN_POSITIONS:-8}
+      - IN_MAX_PER_SECTOR=${IN_MAX_PER_SECTOR:-2}
+      - IN_EXIT_RANK=${IN_EXIT_RANK:-15}
+      - IN_MIN_HOLD_DAYS=${IN_MIN_HOLD_DAYS:-365}
+      - IN_INCLUDE_ETFS=${IN_INCLUDE_ETFS:-false}
+      - IN_SELL_ONLY_IN_PROFIT=${IN_SELL_ONLY_IN_PROFIT:-true}
+      - IN_MIN_SALE_PROFIT_PCT=${IN_MIN_SALE_PROFIT_PCT:-0.01}
+      - IN_REGIME_ACTION=${IN_REGIME_ACTION:-pause}
+      - IN_MIN_ORDER_VALUE=${IN_MIN_ORDER_VALUE:-10000}
+      - IN_UK_INCOME_TAX_BAND=${IN_UK_INCOME_TAX_BAND:-}
+      - UK_INCOME_TAX_BAND=${UK_INCOME_TAX_BAND:-basic}
+      - IN_NO_NEW_BUYS=${IN_NO_NEW_BUYS:-false}
+      - KITE_API_KEY=${KITE_API_KEY}
+      - KITE_API_SECRET=${KITE_API_SECRET}
+      - KITE_USER_ID=${KITE_USER_ID}
+      - KITE_PASSWORD=${KITE_PASSWORD}
+      - KITE_TOTP_SECRET=${KITE_TOTP_SECRET}
+      - GMAIL_ADDRESS=${GMAIL_ADDRESS}
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+      - IN_REPORT_RECIPIENT=${IN_REPORT_RECIPIENT:-}
+      - UK_REPORT_RECIPIENT=${UK_REPORT_RECIPIENT:-}
+      - REPORT_RECIPIENT=${REPORT_RECIPIENT}
+      - TZ=Asia/Kolkata
+    volumes:
+      - ./data/in:/app/data
+      - ./data:/app/shared
+    restart: unless-stopped
+
   # =========================================================================
   # Dashboards (unchanged)
   # =========================================================================
