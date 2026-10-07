@@ -458,6 +458,12 @@ function renderVetting(v) {
   // two are independent screens, and the trader vetoes BUYs for blocklisted
   // names. Flag such approvals so the list isn't misread as "will be traded".
   const blockedSet = new Set(Object.keys(v.blocklist || {}));
+  // Bus.set_state stamps `ts` on every write, so its presence means vetting
+  // has run at least once -- distinct from "approved is empty", which can
+  // just as easily mean "ran and correctly found nothing worth trading" as
+  // "hasn't run yet". Conflating the two used to show the same pre-market
+  // placeholder either way, even minutes after a real vetting pass.
+  const hasRun = Boolean(vetted?.ts);
   if (vetted?.approved?.length) {
     approvedEl.innerHTML = vetted.approved
       .map((s) => {
@@ -470,17 +476,20 @@ function renderVetting(v) {
         return `<span class="chip is-good"><span class="dot" aria-hidden="true"></span>${esc(s)}</span>`;
       })
       .join("");
-    // Surface WHEN this vetting ran. The screen shows a full-day trade blotter,
-    // but the vetting status is a point-in-time snapshot that re-runs intraday —
-    // so a name traded in the morning can read "blocked" here after a later
-    // re-vet. The "as of HH:MM" tells the viewer this status is not the whole day.
-    if (when) {
-      const t = (vetted.ts || "").slice(11, 16); // HH:MM from ISO timestamp
-      when.textContent = `· ${esc(vetted.source || "")} ${vetted.session_date || ""}`
-        + (t ? ` · as of ${t}` : "");
-    }
+  } else if (hasRun) {
+    approvedEl.innerHTML = `<span class="empty">Vetting ran — 0 symbols cleared (nothing approved right now).</span>`;
   } else {
     approvedEl.innerHTML = `<span class="empty">Waiting for pre-market vetting…</span>`;
+  }
+  // Surface WHEN this vetting ran. The screen shows a full-day trade blotter,
+  // but the vetting status is a point-in-time snapshot that re-runs intraday —
+  // so a name traded in the morning can read "blocked" here after a later
+  // re-vet. The "as of HH:MM" tells the viewer this status is not the whole
+  // day, and must show regardless of whether anything got approved.
+  if (when && hasRun) {
+    const t = (vetted.ts || "").slice(11, 16); // HH:MM from ISO timestamp
+    when.textContent = `· ${esc(vetted.source || "")} ${vetted.session_date || ""}`
+      + (t ? ` · as of ${t}` : "");
   }
 
   const blocked = Object.entries(vetted?.blocked || {});
