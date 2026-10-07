@@ -10,8 +10,8 @@ shares no code with the IN/US intraday agents in this repo.
 
 > **Capital at risk.** Not financial or tax advice. It manages only your own
 > money, which is personal use and not a regulated activity, so the bot must
-> never be offered to anyone else. It starts in **paper mode** (pretend money)
-> and stays there until you switch it.
+> never be offered to anyone else. It starts in **paper mode** (Trading 212's
+> practice account, fake money) and stays there until you switch it.
 
 ## Why Trading 212 + ISA
 
@@ -75,23 +75,21 @@ A copy is saved to `data/uk/reports/`.
 
 ## Setup
 
-### Stage 1 — paper mode (no broker, no real money)
+`UK_TRADING_MODE` picks one of three modes:
 
-The bot keeps its own simulated ledger. On `UK_CONTRIBUTION_DAY` each month it
-credits itself a **pretend** £200 and "buys" at real market prices, with
-Trading 212's fees (none, apart from stamp duty on UK shares) and fractional
-shares. You don't need any account yet.
+| Mode | Orders go to | Money |
+|---|---|---|
+| `sim` | nowhere: the bot's own simulated ledger | pretend |
+| `paper` (default) | Trading 212's **practice account**, through the real API | fake (practice) |
+| `live` | Trading 212 for real; also needs `T212_ENV=live` | real |
 
-1. In the host's `.env`, set `COMPOSE_PROFILES=uk` and `UK_TRADING_MODE=paper`. Optionally set `UK_REPORT_RECIPIENT`.
-2. Deploy (merge to `main`), or run `docker compose up -d --build` on the host. Only `uk-growth-bot` starts.
-3. Read the weekly reports for a few weeks to a few months.
+### Stage 1 — paper: Trading 212 practice account (real API, fake money)
 
-### Stage 2 — Trading 212 practice account (real API, fake money)
-
-The practice account comes pre-loaded with virtual cash. The bot ignores that
-pile: as in paper mode, it credits itself a pretend £200 each month and spends
-only that. But its orders go to Trading 212's real API, so this tests the real
-order path.
+Orders appear in the Trading 212 app's **Practice** account. Paper mode is
+always locked to Trading 212's demo environment, whatever `T212_ENV` says. The
+practice account comes pre-loaded with virtual cash; the bot ignores that pile,
+credits itself a pretend £200 on `UK_CONTRIBUTION_DAY` each month, and spends
+only that.
 
 1. In the Trading 212 app, switch to the **Practice** account and create an API key (Settings → API). Grant only:
    - account/portfolio **read**;
@@ -102,22 +100,20 @@ order path.
 2. Put the settings in place, using **either** of these:
    - **GitHub (recommended):** under repo Settings → Secrets and variables → Actions:
      - add *Secrets* `T212_API_KEY` and `T212_API_SECRET`;
-     - add *Variables* `COMPOSE_PROFILES=uk`, `UK_TRADING_MODE=paper`, `T212_ENV=demo` (optionally `UK_REPORT_RECIPIENT`).
+     - add *Variables* `COMPOSE_PROFILES=uk` and `UK_TRADING_MODE=paper` (optionally `UK_REPORT_RECIPIENT`).
 
      Every deploy writes them into the server's `.env`: values go over SSH stdin, the file is made owner-only, and settings left unset in GitHub don't touch the server. The deploy then runs the read-only `check` and prints it in the Actions log. Re-run it any time from the Actions tab ("Run workflow"); this redeploys the whole stack.
    - **By hand on the host:** put the same lines in `~/trading-agent/.env`.
-3. Run the **read-only connection check**. It places no orders, whatever the mode:
-   ```bash
-   cd ~/trading-agent && docker compose run --rm uk-growth-bot python -m uk_growth_bot.main check
-   ```
-   Every ticker should show `OK`. Fix any `MISS` with `UK_T212_TICKERS=VWRP.L=VWRPl_EQ,...`.
-4. Set `UK_TRADING_MODE=live` (keep `T212_ENV=demo`), then run `docker compose up -d uk-growth-bot`. It invests on the next trading day at 10:30. To trigger it now, run `docker compose exec uk-growth-bot python -m uk_growth_bot.main run-once`, then check the orders in the app.
+3. The deploy's read-only `check` should show every ticker `OK`. Fix any `MISS` with `UK_T212_TICKERS=VWRP.L=VWRPl_EQ,...`.
+4. The bot invests at 10:30 UK on trading days. Watch the orders appear in the app's Practice account.
+
+`sim` does the same without any broker. It's useful only when you have no API key.
 
 ### Stage 3 — real money
 
 1. Open the **Stocks & Shares ISA** in Trading 212 and create a separate API key for it, with the same permissions.
 2. Set up a **£200/month standing order** from your bank into the ISA, landing on or just before `UK_CONTRIBUTION_DAY`. The bot reads deposits from Trading 212's transaction history and invests them; it never moves money in or out. Cash already in the ISA on its first run is treated as an opening balance and invested too.
-3. Set `T212_ENV=live` and the new key/secret, then redeploy.
+3. Set `UK_TRADING_MODE=live`, `T212_ENV=live` and the new key/secret, then redeploy.
 
 **Safety rails:**
 - Real money needs *both* `UK_TRADING_MODE=live` and `T212_ENV=live`.
@@ -140,8 +136,8 @@ There's nothing new to pay for: it runs on the existing server, and the market d
 
 ```bash
 pip install -r uk_growth_bot/requirements.txt pytest
-python -m pytest uk_growth_bot/tests          # 47 tests, no network
-UK_DATA_DIR=/tmp/ukbot python -m uk_growth_bot.main run-once   # one paper cycle (needs internet)
+python -m pytest uk_growth_bot/tests          # 70 tests, no network
+UK_TRADING_MODE=sim UK_DATA_DIR=/tmp/ukbot python -m uk_growth_bot.main run-once   # one simulated cycle (needs internet)
 python -m uk_growth_bot.main check | plan | status | report | train | loop
 ```
 
@@ -159,4 +155,4 @@ None of them places orders or restarts anything.
 `config.py` settings · `universe.py` assets & twins · `tax.py` CGT engine (GIA) ·
 `market_data.py` GBP-normalised prices · `features.py` · `sentiment.py` ·
 `ml_model.py` · `research.py` · `planner.py` decision logic (pure, tested) ·
-`broker.py` paper + Trading 212 + IBKR · `ledger.py` SQLite ledger · `report.py` · `main.py` scheduler.
+`broker.py` simulation + Trading 212 + IBKR · `ledger.py` SQLite ledger · `report.py` · `main.py` scheduler.

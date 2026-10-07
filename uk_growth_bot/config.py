@@ -42,16 +42,19 @@ TAX_YEARS: Dict[int, Dict[str, float]] = {
 
 @dataclass
 class Settings:
-    # paper = internal simulated ledger, no broker, pretend money (it still
-    # mimics the chosen broker's fees and fractional shares). live = orders go
-    # to the broker below.
+    # sim   = internal simulation: no broker orders, pretend money (mimics the
+    #         chosen broker's fees and fractional shares).
+    # paper = the broker's own paper/practice account: real API orders, fake
+    #         money. On Trading 212 this is always the demo environment.
+    # live  = real money (Trading 212 also needs T212_ENV=live).
     mode: str = field(default_factory=lambda: _env("UK_TRADING_MODE", "paper").lower())
     broker: str = field(default_factory=lambda: _env("UK_BROKER", "trading212").lower())
     # isa = Stocks & Shares ISA (no UK tax at all); gia = taxable General
     # Investment Account (the CGT engine in tax.py steers every sale).
     account_type: str = field(default_factory=lambda: _env("UK_ACCOUNT_TYPE", "isa").lower())
     # demo = Trading 212 practice account (fake money, real API); live = real
-    # money. Both this AND UK_TRADING_MODE=live are needed to touch real money.
+    # money. Real money needs both this AND UK_TRADING_MODE=live; any other mode
+    # forces demo.
     t212_env: str = field(default_factory=lambda: _env("T212_ENV", "demo").lower())
     t212_api_key: str = field(default_factory=lambda: _env("T212_API_KEY", ""))
     t212_api_secret: str = field(default_factory=lambda: _env("T212_API_SECRET", ""))
@@ -125,10 +128,12 @@ class Settings:
     retrain_weekday: int = 6  # Sunday
 
     def __post_init__(self) -> None:
-        assert self.mode in ("paper", "live"), "UK_TRADING_MODE must be paper or live"
+        assert self.mode in ("sim", "paper", "live"), "UK_TRADING_MODE must be sim, paper or live"
         assert self.broker in ("trading212", "ibkr"), "UK_BROKER must be trading212 or ibkr"
         assert self.account_type in ("isa", "gia"), "UK_ACCOUNT_TYPE must be isa or gia"
         assert self.t212_env in ("demo", "live"), "T212_ENV must be demo or live"
+        if self.mode != "live":
+            self.t212_env = "demo"
         free = self.broker == "trading212"
         # With no commission, small orders cost nothing extra, so every pound
         # can be put to work; with a £3 minimum, orders must be ~£100+.
@@ -142,6 +147,24 @@ class Settings:
         assert 0 <= self.satellite_pct <= 0.5
         assert abs(self.w_momentum + self.w_ml + self.w_sentiment - 1.0) < 1e-9
 
+
+    @property
+    def uses_broker(self) -> bool:
+        return self.mode in ("paper", "live")
+
+    @property
+    def simulated_funding(self) -> bool:
+        """The bot credits itself the monthly contribution: in the simulation,
+        and on Trading 212's practice account, whose virtual cash isn't a deposit."""
+        return self.mode == "sim" or (self.broker == "trading212" and self.t212_env == "demo")
+
+    @property
+    def mode_label(self) -> str:
+        if self.mode == "sim":
+            return "SIMULATION (no broker orders)"
+        if self.mode == "paper" or self.t212_env == "demo":
+            return f"PAPER ({'Trading 212 practice account' if self.broker == 'trading212' else 'broker paper account'})"
+        return "LIVE (real money)"
 
     @property
     def is_isa(self) -> bool:

@@ -100,7 +100,7 @@ def build(today: date, ledger: Ledger, prices: Dict[str, float], targets: Dict[s
         return f"£{x:,.2f}" if x >= 0 else f"-£{-x:,.2f}"
 
     lines = [
-        f"UK GROWTH FUND — WEEKLY REPORT ({today.isoformat()}, {settings.mode.upper()} mode)",
+        f"UK GROWTH FUND — WEEKLY REPORT ({today.isoformat()}, {settings.mode_label})",
         "=" * 64,
         f"Fund value:          {money(nav)}  (cash {money(cash)})",
         f"Total contributed:   {money(contributed)}",

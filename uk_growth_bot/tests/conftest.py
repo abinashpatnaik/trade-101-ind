@@ -11,7 +11,7 @@ def _apply(monkeypatch, **kw):
 @pytest.fixture(autouse=True)
 def isa_t212(monkeypatch):
     """Default for every test: Trading 212 Stocks & Shares ISA, independent of the shell's env."""
-    _apply(monkeypatch, mode="paper", broker="trading212", account_type="isa", commission_min=0.0,
+    _apply(monkeypatch, mode="sim", t212_env="demo", broker="trading212", account_type="isa", commission_min=0.0,
            commission_pct=0.0, min_order_value=10.0, cash_reserve=1.0, qty_decimals=2)
 
 

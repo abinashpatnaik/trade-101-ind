@@ -25,7 +25,7 @@ import pandas as pd
 
 from . import market_data, ml_model, report
 from . import universe as U
-from .broker import PaperBroker, Trading212Broker, make_broker
+from .broker import SimBroker, Trading212Broker, make_broker
 from .config import settings
 from .ledger import Ledger
 from .planner import Planner, fees
@@ -47,10 +47,7 @@ def _lse_open(d: date) -> bool:
 
 
 def _simulated_funding() -> bool:
-    """Paper mode, and the Trading 212 practice account (whose pre-loaded
-    virtual cash isn't a deposit): the bot credits itself a pretend monthly
-    contribution and only ever spends that."""
-    return settings.mode == "paper" or (settings.broker == "trading212" and settings.t212_env == "demo")
+    return settings.simulated_funding
 
 
 def _record_contributions(ledger: Ledger, broker, today: date) -> None:
@@ -117,7 +114,7 @@ def _check_positions(ledger: Ledger, broker, today: date) -> None:
 
 def run_cycle(today: date, ledger: Ledger, broker=None):
     broker = broker or make_broker()
-    if settings.mode == "live" and not broker.ready():
+    if settings.uses_broker and not broker.ready():
         logger.error("%s not reachable/authenticated — skipping today's cycle.", settings.broker)
         return
     closes = market_data.history(U.ALL.keys(), period="2y")
@@ -143,7 +140,7 @@ def run_cycle(today: date, ledger: Ledger, broker=None):
     broker_cash = broker.cash()
     if broker_cash is not None:
         cash = min(cash, broker_cash)  # never plan to spend money the broker doesn't show
-    elif settings.mode == "live":
+    elif settings.uses_broker:
         cash = 0.0  # balance unknown: buy nothing today rather than guess
         ledger.log_decision(today, "Couldn't read the broker's cash balance; no purchases today.")
     plan = Planner(today, research, holdings, prices, cash, txns, tax,
@@ -154,7 +151,7 @@ def run_cycle(today: date, ledger: Ledger, broker=None):
         ledger.log_decision(today, note)
     for order in sorted(plan.orders, key=lambda o: o.side != "SELL"):
         cost = order.value + fees(order.ticker, "BUY", order.value)
-        if order.side == "BUY" and cost > ledger.cash() + 1e-6 and settings.mode == "paper":
+        if order.side == "BUY" and cost > ledger.cash() + 1e-6 and settings.mode == "sim":
             ledger.log_decision(today, f"Skipped BUY {order.ticker}: insufficient cash.")
             continue
         fill = broker.execute(order)
@@ -185,7 +182,7 @@ class _DryRunBroker:
         return getattr(self.inner, name)
 
     def execute(self, order):
-        return PaperBroker().execute(order)
+        return SimBroker().execute(order)
 
 
 def dry_run(today: date) -> int:
@@ -202,8 +199,7 @@ def dry_run(today: date) -> int:
             print("DRY RUN: cycle skipped (see log above)")
             return 1
         research, plan = out
-        print(f"DRY RUN {today.isoformat()} — mode {settings.mode}, broker {settings.broker}"
-              f"{' (' + settings.t212_env + ')' if settings.broker == 'trading212' else ''}. No orders sent.")
+        print(f"DRY RUN {today.isoformat()} — {settings.mode_label}, broker {settings.broker}. No orders sent.")
         print(f"Market data: {len(research.features)} assets with features; regime "
               f"{'RISK-ON' if research.risk_on else 'RISK-OFF'}")
         model = ml_model.load_report()
@@ -226,7 +222,7 @@ def dry_run(today: date) -> int:
 def status() -> int:
     ledger = Ledger()
     today = datetime.now(TZ).date()
-    print(f"Mode {settings.mode}, broker {settings.broker} ({settings.t212_env}), account {settings.account_type}")
+    print(f"Mode {settings.mode}: {settings.mode_label}; broker {settings.broker}, account {settings.account_type}")
     print(f"Last cycle: {ledger.get_state('last_run')}; last report: {ledger.get_state('last_report')}; "
           f"last training: {ledger.get_state('last_train')}")
     model = ml_model.load_report()
@@ -268,7 +264,7 @@ def check() -> int:
         return 2
     print(f"Trading 212 {settings.t212_env.upper()} environment "
           f"({'PRACTICE, fake money' if settings.t212_env == 'demo' else 'REAL MONEY'}); "
-          f"bot mode: {settings.mode}")
+          f"bot mode: {settings.mode_label}")
     if not settings.t212_api_key:
         print("FAIL: T212_API_KEY is not set")
         return 1
@@ -311,7 +307,7 @@ def _cycle_due(now: datetime, last_run: Optional[str]) -> bool:
 
 def loop() -> None:
     ledger = Ledger()
-    logger.info("UK growth bot started in %s mode", settings.mode.upper())
+    logger.info("UK growth bot started: %s", settings.mode_label)
     while True:
         now = datetime.now(TZ)
         today = now.date()
