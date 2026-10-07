@@ -308,8 +308,8 @@ def test_funds_not_in_gbp_are_never_bought(env, monkeypatch):
 def test_funds_missing_on_trading212_are_skipped_unless_held(monkeypatch):
     class Broker:
         def instrument_map(self):
-            return {t: t for t in U.ALL if t not in ("WLDS.L", "IWQU.L")}
+            return {t: t for t in U.ALL if t not in ("WLDS.L", "IWFQ.L")}
 
     monkeypatch.setattr(settings, "mode", "paper")
     monkeypatch.setattr(main.market_data, "non_gbp", lambda tickers: set())
-    assert main._untradable(Broker(), list(U.ALL), {"IWQU.L": 1.0}) == {"WLDS.L"}
+    assert main._untradable(Broker(), list(U.ALL), {"IWFQ.L": 1.0}) == {"WLDS.L"}
