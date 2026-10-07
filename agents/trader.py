@@ -635,12 +635,17 @@ class TradingAgent:
             )
 
             # --- 4.5 AI Validation ---
+            # Reuse the SAME calibrated per-symbol threshold decision_engine
+            # just used to produce `decision` -- a second, different bar here
+            # would re-litigate an already-correct per-symbol decision against
+            # an unrelated number (this was happening with a hardcoded 0.60).
             decision = self.ai_validator.validate_decision(
                 symbol=symbol,
                 trend_signal_day=trend_signal_day,
                 trend_signal_swing=trend_signal_swing,
                 sentiment_score=sentiment_score,
                 decision=decision,
+                buy_threshold=self.decision_engine.get_ml_buy_threshold(symbol, is_swing=False),
             )
 
             # --- 4.6 Vetting blocklist + stale-bus BUY gates ---
@@ -681,11 +686,14 @@ class TradingAgent:
                 decision.quantity = 0
 
             # --- 4.7 Continuous Learning Log ---
+            # continuous_learning.py retrains the SWING model (5-day-ahead
+            # daily-bar target) -- log swing's own trend signal, not day's,
+            # so the features it's retrained on actually match that horizon.
             self.continuous_learning.log_daily_features(
                 symbol=symbol,
-                trend_signal=trend_signal_day,
+                trend_signal=trend_signal_swing,
                 sentiment_score=sentiment_score,
-                predicted_prob=decision.ml_confidence,
+                predicted_prob=decision.ml_confidence_swing,
             )
 
             logger.info(
