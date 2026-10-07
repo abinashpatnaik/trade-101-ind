@@ -58,6 +58,47 @@ def fetch_rss_sentiment(symbol: str) -> float:
         logger.debug(f"Error fetching RSS for {symbol}: {e}")
         return 0.0
 
+def select_rising_sector_candidates(
+    stock_metrics: Dict[str, Dict], top_n_sectors: int = 2
+) -> Tuple[List[str], List[str]]:
+    """Group stocks by sector, rank sectors by avg momentum+sentiment, and
+    return (top_sectors, candidate_stocks) -- the candidates being stocks
+    in a top sector with positive momentum and non-negative sentiment.
+
+    Before get_us_dynamic_universe carried real GICS sectors, every US
+    stock shared one placeholder sector ("Dynamic US"), so this always
+    degenerated to a single fake "top sector" containing the entire
+    universe -- the sector-rotation filtering did nothing. With real
+    sectors this actually concentrates on the 2 genuinely strongest ones.
+    """
+    sector_metrics: Dict[str, Dict] = {}
+    for m in stock_metrics.values():
+        sector = m["sector"]
+        agg = sector_metrics.setdefault(
+            sector, {"total_momentum": 0.0, "total_sentiment": 0.0, "count": 0}
+        )
+        agg["total_momentum"] += m["momentum"]
+        agg["total_sentiment"] += m["sentiment"]
+        agg["count"] += 1
+
+    sector_scores = []
+    for sector, metrics in sector_metrics.items():
+        if metrics["count"] >= 2:  # Must have at least 2 stocks in universe sector
+            avg_mom = metrics["total_momentum"] / metrics["count"]
+            avg_sent = metrics["total_sentiment"] / metrics["count"]
+            combined_score = (avg_mom * 100) + avg_sent  # Weight momentum highly
+            sector_scores.append((sector, combined_score))
+
+    sector_scores.sort(key=lambda x: x[1], reverse=True)
+    top_sectors = [s[0] for s in sector_scores[:top_n_sectors]]
+
+    candidate_stocks = [
+        t for t, m in stock_metrics.items()
+        if m["sector"] in top_sectors and m["momentum"] > 0 and m["sentiment"] >= 0
+    ]
+    return top_sectors, candidate_stocks
+
+
 def run_scanner():
     logger.info("Starting Pre-Market Sector Scanner...")
     
@@ -69,10 +110,19 @@ def run_scanner():
         logger.info(f"Loaded {len(tickers)} dynamic tickers from NSE/BSE scanner.")
     else:
         from market_screener import get_us_dynamic_universe
-        yf_tickers = get_us_dynamic_universe(50)
+        # (yfinance ticker, real GICS sector) pairs -- see get_us_dynamic_universe's
+        # docstring for why this used to be a flat list tagged with one fake
+        # "Dynamic US" sector for every stock, which made the "top rising
+        # sectors" grouping below a no-op.
+        dynamic_universe = get_us_dynamic_universe(50)
+        yf_tickers = [t for t, _ in dynamic_universe]
+        sector_by_yf_ticker = dict(dynamic_universe)
         # Convert yfinance tickers back to standard tickers (e.g. BRK-B -> BRK.B)
         tickers = [t.replace("-", ".") for t in yf_tickers]
-        universe_map = {t: "Dynamic US" for t in tickers}
+        universe_map = {
+            t.replace("-", "."): sector_by_yf_ticker.get(t, "Unknown")
+            for t in yf_tickers
+        }
         logger.info(f"Loaded {len(tickers)} dynamic tickers from US scanner.")
     
     # 1. Bulk Download 1 Month of Data
@@ -99,10 +149,10 @@ def run_scanner():
             except Exception:
                 sentiment_scores[sym] = 0.0
                 
-    # 3. Calculate Momentum and Aggregate by Sector
+    # 3. Calculate Momentum per stock (sector aggregation happens in
+    # select_rising_sector_candidates once stock_metrics is built)
     stock_metrics = {}
-    sector_metrics = {}
-    
+
     for t in tickers:
         yf_t = t.replace(".", "-") if ACTIVE_MARKET == "US" else t
         momentum = 0.0
@@ -125,32 +175,10 @@ def run_scanner():
             "sentiment": sentiment,
             "sector": sector
         }
-        
-        if sector not in sector_metrics:
-            sector_metrics[sector] = {"total_momentum": 0, "total_sentiment": 0, "count": 0}
-            
-        sector_metrics[sector]["total_momentum"] += momentum
-        sector_metrics[sector]["total_sentiment"] += sentiment
-        sector_metrics[sector]["count"] += 1
-        
-    # Find Top Sectors (Combining average momentum + average sentiment)
-    sector_scores = []
-    for sector, metrics in sector_metrics.items():
-        if metrics["count"] >= 2: # Must have at least 2 stocks in universe sector
-            avg_mom = metrics["total_momentum"] / metrics["count"]
-            avg_sent = metrics["total_sentiment"] / metrics["count"]
-            combined_score = (avg_mom * 100) + avg_sent  # Weight momentum highly
-            sector_scores.append((sector, combined_score))
-            
-    sector_scores.sort(key=lambda x: x[1], reverse=True)
-    top_sectors = [s[0] for s in sector_scores[:2]]
+
+    # 4. Find top rising sectors, then filter candidates within them
+    top_sectors, candidate_stocks = select_rising_sector_candidates(stock_metrics)
     logger.info(f"Top 2 Rising Sectors identified: {top_sectors}")
-    
-    # 4. Filter stocks in Top Sectors
-    candidate_stocks = [
-        t for t, m in stock_metrics.items() 
-        if m["sector"] in top_sectors and m["momentum"] > 0 and m["sentiment"] >= 0
-    ]
     logger.info(f"Found {len(candidate_stocks)} candidate stocks in rising sectors with positive momentum/news.")
     
     # 5. ML Validation
