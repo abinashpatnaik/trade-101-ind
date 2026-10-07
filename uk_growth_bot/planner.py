@@ -5,11 +5,13 @@ Pure logic (no network/broker), so it is fully unit-testable.
 Order of operations each run:
   1. Target weights: core ETFs (base weights tilted by signals) + a satellite
      sleeve of the best-ranked growth stocks + (bear regime, derisk mode) gilts.
-  2. Sells, only for: broken satellite theses, satellite names that fell out of
-     the top ranks after the minimum hold, quarterly drift rebalancing, and the
-     Feb-Apr CGT-allowance harvest (sell -> buy the twin fund). In a GIA every
-     discretionary sale is capped so realised gains stay inside the allowance;
-     in an ISA none of the tax rules apply.
+  2. Sells, only for: broken satellite theses, holdings that fell out of the
+     top ranks after the minimum hold, quarterly drift rebalancing, and the
+     Feb-Apr CGT-allowance harvest (sell -> buy the twin fund). Apart from a
+     broken thesis, nothing is sold below its average cost: such a holding is
+     kept, gets no new money, and is sold once it recovers. In a GIA every
+     discretionary sale is also capped so realised gains stay inside the
+     allowance; in an ISA none of the tax rules apply.
   3. Buys: available cash goes to the most underweight slot, in orders big
      enough that the minimum commission stays a small fraction.
 """
@@ -58,6 +60,7 @@ class Plan:
     targets: Dict[str, float]
     notes: List[str]
     paused_since: Optional[date]
+    held_at_loss: Dict[str, str] = field(default_factory=dict)   # ticker -> why it is still held
 
 
 def fees(ticker: str, side: str, value: float) -> float:
@@ -109,6 +112,8 @@ class Planner:
         gated = settings.tax_aware and not settings.is_isa
         self.allowance_left = tax.allowance_remaining if gated else math.inf
         self.sold: Dict[str, float] = {}
+        # Holdings that would be sold but are below cost: kept, not added to.
+        self.held_at_loss: Dict[str, str] = {}
 
     # ------------------------------------------------------------------
     def _qty(self, t: str) -> float:
@@ -140,11 +145,26 @@ class Planner:
         price = self.prices[t]
         return estimate_sale_gain(self.txns, t, qty, price, fees(t, "SELL", qty * price), self.today)
 
-    def _sell(self, t: str, qty: float, reason: str, force: bool = False, partial_ok: bool = False) -> bool:
-        """Queue a sale, respecting the CGT allowance unless *force*."""
+    def _in_profit(self, t: str, qty: float) -> bool:
+        """Would selling *qty* of *t* now beat its average cost by the margin?"""
+        held, cost = pool_cost_basis(self.txns, t)
+        if held <= 0 or cost <= 0:
+            return True
+        proceeds = qty * self.prices[t] - fees(t, "SELL", qty * self.prices[t])
+        return proceeds >= qty * cost / held * (1 + settings.min_sale_profit_pct)
+
+    def _sell(self, t: str, qty: float, reason: str, force: bool = False, partial_ok: bool = False,
+              allow_loss: bool = False) -> bool:
+        """Queue a sale, respecting the CGT allowance unless *force*, and
+        only above average cost unless *allow_loss*."""
         held = self._qty(t)
         qty = held if qty >= held - 1e-9 else round_qty(qty)
         if qty <= 0 or t not in self.prices:
+            return False
+        if settings.sell_only_in_profit and not allow_loss and not self._in_profit(t, qty):
+            h, cost = pool_cost_basis(self.txns, t)
+            self.held_at_loss[t] = (f"{reason}, but £{self.prices[t]:,.2f} is below the average cost "
+                                    f"of £{cost / h:,.2f}; held until it recovers")
             return False
         gain = self._sale_gain(t, qty)
         if gain > self.allowance_left and not force:
@@ -178,12 +198,13 @@ class Planner:
             broken = f is not None and f["drawdown_1y"] < -0.35 and f["dist_sma200"] < 0
             if broken:
                 self._sell(t, self._qty(t), "Thesis broken: down >35% from 1y high and below 200-day trend",
-                           force=True)
+                           force=True, allow_loss=True)
             elif rank.get(t, 99) > settings.satellite_exit_rank and \
                     self._held_days(t) >= settings.satellite_min_hold_days:
-                if not self._sell(t, self._qty(t), f"Rotating out: now ranked #{rank.get(t, '?')} "
-                                                   f"of {len(ranked)} growth candidates"):
-                    keep.append(t)
+                sold = self._sell(t, self._qty(t), f"Rotating out: now ranked #{rank.get(t, '?')} "
+                                                   f"of {len(ranked)} growth candidates")
+                if not sold and t not in self.held_at_loss:
+                    keep.append(t)   # deferred for tax: still a full member of the sleeve
             else:
                 keep.append(t)
         for t in ranked:
@@ -191,7 +212,8 @@ class Planner:
                 break
             f = feats.loc[t]
             sent = self.r.sentiment.get(t, 0.0)
-            if t in keep or self._blocked(t) or f["mom_6m"] <= 0 or f["dist_sma200"] <= 0:
+            if t in keep or t in self.held_at_loss or self._blocked(t) or f["mom_6m"] <= 0 \
+                    or f["dist_sma200"] <= 0:
                 continue
             if sent <= settings.negative_news_veto:
                 self.notes.append(f"Skipped {t}: strongly negative news flow ({sent:+.2f}).")
@@ -215,13 +237,16 @@ class Planner:
                     self._slot_held_days(slot) >= settings.core_min_hold_days:
                 reason = (f"Rotating core fund out: {slot} now ranked #{rank.get(slot, '?')} "
                           f"of {len(ranked)} funds")
-                sold_all = all(self._sell(t, self._qty(t), reason)
-                               for t in list(self.holdings) if _slot(t) == slot)
-                if not sold_all:
-                    keep.append(slot)
+                lines = [t for t in self.holdings if _slot(t) == slot]
+                sold_all = all([self._sell(t, self._qty(t), reason) for t in lines])
+                if not sold_all and not any(t in self.held_at_loss for t in lines):
+                    keep.append(slot)   # deferred for tax: still a full member of the core
             else:
                 keep.append(slot)
-        groups = {U.ALL[s].group for s in keep}
+        # A fund held at a loss still occupies its group, so its replacement
+        # doesn't double up on the same market.
+        groups = {U.ALL[s].group for s in keep} | \
+                 {U.ALL[_slot(t)].group for t in self.held_at_loss if U.ALL[_slot(t)].kind == "core_etf"}
         for a in ranked:
             if len(keep) >= settings.core_funds:
                 break
@@ -252,6 +277,16 @@ class Planner:
         norm = sum(raw.values())
         for k, v in raw.items():
             t[k] = core_total * v / norm
+        # Holdings kept only because they're below cost stay at their current
+        # weight (so nothing buys or trims them); the rest scale around them.
+        total = self.total_value()
+        frozen = {}
+        for h in self.held_at_loss:
+            if _slot(h) not in t and total > 0:
+                frozen[_slot(h)] = frozen.get(_slot(h), 0.0) + self._value(h) / total
+        scale = max(0.0, 1.0 - sum(frozen.values()))
+        t = {k: v * scale for k, v in t.items()}
+        t.update(frozen)
         return t
 
     # ------------------------------------------------------------------
@@ -295,7 +330,9 @@ class Planner:
             switch_cost = fees(t, "SELL", qty * self.prices[t]) + fees(twin, "BUY", qty * self.prices[t])
             if qty <= 0 or qty * gps < 100 or saved < 3 * switch_cost:
                 continue
-            if self._sell(t, qty, f"CGT allowance harvest: realising ~£{qty * gps:,.0f} tax-free gain"):
+            # gps > 0 above, so this is always a gain; the margin check doesn't apply.
+            if self._sell(t, qty, f"CGT allowance harvest: realising ~£{qty * gps:,.0f} tax-free gain",
+                          allow_loss=True):
                 proceeds = qty * self.prices[t] - fees(t, "SELL", qty * self.prices[t])
                 bq = round_qty((proceeds - fees(twin, "BUY", proceeds)) /
                                 (self.prices[twin] * (1 + settings.slippage_pct)))
@@ -317,7 +354,8 @@ class Planner:
     def _buys(self, targets: Dict[str, float], budget: float) -> None:
         total = self.total_value()
         vals = self._slot_values()
-        buyable = {s: self._ticker_for_slot(s) for s in targets}
+        frozen = {_slot(h) for h in self.held_at_loss}
+        buyable = {s: self._ticker_for_slot(s) for s in targets if s not in frozen}
         buyable = {s: t for s, t in buyable.items() if t}
         alloc: Dict[str, float] = {}
         left = budget
@@ -384,4 +422,4 @@ class Planner:
                 self.notes.append("Pause limit reached: investing despite the bear regime "
                                   "(time in the market beats timing it).")
             self._buys(targets, budget)
-        return Plan(self.orders, targets, self.notes, paused_since)
+        return Plan(self.orders, targets, self.notes, paused_since, dict(self.held_at_loss))

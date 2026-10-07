@@ -165,6 +165,12 @@ def run_cycle(today: date, ledger: Ledger, broker=None):
 
     for note in plan.notes:
         ledger.log_decision(today, note)
+    # Log a holding held back from a sale once, when it starts being held.
+    before = ledger.get_state("held_at_loss", {}) or {}
+    for t, why in plan.held_at_loss.items():
+        if t not in before:
+            ledger.log_decision(today, f"Not selling {t}: {why}.")
+    ledger.set_state("held_at_loss", plan.held_at_loss)
     for order in sorted(plan.orders, key=lambda o: o.side != "SELL"):
         cost = order.value + fees(order.ticker, "BUY", order.value)
         if order.side == "BUY" and cost > ledger.cash() + 1e-6 and settings.mode == "sim":
@@ -231,6 +237,8 @@ def dry_run(today: date) -> int:
             print("WOULD place no orders")
         for n in plan.notes:
             print(f"NOTE {n}")
+        for t, why in plan.held_at_loss.items():
+            print(f"HOLDING {t} (not sold below cost): {why}")
         print(f"Cash available to the plan: £{ledger.cash():,.2f} (after simulated fills)")
     return 0
 
