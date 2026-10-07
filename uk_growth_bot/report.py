@@ -110,11 +110,17 @@ def build(today: date, ledger: Ledger, prices: Dict[str, float], targets: Dict[s
         f"Market regime:       {regime_text(research)}",
         "", "HOLDINGS", "-" * 64,
     ]
+    held_at_loss = ledger.get_state("held_at_loss", {}) or {}
     for h in rows:
         lines.append(f"{h.ticker:<8} {h.quantity:>6g} x {money(h.price):>9} = {money(h.value):>11}  "
-                     f"weight {h.weight:5.1%} (target {h.target:5.1%})  gain {money(h.gain)}")
+                     f"weight {h.weight:5.1%} (target {h.target:5.1%})  gain {money(h.gain)}"
+                     + ("  *" if h.ticker in held_at_loss else ""))
     if not rows:
         lines.append("No holdings yet.")
+    if any(h.ticker in held_at_loss for h in rows):
+        lines.append("* Due to be sold but below its average cost: kept, no new money, "
+                     "sold once it recovers.")
+        lines += [f"  {t}: {why}" for t, why in held_at_loss.items() if t in holdings]
     lines += ["", "ACTIVITY THIS WEEK", "-" * 64]
     lines += [f"{t['day']} {t['side']} {t['quantity']:g} {t['symbol']} @ {money(t['price'])} "
               f"(fees {money(t['fees'])}) — {t['reason']}" for t in trades] or ["No trades."]

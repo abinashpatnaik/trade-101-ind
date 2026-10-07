@@ -92,6 +92,12 @@ class Settings:
     satellite_min_hold_days: int = field(default_factory=lambda: _i("UK_SATELLITE_MIN_HOLD_DAYS", 180))
     # A satellite stock is sold when it drops out of the top N ranked names.
     satellite_exit_rank: int = field(default_factory=lambda: _i("UK_SATELLITE_EXIT_RANK", 5))
+    # Rotations, rebalances and de-risking only sell above the average cost
+    # (incl. stamp duty) plus this margin; a holding under water is kept,
+    # gets no new money, and is sold once it recovers. The crash rule
+    # (thesis broken) is the one sale allowed at a loss.
+    sell_only_in_profit: bool = field(default_factory=lambda: _b("UK_SELL_ONLY_IN_PROFIT", True))
+    min_sale_profit_pct: float = field(default_factory=lambda: _f("UK_MIN_SALE_PROFIT_PCT", 0.01))
 
     # Bear-market regime: global equity below its 200-day average.
     # "pause" parks new contributions in cash (max N months) instead of buying.

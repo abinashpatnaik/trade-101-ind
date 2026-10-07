@@ -313,3 +313,32 @@ def test_funds_missing_on_trading212_are_skipped_unless_held(monkeypatch):
     monkeypatch.setattr(settings, "mode", "paper")
     monkeypatch.setattr(main.market_data, "non_gbp", lambda tickers: set())
     assert main._untradable(Broker(), list(U.ALL), {"IWFQ.L": 1.0}) == {"WLDS.L"}
+
+
+def test_held_at_loss_is_logged_once_and_flagged_in_report(env, closes, monkeypatch):
+    from uk_growth_bot import report
+    from uk_growth_bot.planner import Planner
+    from uk_growth_bot.research import run_research
+    from uk_growth_bot.tax import Txn, tax_position
+
+    env.record_txn(Txn(date(2027, 1, 4), "VMID.L", "BUY", 1, 999.0))
+    why = "Rotating core fund out: VMID.L now ranked #8 of 8 funds, but it is below cost"
+
+    class Stubborn(Planner):
+        def run(self):
+            out = super().run()
+            out.held_at_loss = {"VMID.L": why}
+            return out
+
+    monkeypatch.setattr(main, "Planner", Stubborn)
+    for d in (date(2027, 3, 1), date(2027, 3, 2)):
+        main._today = d
+        main.run_cycle(d, env)
+    notes = [x["text"] for x in env.decisions(date(2027, 3, 1)) if x["text"].startswith("Not selling")]
+    assert notes == [f"Not selling VMID.L: {why}."]
+
+    today = date(2027, 3, 5)
+    c = closes[closes.index <= pd.Timestamp(today)]
+    rep = report.build(today, env, main.market_data.latest_prices(c), env.get_state("targets", {}),
+                       run_research(c, env.holdings()), tax_position(env.txns(), [], today), None, c)
+    assert "below its average cost" in rep["text"] and why in rep["text"]

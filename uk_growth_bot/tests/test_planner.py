@@ -54,7 +54,7 @@ def test_core_picks_top_funds_one_per_group_weighted_by_rank():
 
 
 def test_held_core_fund_kept_until_it_falls_below_exit_rank():
-    txns = [Txn(date(2026, 5, 1), "VMID.L", "BUY", 10, 10.0)]
+    txns = [Txn(date(2026, 5, 1), "VMID.L", "BUY", 10, 8.0)]   # in profit at £10
     held = {"holdings": {"VMID.L": 10}, "txns": txns, "held_since": {"VMID.L": date(2026, 5, 1)}}
     # ranked 4th of 8: kept, even though it isn't top 3
     r = research({"CNX1.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VMID.L": 0.6})
@@ -147,11 +147,75 @@ def test_harvest_switches_into_twin_within_allowance():
 
 
 def test_quarterly_rebalance_trims_overweight_slot():
-    txns = [Txn(date(2026, 9, 1), "CNX1.L", "BUY", 100, 10.0)]
+    txns = [Txn(date(2026, 9, 1), "CNX1.L", "BUY", 100, 8.0)]
     out = plan(cash=0, holdings={"CNX1.L": 100}, txns=txns, held_since={"CNX1.L": date(2026, 9, 1)},
                rebalance_due=True)
     assert any(o.side == "SELL" and o.ticker == "CNX1.L" for o in out.orders)
     assert any(o.side == "BUY" for o in out.orders)
+
+
+def test_rebalance_never_sells_below_cost():
+    txns = [Txn(date(2026, 9, 1), "CNX1.L", "BUY", 100, 12.0)]   # bought £12, now £10
+    out = plan(cash=0, holdings={"CNX1.L": 100}, txns=txns, held_since={"CNX1.L": date(2026, 9, 1)},
+               rebalance_due=True)
+    assert not any(o.side == "SELL" for o in out.orders)
+    assert "CNX1.L" in out.held_at_loss
+
+
+_LOW_VMID = {"CNX1.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VWRP.L": 0.6, "WLDS.L": 0.5,
+             "IWFQ.L": 0.4, "VMID.L": -0.9}
+
+
+def test_core_fund_under_water_is_kept_frozen_and_replaced():
+    txns = [Txn(date(2026, 5, 1), "VMID.L", "BUY", 10, 12.0)]    # cost £12, price £10
+    out = plan(cash=200, r=research(_LOW_VMID), holdings={"VMID.L": 10}, txns=txns,
+               held_since={"VMID.L": date(2026, 5, 1)})
+    assert not any(o.side == "SELL" for o in out.orders)
+    assert "below the average cost of £12.00" in out.held_at_loss["VMID.L"]
+    assert not any(o.side == "BUY" and o.ticker == "VMID.L" for o in out.orders)   # no new money
+    core = _core_targets(out)
+    assert {"CNX1.L", "EMIM.L", "VUAG.L"} <= set(core)                              # replacements
+    assert core["VMID.L"] == pytest.approx(100 / 300)                               # frozen at its weight
+    assert sum(out.targets.values()) == pytest.approx(1.0)
+
+
+def test_core_fund_is_sold_once_it_recovers_above_cost():
+    txns = [Txn(date(2026, 5, 1), "VMID.L", "BUY", 10, 9.0)]     # cost £9, price £10
+    out = plan(cash=200, r=research(_LOW_VMID), holdings={"VMID.L": 10}, txns=txns,
+               held_since={"VMID.L": date(2026, 5, 1)})
+    assert any(o.side == "SELL" and o.ticker == "VMID.L" for o in out.orders)
+    assert not out.held_at_loss
+
+
+def test_sale_must_clear_the_profit_margin():
+    txns = [Txn(date(2026, 5, 1), "VMID.L", "BUY", 10, 9.95)]    # +0.5%: under the 1% margin
+    out = plan(cash=200, r=research(_LOW_VMID), holdings={"VMID.L": 10}, txns=txns,
+               held_since={"VMID.L": date(2026, 5, 1)})
+    assert not any(o.side == "SELL" for o in out.orders)
+
+
+def test_stock_under_water_is_not_rotated_but_crash_rule_still_sells():
+    txns = [Txn(date(2026, 1, 5), "AZN.L", "BUY", 5, 12.0), Txn(date(2026, 1, 5), "REL.L", "BUY", 5, 12.0)]
+    held = {"AZN.L": 5, "REL.L": 5}
+    since = {"AZN.L": date(2026, 1, 5), "REL.L": date(2026, 1, 5)}
+    scores = {"HLMA.L": 0.9, "SGE.L": 0.8, "RR.L": 0.7, "III.L": 0.6, "LSEG.L": 0.5, "AZN.L": -0.8, "REL.L": -0.9}
+    # REL crashes: >35% off its high and below trend -> sold despite the loss.
+    r = research(scores, overrides={"REL.L": {"drawdown_1y": -0.40, "dist_sma200": -0.10}})
+    out = plan(cash=200, r=r, holdings=held, txns=txns, held_since=since)
+    sells = {o.ticker for o in out.orders if o.side == "SELL"}
+    assert sells == {"REL.L"}
+    assert "AZN.L" in out.held_at_loss
+    stocks = {t for t in out.targets if U.ALL[t].kind == "stock"}
+    assert {"HLMA.L", "SGE.L"} <= stocks                       # two fresh picks besides the frozen AZN
+    assert not any(o.side == "BUY" and o.ticker == "AZN.L" for o in out.orders)
+
+
+def test_profit_rule_can_be_switched_off(monkeypatch):
+    monkeypatch.setattr(settings, "sell_only_in_profit", False)
+    txns = [Txn(date(2026, 5, 1), "VMID.L", "BUY", 10, 12.0)]
+    out = plan(cash=200, r=research(_LOW_VMID), holdings={"VMID.L": 10}, txns=txns,
+               held_since={"VMID.L": date(2026, 5, 1)})
+    assert any(o.side == "SELL" and o.ticker == "VMID.L" for o in out.orders)
 
 
 @pytest.mark.usefixtures("gia_ibkr")

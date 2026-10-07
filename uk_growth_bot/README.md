@@ -61,6 +61,14 @@ skipped (and logged); funds already held stay. `UK_CORE_FUNDS` sets how many are
    - a satellite stock drops below rank #5, after being held at least 180 days;
    - a core fund drops below rank #5, after being held at least 90 days; the money moves to the fund replacing it;
    - a quarterly rebalance finds a holding more than 10 percentage points over target.
+
+   **Profit check.** Rotations, rebalances and de-risking only sell when the sale
+   price beats the average purchase cost (including stamp duty) by at least 1%
+   (`UK_MIN_SALE_PROFIT_PCT`). A holding below that is kept but gets no new money:
+   its replacement is bought with new contributions, and the holding is sold once
+   it recovers. The weekly report marks these holdings with `*`. The crash rule is
+   the one sale allowed at a loss, so a collapsing company isn't held all the way
+   down. `UK_SELL_ONLY_IN_PROFIT=false` turns the check off.
 5. **Bear market** (global equities below their 200-day average): with `pause`, new money is held in cash for up to 3 months, then invested anyway. With `derisk`, the satellite sleeve also moves into gilts.
 
 **ML is held to a standard.** It is retrained every Sunday with walk-forward validation and a gap between training and test data. It only gets a vote if its out-of-sample AUC is at least 0.55; otherwise its weight is zero. The weekly report shows the AUC and accuracy.
@@ -155,7 +163,7 @@ There's nothing new to pay for: it runs on the existing server, and the market d
 
 ```bash
 pip install -r uk_growth_bot/requirements.txt pytest
-python -m pytest uk_growth_bot/tests          # 75 tests, no network
+python -m pytest uk_growth_bot/tests          # 82 tests, no network
 UK_TRADING_MODE=sim UK_DATA_DIR=/tmp/ukbot python -m uk_growth_bot.main run-once   # one simulated cycle (needs internet)
 python -m uk_growth_bot.main check | plan | status | report | train | loop
 ```
