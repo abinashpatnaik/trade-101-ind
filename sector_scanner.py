@@ -198,25 +198,16 @@ def run_scanner():
             continue
             
         try:
-            features = pd.DataFrame([{
-                'rsi': signal.rsi,
-                'rsi_slope': signal.rsi_slope,
-                'macd_signal': 1 if signal.macd_signal == "bullish" else (-1 if signal.macd_signal == "bearish" else 0),
-                'ema_signal': 1 if signal.ema_signal == "bullish" else (-1 if signal.ema_signal == "bearish" else 0),
-                'vwap_signal': 1 if signal.vwap_signal == "above" else -1,
-                'sentiment_score': stock_metrics[symbol]["sentiment"],
-                'adx': signal.adx,
-                'atr_pct': signal.atr_pct,
-                'volume_ratio': signal.volume_ratio,
-                'bb_position': signal.bb_position,
-                'price_vs_sma50': signal.price_vs_sma50,
-            }])
-            
-            if hasattr(ai_validator.model_swing, 'feature_names_in_'):
-                expected_features = list(ai_validator.model_swing.feature_names_in_)
-                features = features[expected_features]
-            prob_success = ai_validator.model_swing.predict_proba(features)[0][1]
-            
+            # Go through get_ml_confidence() rather than rebuilding the
+            # feature frame and calling model_swing.predict_proba() directly
+            # -- that duplicate path bypassed the isotonic calibrator
+            # entirely, so this scanner's "confidence" and the live trader's
+            # would silently drift apart (uncalibrated vs calibrated) even
+            # though both read from the same swing model.
+            prob_success = ai_validator.get_ml_confidence(
+                signal, stock_metrics[symbol]["sentiment"], mode="swing"
+            )
+
             if prob_success >= 0.55:  # Raised from 0.40 — only stocks with genuine ML signal
                 approved_targets.append({
                     "symbol": yf_t,

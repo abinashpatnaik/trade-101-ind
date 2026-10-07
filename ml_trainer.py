@@ -15,7 +15,8 @@ import logging
 import json
 from datetime import datetime, timedelta
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, brier_score_loss, classification_report
+from sklearn.isotonic import IsotonicRegression
 
 from config import config
 
@@ -55,6 +56,34 @@ def label_from_pnl(pnl) -> "int | None":
     if pnl is None or (isinstance(pnl, float) and pd.isna(pnl)):
         return None
     return 1 if pnl > 0 else 0
+
+
+def fit_calibrator(oof_probs, oof_labels) -> IsotonicRegression:
+    """Map raw predict_proba -> an honest probability, using OUT-OF-FOLD
+    predictions only (never the final model's own training data, which
+    would just calibrate the model to agree with itself).
+
+    XGBoost's raw predict_proba is a reasonable RANKING but not a true
+    probability -- isotonic regression fits the monotonic step function
+    that makes "0.60" actually mean "60% of these actually won".
+    """
+    iso = IsotonicRegression(out_of_bounds="clip")
+    iso.fit(oof_probs, oof_labels)
+    return iso
+
+
+def calibration_report(oof_probs, oof_labels, calibrator: IsotonicRegression) -> dict:
+    """Brier score before/after calibration -- lower is better, 0.25 is the
+    no-skill baseline for a 50/50 base rate. Calibration can only make the
+    reported number honest; it cannot manufacture discrimination a model
+    doesn't have.
+    """
+    calibrated = calibrator.transform(oof_probs)
+    return {
+        "brier_raw": float(brier_score_loss(oof_labels, oof_probs)),
+        "brier_calibrated": float(brier_score_loss(oof_labels, calibrated)),
+        "n": len(oof_labels),
+    }
 
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -279,6 +308,7 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     # Proper train/test split using TimeSeriesSplit for honest out-of-sample evaluation
     tscv = TimeSeriesSplit(n_splits=5)
     test_accuracies = []
+    oof_probs_parts, oof_labels_parts = [], []
     for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
@@ -292,29 +322,58 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         acc = accuracy_score(y_test, y_pred)
         test_accuracies.append(acc)
         logger.info(f"[{mode.upper()}] Fold {fold+1} test accuracy: {acc:.3f}")
-    
+        # Pool every fold's held-out (never-trained-on) predictions -- this
+        # is the honest basis for calibration, same spirit as the accuracy
+        # check above, just kept instead of thrown away.
+        oof_probs_parts.append(clf_fold.predict_proba(X_test)[:, 1])
+        oof_labels_parts.append(y_test.to_numpy())
+
     avg_accuracy = np.mean(test_accuracies)
     logger.info(f"[{mode.upper()}] === Average test accuracy across 5 folds: {avg_accuracy:.3f} ===")
-    
+
     if avg_accuracy < 0.52:
         logger.warning(f"[{mode.upper()}] WARNING: Model accuracy ({avg_accuracy:.3f}) is barely above random chance!")
-    
+
+    # Fit the calibrator on pooled out-of-fold predictions ONLY -- fitting it
+    # on the final model's own training data would just calibrate the model
+    # to agree with itself, hiding exactly the miscalibration this exists to
+    # catch.
+    oof_probs = np.concatenate(oof_probs_parts)
+    oof_labels = np.concatenate(oof_labels_parts)
+    calibrator = fit_calibrator(oof_probs, oof_labels)
+    cal_report = calibration_report(oof_probs, oof_labels, calibrator)
+    logger.info(
+        f"[{mode.upper()}] Calibration (n={cal_report['n']} OOF predictions): "
+        f"Brier raw={cal_report['brier_raw']:.4f} -> calibrated={cal_report['brier_calibrated']:.4f} "
+        f"(lower is better; 0.25 = no-skill baseline at a 50/50 base rate)"
+    )
+    if cal_report["brier_calibrated"] > cal_report["brier_raw"]:
+        logger.warning(
+            f"[{mode.upper()}] Calibration made Brier score WORSE "
+            f"({cal_report['brier_raw']:.4f} -> {cal_report['brier_calibrated']:.4f}) -- "
+            "likely too little OOF data for isotonic regression to find a stable curve."
+        )
+
     # Train final model on ALL data for deployment
     clf.fit(X, y)
-    
+
     os.makedirs(os.path.dirname(model_path_local), exist_ok=True)
-    # Atomic write: the trader may reload this file at any moment
-    joblib.dump(clf, model_path_local + ".tmp")
+    # Atomic write: the trader may reload this file at any moment. Bundle the
+    # calibrator with the model -- ai_validator.py applies it to every
+    # predict_proba() call so "confidence %" means what it says.
+    joblib.dump({"model": clf, "calibrator": calibrator}, model_path_local + ".tmp")
     os.replace(model_path_local + ".tmp", model_path_local)
     logger.info(f"[{mode.upper()}] Model successfully saved to {model_path_local}")
-    
-    # Calculate dynamic thresholds from test-set predictions only (honest thresholds)
+
+    # Calculate dynamic thresholds from test-set predictions only (honest thresholds),
+    # in CALIBRATED probability space so "0.55" means the same thing the
+    # calibration report above just measured.
     # Use the last fold's test predictions for threshold calibration
     last_train_idx, last_test_idx = list(tscv.split(X))[-1]
-    test_probs = clf.predict_proba(X.iloc[last_test_idx])[:, 1]
+    test_probs = calibrator.transform(clf.predict_proba(X.iloc[last_test_idx])[:, 1])
     test_df = full_df.iloc[last_test_idx].copy()
     test_df['pred_prob'] = test_probs
-    
+
     thresholds = {}
     all_thresholds = []
     for sym in full_df['symbol'].unique():
@@ -324,7 +383,7 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         else:
             # Fallback: use full dataset if insufficient test data for this symbol
             sym_full = full_df[full_df['symbol'] == sym]
-            full_probs = clf.predict_proba(X.loc[sym_full.index])[:, 1]
+            full_probs = calibrator.transform(clf.predict_proba(X.loc[sym_full.index])[:, 1])
             thresh = np.percentile(full_probs, 85)
         # Bound the threshold between 0.50 and 0.95
         thresh = float(np.clip(thresh, 0.50, 0.95))
