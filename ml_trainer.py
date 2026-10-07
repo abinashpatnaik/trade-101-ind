@@ -44,6 +44,19 @@ if os.path.exists(TARGETS_FILE):
         logger.error(f"Failed to load daily targets: {e}")
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", f"ml_validator_model_{ACTIVE_MARKET}.pkl")
 
+def label_from_pnl(pnl) -> "int | None":
+    """Real trade outcome -> training label, or None when pnl is unknown.
+
+    exit_reason (e.g. "TRAILING_STOP") says nothing about whether a trade
+    actually made money -- a trailing stop can still close at a small loss
+    on a gap or slippage. Only the real pnl sign is the outcome; this must
+    never special-case an exit_reason into an automatic win.
+    """
+    if pnl is None or (isinstance(pnl, float) and pd.isna(pnl)):
+        return None
+    return 1 if pnl > 0 else 0
+
+
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).fillna(0)
@@ -222,10 +235,12 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
                 
                 overrides = 0
                 for _, trade in trades_df.iterrows():
+                    is_win = label_from_pnl(trade['pnl'])
+                    if is_win is None:
+                        continue
                     sym = trade['symbol'].replace('.NS', '')
                     trade_date = str(trade['date'])
-                    is_win = 1 if (trade['pnl'] > 0 or trade['exit_reason'] == "TRAILING_STOP") else 0
-                    
+
                     mask = (full_df['symbol'] == sym) & (full_df['date_str'] == trade_date)
                     if mask.any():
                         full_df.loc[mask, 'target'] = is_win

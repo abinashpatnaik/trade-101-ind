@@ -123,10 +123,22 @@ class AIValidator:
         trend_signal_day: TrendSignal,
         trend_signal_swing: TrendSignal,
         sentiment_score: float,
-        decision: Decision
+        decision: Decision,
+        buy_threshold: float = 0.60,
     ) -> Decision:
         """
         Validates a trading decision. Uses 'day' model for BUYs, 'swing' model for SELLs.
+
+        buy_threshold:
+            The bar a BUY's day-confidence must clear. Pass the caller's own
+            decision_engine.get_ml_buy_threshold(symbol, is_swing=False) so
+            this re-check uses the SAME calibrated, per-symbol threshold that
+            decided decision.action in the first place -- a hardcoded 0.60
+            here used to override an already-correct per-symbol decision
+            with an unrelated flat number (e.g. a symbol whose own threshold
+            was 0.55 could pass decision_engine's gate and still get killed
+            here at 0.60 for no symbol-specific reason). Defaults to the old
+            0.60 only for callers that don't have a decision_engine handy.
         """
         mode = "day" if decision.action == "BUY" else "swing"
         model = self.model_day if mode == "day" else self.model_swing
@@ -164,8 +176,11 @@ class AIValidator:
                 except Exception as e:
                     logger.error("Swing ML Validation failed for %s BUY: %s", symbol, e)
                 
-                approved = prob_success >= 0.60
-                reason = f"ML Validator ({mode.upper()}) {'APPROVED' if approved else 'REJECTED'} BUY (Confidence: {prob_success*100:.1f}%)"
+                approved = prob_success >= buy_threshold
+                reason = (
+                    f"ML Validator ({mode.upper()}) {'APPROVED' if approved else 'REJECTED'} "
+                    f"BUY (Confidence: {prob_success*100:.1f}%, threshold: {buy_threshold*100:.1f}%)"
+                )
             elif decision.action == "SELL":
                 decision.ml_confidence_swing = prob_success
                 approved = prob_success <= 0.40

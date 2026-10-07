@@ -4,6 +4,14 @@ continuous_learning.py
 Handles the online learning aspect of the ML Validator.
 Logs daily features (including fresh news sentiment) and periodically
 retrains the XGBoost model so it learns from new market regimes.
+
+This is specifically the SWING model's continuous learner: the target is a
+5-trading-day-ahead daily-bar return > 1%, matching ml_trainer.py's own
+swing params (future_periods=5, target_return=0.01) exactly. It must save
+to (and the logged features must come from) the swing side — this used to
+write to a bare ``ml_validator_model_{MARKET}.pkl`` that ai_validator.py
+never loads (it only loads the ``_day``/``_swing`` suffixed files), so every
+EOD retrain here silently had zero effect on live trading.
 """
 
 import os
@@ -27,7 +35,9 @@ class ContinuousLearning:
         active_market = os.getenv("TRADING_MARKET", "IN").upper()
         
         features_filename = f"training_features_{active_market}.csv"
-        model_filename = f"ml_validator_model_{active_market}.pkl"
+        # Suffixed to match ai_validator._get_model_path("swing") -- this
+        # pipeline retrains the swing model specifically (see module docstring).
+        model_filename = f"ml_validator_model_{active_market}_swing.pkl"
         
         self.features_log_path = f"/app/data/{features_filename}" if self._in_docker else f"data/{features_filename}"
         self.model_path = f"/app/data/{model_filename}" if self._in_docker else f"data/{model_filename}"
