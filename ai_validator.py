@@ -28,10 +28,16 @@ class AIValidator:
         
         self.model_day = None
         self.model_swing = None
+        # Isotonic calibrator fit on out-of-fold predictions (ml_trainer.py's
+        # fit_calibrator), or None for an older pickle saved before
+        # calibration existed -- get_ml_confidence() falls back to the raw
+        # score in that case rather than failing.
+        self.calibrator_day = None
+        self.calibrator_swing = None
         self._db = TradingDB()
         if self.enabled:
             self._load_models()
-            
+
     def _get_model_path(self, mode: str) -> str:
         model_filename = f"ml_validator_model_{self.active_market}_{mode}.pkl"
         model_path = f"/app/data/{model_filename}" if self._in_docker else f"data/{model_filename}"
@@ -42,24 +48,38 @@ class AIValidator:
         return model_path
 
     def _load_models(self):
-        self.model_day = self._load_single_model("day")
-        self.model_swing = self._load_single_model("swing")
+        self.model_day, self.calibrator_day = self._load_single_model("day")
+        self.model_swing, self.calibrator_swing = self._load_single_model("swing")
         if self.model_day is None and self.model_swing is None:
             self.enabled = False
 
     def _load_single_model(self, mode: str):
+        """Returns (model, calibrator). calibrator is None for a pre-calibration
+        pickle (a bare classifier, not the {"model", "calibrator"} bundle
+        ml_trainer.py now saves) -- old pickles keep working uncalibrated
+        until the next retrain replaces them.
+        """
         path = self._get_model_path(mode)
         try:
             if os.path.exists(path):
-                model = joblib.load(path)
+                loaded = joblib.load(path)
+                if isinstance(loaded, dict) and "model" in loaded:
+                    model, calibrator = loaded["model"], loaded.get("calibrator")
+                else:
+                    model, calibrator = loaded, None
+                    logger.warning(
+                        f"{mode.upper()} ML Validator model at {path} is a pre-calibration "
+                        "pickle (bare classifier) -- confidence will be uncalibrated until "
+                        "the next retrain."
+                    )
                 logger.info(f"Successfully loaded {mode.upper()} ML Validator model from {path}")
-                return model
+                return model, calibrator
             else:
                 logger.warning(f"{mode.upper()} ML Validator model not found at {path}. Please run ml_trainer.py first.")
-                return None
+                return None, None
         except Exception as e:
             logger.error(f"Failed to load {mode.upper()} ML Validator model: {e}")
-            return None
+            return None, None
 
     def reload_model(self):
         """Reloads the ML models from disk (e.g., after automated retraining)."""
@@ -82,9 +102,15 @@ class AIValidator:
 
     def get_ml_confidence(self, trend_signal: TrendSignal, sentiment_score: float, mode: str = "day") -> float:
         """
-        Returns the raw probability of success (0.0 to 1.0) from the specified ML model (day or swing).
+        Returns the CALIBRATED probability of success (0.0 to 1.0) from the
+        specified ML model (day or swing) -- the raw model score passed
+        through its isotonic calibrator (fit on out-of-fold predictions in
+        ml_trainer.py), so "60%" means 60% actually won historically rather
+        than an arbitrary tree-ensemble score. Falls back to the raw score
+        for a pre-calibration pickle with no calibrator attached.
         """
         model = self.model_day if mode == "day" else self.model_swing
+        calibrator = self.calibrator_day if mode == "day" else self.calibrator_swing
         if not self.enabled or model is None:
             return 0.0
 
@@ -112,6 +138,8 @@ class AIValidator:
                 features = features[expected_features]
             
             prob_success = model.predict_proba(features)[0][1]
+            if calibrator is not None:
+                prob_success = calibrator.transform([prob_success])[0]
             return float(prob_success)
         except Exception as e:
             logger.error(f"Failed to calculate {mode} ML confidence: {e}")
