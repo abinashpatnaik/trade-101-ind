@@ -40,7 +40,7 @@ CORE_POOL: List[Asset] = [
     Asset("SMGB.L", "VanEck Semiconductor", "core_etf", "tech"),
     Asset("EMIM.L", "iShares Core MSCI EM IMI (Acc)", "core_etf", "emerging"),
     Asset("WLDS.L", "iShares MSCI World Small Cap (Acc)", "core_etf", "small_cap"),
-    Asset("IWQU.L", "iShares MSCI World Quality Factor", "core_etf", "quality"),
+    Asset("IWFQ.L", "iShares MSCI World Quality Factor (GBP line)", "core_etf", "quality"),
     Asset("VMID.L", "Vanguard FTSE 250", "core_etf", "uk_mid"),
 ]
 

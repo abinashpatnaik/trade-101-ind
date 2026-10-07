@@ -41,7 +41,7 @@ so it never doubles up on the same market:
 | tech | CNX1 iShares Nasdaq-100 · SMGB VanEck Semiconductor |
 | emerging | EMIM iShares Core MSCI EM IMI |
 | small_cap | WLDS iShares MSCI World Small Cap |
-| quality | IWQU iShares MSCI World Quality Factor |
+| quality | IWFQ iShares MSCI World Quality Factor |
 | uk_mid | VMID Vanguard FTSE 250 |
 
 A held fund is kept until it falls below rank #5 (`UK_CORE_EXIT_RANK`), and never

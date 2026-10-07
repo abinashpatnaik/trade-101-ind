@@ -62,7 +62,7 @@ def test_held_core_fund_kept_until_it_falls_below_exit_rank():
     assert "VMID.L" in _core_targets(out) and not any(o.side == "SELL" for o in out.orders)
     # ranked last and held > 90 days: rotated out
     r = research({"CNX1.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VWRP.L": 0.6, "WLDS.L": 0.5,
-                  "IWQU.L": 0.4, "VMID.L": -0.9})
+                  "IWFQ.L": 0.4, "VMID.L": -0.9})
     out = plan(r=r, **held)
     assert any(o.side == "SELL" and o.ticker == "VMID.L" for o in out.orders)
     assert "VMID.L" not in _core_targets(out)
@@ -71,7 +71,7 @@ def test_held_core_fund_kept_until_it_falls_below_exit_rank():
 def test_new_core_fund_is_not_rotated_out_within_min_hold():
     txns = [Txn(date(2026, 9, 20), "VMID.L", "BUY", 10, 10.0)]
     r = research({"CNX1.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VWRP.L": 0.6, "WLDS.L": 0.5,
-                  "IWQU.L": 0.4, "VMID.L": -0.9})
+                  "IWFQ.L": 0.4, "VMID.L": -0.9})
     out = plan(r=r, holdings={"VMID.L": 10}, txns=txns, held_since={"VMID.L": date(2026, 9, 20)})
     assert not any(o.side == "SELL" for o in out.orders)
     assert "VMID.L" in _core_targets(out)
