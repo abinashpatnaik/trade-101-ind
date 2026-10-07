@@ -234,6 +234,18 @@ class DecisionEngine:
             base = self._sig.ml_buy_threshold
         return base + float(self._directive.get("ml_buy_threshold_delta", 0.0))
 
+    def get_relative_threshold_floor(self, is_swing: bool, default: float = 0.50) -> float:
+        """The base-rate-relative floor ml_trainer.py computed for this mode
+        (see VettingConfig.threshold_relative_lift), for callers like
+        agents/vetting.py that clip their OWN percentile-based threshold and
+        have no labeled ground truth of their own to derive a base rate
+        from. Falls back to `default` for a thresholds file saved before
+        this existed.
+        """
+        self._load_ml_thresholds()
+        mode = "swing" if is_swing else "day"
+        return float(self.ml_thresholds[mode].get("_FLOOR_", default))
+
     def _roll_entry_day(self) -> None:
         """Clear the per-symbol entry counters when the local date changes."""
         today = datetime.now().date()

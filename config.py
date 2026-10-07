@@ -320,10 +320,23 @@ class VettingConfig:
     min_backtest_trades: int = 0
     # Hybrid per-stock buy threshold: during vetting, each nominated symbol's
     # buy bar is set to this percentile of its OWN backtest ML-confidence
-    # distribution (bounded [0.50, 0.90]), requiring at least min_bars samples.
+    # distribution (bounded [floor, 0.90] -- see threshold_relative_lift),
+    # requiring at least min_bars samples.
     # p80 = "trade the top ~20% most-confident signals for this stock."
     dynamic_threshold_pctile: float = 80.0   # US profile raises to 85.0
     dynamic_threshold_min_bars: int = 12
+    # The per-symbol threshold floor is RELATIVE to the label's own base rate
+    # (base_rate * (1 + this)), not an absolute 50%. Measured 2026-10-07: an
+    # absolute 0.50 floor assumes 50%+ calibrated confidence is achievable,
+    # but with a ~26% base rate (this is a rare-event target), the model's
+    # realistic live raw-score ceiling (~0.78, confirmed from 1,719 real BUY
+    # evaluations -- never once reached 0.80) maps to calibrated confidence
+    # well under 50%. An absolute floor collapsed EVERY one of 30 anchor
+    # symbols' thresholds to a flat 0.50, and even p95 didn't help -- both
+    # percentiles land on the same flat plateau of the calibration curve.
+    # 0.25 = require at least 25% relative lift over the unconditional
+    # win rate (e.g. base_rate 0.26 -> floor 0.325).
+    threshold_relative_lift: float = 0.25
     # Live-accuracy blocklist
     accuracy_lookback_sessions: int = 5
     accuracy_window_trades: int = 10
@@ -517,7 +530,14 @@ def get_us_config() -> Config:
         strategy=StrategyConfig(index_symbol="SPY"),
         vetting=VettingConfig(
             min_daily_turnover=5_000_000.0,          # $5M/day median
-            dynamic_threshold_pctile=85.0,           # p85 was best OOS on US targets
+            # p85 was best OOS on US targets historically, but that was measured
+            # against raw, uncalibrated model scores. Post-calibration (2026-10-07),
+            # p85 of a symbol's calibrated confidence landed below the 0.50 floor
+            # for EVERY one of the 30 anchor symbols -- confirmed via a real,
+            # full-scale retrain -- collapsing the per-symbol hybrid threshold to
+            # a flat 0.50 for everyone. Raised to p95 so genuine differentiation
+            # has room to clear the floor; re-measure OOS once this has live data.
+            dynamic_threshold_pctile=95.0,
         ),
     )
 

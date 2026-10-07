@@ -43,6 +43,22 @@ _DATA_DIR = "/app/data" if _IN_DOCKER else os.path.join(
 )
 
 
+def compute_dynamic_threshold(
+    vals: List[float], pctile: float, floor: float, ceiling: float = 0.90
+) -> float:
+    """This symbol's buy bar: `pctile`-th percentile of its own backtest
+    confidence distribution, clipped to [floor, ceiling].
+
+    `floor` is RELATIVE to the label's base rate (ml_trainer.py's _FLOOR_,
+    read via decision_engine.get_relative_threshold_floor()) rather than an
+    independent absolute 0.50 guess -- this agent has no labeled ground
+    truth of its own to derive a base rate from, so it reuses the trained
+    one instead of drifting from it. A real signal below the old absolute
+    0.50 must come through as-is, not get clamped up to it.
+    """
+    return float(min(ceiling, max(floor, np.percentile(vals, pctile))))
+
+
 class VettingAgent(BaseAgent):
     name = "vetting"
     tick_seconds = 300.0  # accuracy-monitor timer
@@ -188,8 +204,8 @@ class VettingAgent(BaseAgent):
                 # forward (today), so today's bars are out-of-sample vs this.
                 vals = result.ml_day_values
                 if len(vals) >= cfg.dynamic_threshold_min_bars:
-                    thr = float(min(0.90, max(0.50, np.percentile(
-                        vals, cfg.dynamic_threshold_pctile))))
+                    floor = self.decision_engine.get_relative_threshold_floor(is_swing=False)
+                    thr = compute_dynamic_threshold(vals, cfg.dynamic_threshold_pctile, floor)
                     dynamic_thresholds[symbol] = round(thr, 4)
 
                 v = verdict(result, cfg.ev_threshold_pct, getattr(cfg, "min_backtest_trades", 0))
