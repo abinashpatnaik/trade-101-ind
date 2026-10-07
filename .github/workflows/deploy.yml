@@ -28,7 +28,7 @@ jobs:
         run: |
           rsync -avz -e "ssh -o StrictHostKeyChecking=no" --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='logs' --exclude='data' ./ $HETZNER_USERNAME@$HETZNER_HOST:~/trading-agent/
 
-      # UK growth bot settings: secrets from GitHub Actions Secrets, plain
+      # UK + India growth bot settings: secrets from GitHub Actions Secrets, plain
       # settings from Actions Variables. Values travel over SSH stdin (never on
       # a command line), and only non-empty ones are written, so anything
       # unset in GitHub leaves the server's existing .env line alone.
@@ -42,6 +42,8 @@ jobs:
           UK_TRADING_MODE: ${{ vars.UK_TRADING_MODE }}
           T212_ENV: ${{ vars.T212_ENV }}
           UK_REPORT_RECIPIENT: ${{ vars.UK_REPORT_RECIPIENT }}
+          IN_TRADING_MODE: ${{ vars.IN_TRADING_MODE }}
+          IN_REPORT_RECIPIENT: ${{ vars.IN_REPORT_RECIPIENT }}
         run: |
           # Single quotes stop docker compose expanding any "$" in a value.
           put() {
@@ -55,6 +57,8 @@ jobs:
             put UK_TRADING_MODE "$UK_TRADING_MODE"
             put T212_ENV "$T212_ENV"
             put UK_REPORT_RECIPIENT "$UK_REPORT_RECIPIENT"
+            put IN_TRADING_MODE "$IN_TRADING_MODE"
+            put IN_REPORT_RECIPIENT "$IN_REPORT_RECIPIENT"
           } | ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST '
             set -e; mkdir -p ~/trading-agent; cd ~/trading-agent
             umask 077; touch .env; chmod 600 .env
@@ -71,7 +75,7 @@ jobs:
               printf "%s\n" "$line" >> .env
               n=$((n+1))
             done
-            echo "Updated $n UK bot setting(s) in .env (values not shown)"'
+            echo "Updated $n growth bot setting(s) in .env (values not shown)"'
 
       - name: Start Container Stack on Hetzner
         env:

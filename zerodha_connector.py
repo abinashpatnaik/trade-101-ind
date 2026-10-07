@@ -11,6 +11,7 @@ This is a self-contained, drop-in replacement for ibkr_connector.py.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -56,6 +57,13 @@ class ZerodhaConnector:
                 "Excluding %d owner holding(s) from bot positions: %s",
                 len(self._ignore_holdings), ", ".join(sorted(self._ignore_holdings)),
             )
+
+        # Cash and shares owned by the separate India growth (investing) bot,
+        # which shares this Zerodha account. It rewrites this file every run;
+        # this agent must neither spend that cash nor manage those shares.
+        self.growth_reserved_file = os.getenv(
+            "IN_GROWTH_RESERVED_FILE",
+            "/app/data/in_growth_reserved.json" if in_docker else "data/in_growth_reserved.json")
 
         self.kite: Optional[KiteConnect] = None
         self._authenticated = False
@@ -328,6 +336,18 @@ class ZerodhaConnector:
     # Account & Portfolio API
     # ------------------------------------------------------------------
 
+    def _growth_reservation(self) -> Dict:
+        """{"cash": float, "holdings": {"TCS.NS": qty}} owned by the India growth bot."""
+        try:
+            with open(self.growth_reserved_file) as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except Exception as exc:
+            logger.warning("Couldn't read the growth bot's reservation file: %s", exc)
+            return {}
+
     def get_account_summary(self) -> Dict[str, float]:
         """
         Fetch account balance and calculate P&L.
@@ -340,6 +360,10 @@ class ZerodhaConnector:
             margins = self.kite.margins()
             equity = margins.get("equity", {})
             available_funds = float(equity.get("net", 0.0))  # Net available margin
+            reserved = self._growth_reservation()
+            # The growth bot's uninvested cash is not this agent's to spend.
+            available_funds = max(0.0, available_funds - float(reserved.get("cash", 0.0) or 0.0))
+            reserved_syms = {s.rsplit(".", 1)[0] for s in (reserved.get("holdings") or {})}
             
             # Use get_positions to get the fully merged holdings and intraday positions
             all_positions = self.get_positions() or {}
@@ -360,6 +384,8 @@ class ZerodhaConnector:
             try:
                 holdings_data = self.kite.holdings()
                 for h in holdings_data:
+                    if h.get("tradingsymbol", "") in reserved_syms:
+                        continue  # the growth bot's long-term holdings
                     # Zerodha provides day_change or day_change_percentage. 
                     # If last_price is available, day PNL = (last_price - previous_close) * qty
                     # Usually day_change is absolute change per share, or total day change. Let's use day_change if present.
@@ -469,6 +495,18 @@ class ZerodhaConnector:
                             "conid": 0,
                         }
             
+            # Shares owned by the India growth bot are not this agent's: hide
+            # them so they're never adopted, reconciled or sold from here.
+            for sym, q in (self._growth_reservation().get("holdings") or {}).items():
+                if sym in positions:
+                    left = positions[sym]["quantity"] - int(round(float(q)))
+                    if left <= 0:
+                        del positions[sym]
+                    else:
+                        per_share = positions[sym]["market_value"] / positions[sym]["quantity"]
+                        positions[sym]["quantity"] = left
+                        positions[sym]["market_value"] = left * per_share
+
             logger.debug("Zerodha positions synced: %d active.", len(positions))
             return positions
         except Exception as exc:

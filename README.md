@@ -11,6 +11,13 @@ Stocks & Shares ISA, LSE ETFs + growth shares, weekly email report) lives in
 [`uk_growth_bot/`](uk_growth_bot/README.md). It shares no code with the agents
 below and is off unless the host sets `COMPOSE_PROFILES=uk`.
 
+Its India counterpart, the **India long-term growth investing bot** (Zerodha,
+NSE shares, India + UK tax aware, ₹25k a month), lives in
+[`in_growth_bot/`](in_growth_bot/README.md). It starts in simulation. In live
+mode it shares the intraday agent's Zerodha account: it ring-fences its cash
+and shares in `data/in_growth_reserved.json`, and `zerodha_connector.py`
+excludes them from the intraday agent.
+
 The market is chosen at process start by `TRADING_MARKET` (`IN` / `US`). Each
 market runs its own agent stack — orchestrator, trader, scanner, vetting,
 strategy, trainer — coordinating over a shared Redis bus, with XGBoost models
