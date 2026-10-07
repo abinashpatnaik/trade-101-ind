@@ -153,6 +153,14 @@ services:
       - HC_AGENT=scanner
       - EOD_API_KEY=${EOD_API_KEY}
       - TZ=Asia/Kolkata
+      # Missing here (confirmed live, 2026-10-07): without these,
+      # sector_scanner.py's own ML-ranking step always found model_day/
+      # model_swing == None and silently fell back to plain
+      # momentum+sentiment ranking -- the ML confidence sort never ran,
+      # regardless of whether the model files existed. vetting-in already
+      # sets these; the scanner never did.
+      - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-true}
+      - AI_PRIMARY_DRIVER=${AI_PRIMARY_DRIVER:-true}
 
   vetting-in:
     <<: *agent-base
@@ -268,6 +276,14 @@ services:
       - HC_AGENT=scanner
       - EOD_API_KEY=${EOD_API_KEY}
       - TZ=America/New_York
+      # Missing here (confirmed live, 2026-10-07): without these,
+      # sector_scanner.py's own ML-ranking step always found model_day/
+      # model_swing == None and silently fell back to plain
+      # momentum+sentiment ranking -- the ML confidence sort never ran,
+      # regardless of whether the model files existed. vetting-us already
+      # sets these; the scanner never did.
+      - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-true}
+      - AI_PRIMARY_DRIVER=${AI_PRIMARY_DRIVER:-true}
 
   vetting-us:
     <<: *agent-base
