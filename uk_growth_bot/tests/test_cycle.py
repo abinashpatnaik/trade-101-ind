@@ -45,7 +45,10 @@ def _run_year(ledger):
         assert ledger.cash() >= -0.01
         assert all(q > 0 for q in ledger.holdings().values())
     assert ledger.net_contributions() == pytest.approx(12 * 200)
-    assert "VWRP.L" in {U.core_slot(t) or t for t in ledger.holdings()}
+    core = {U.core_slot(t) for t in ledger.holdings() if U.core_slot(t)}
+    assert core, "holds at least one core fund"
+    groups = [U.get(s).group for s in core]
+    assert len(groups) == len(set(groups)), f"two core funds from one group: {core}"
     return ledger.txns(), ledger.nav_history()[-1]
 
 
@@ -290,3 +293,23 @@ def test_report_command_exit_code_reflects_email(env, closes, monkeypatch, tmp_p
         main.main(["x", "report"])
     assert e.value.code == 1
     assert list((tmp_path / "reports").glob("weekly_*.txt"))
+
+
+def test_funds_not_in_gbp_are_never_bought(env, monkeypatch):
+    monkeypatch.setattr(settings, "regime_action", "ignore")
+    monkeypatch.setattr(main.market_data, "non_gbp", lambda tickers: {"SMGB.L", "EMIM.L"} & set(tickers))
+    for d in (date(2027, 3, 1), date(2027, 4, 1)):
+        main._today = d
+        research, plan = main.run_cycle(d, env)
+        assert not {"SMGB.L", "EMIM.L"} & set(research.scores)
+    assert env.txns() and not {"SMGB.L", "EMIM.L"} & {t.symbol for t in env.txns()}
+
+
+def test_funds_missing_on_trading212_are_skipped_unless_held(monkeypatch):
+    class Broker:
+        def instrument_map(self):
+            return {t: t for t in U.ALL if t not in ("WLDS.L", "IWQU.L")}
+
+    monkeypatch.setattr(settings, "mode", "paper")
+    monkeypatch.setattr(main.market_data, "non_gbp", lambda tickers: set())
+    assert main._untradable(Broker(), list(U.ALL), {"IWQU.L": 1.0}) == {"WLDS.L"}

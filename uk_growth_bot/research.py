@@ -18,10 +18,14 @@ logger = logging.getLogger(__name__)
 SENTIMENT_TOP_N = 6
 
 
-def run_research(closes: pd.DataFrame, held: Iterable[str], use_news: bool = True) -> Research:
+def run_research(closes: pd.DataFrame, held: Iterable[str], use_news: bool = True,
+                 exclude: Iterable[str] = ()) -> Research:
+    """*exclude*: tickers that can't be bought (wrong currency, not on the
+    broker). They are left out of the rankings unless already held."""
     feats = latest_features(closes)
     held = set(held)
-    core = [a.ticker for a in U.CORE + U.TWINS if a.ticker in feats.index]
+    feats = feats.drop(index=[t for t in set(exclude) - held if t in feats.index])
+    core = [a.ticker for a in U.CORE_POOL + U.TWINS if a.ticker in feats.index]
     stocks = [a.ticker for a in U.SATELLITE_CANDIDATES if a.ticker in feats.index]
 
     mom: Dict[str, float] = {}
@@ -40,7 +44,7 @@ def run_research(closes: pd.DataFrame, held: Iterable[str], use_news: bool = Tru
 
     scores = {t: compose(mom.get(t), ml.get(t), sent.get(t)) for t in feats.index}
     # Twins inherit their core fund's view: they track the same market.
-    for a in U.CORE:
+    for a in U.CORE_POOL:
         if a.twin and a.ticker in scores:
             scores[a.twin] = scores[a.ticker]
 

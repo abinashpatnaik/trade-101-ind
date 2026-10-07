@@ -41,9 +41,46 @@ def test_targets_sum_to_one_and_satellite_is_capped():
     assert sum(out.targets[s] for s in stocks) == pytest.approx(settings.satellite_pct)
 
 
-def test_tilt_moves_core_weights_toward_stronger_signal():
-    out = plan(r=research({"CNX1.L": 1.0, "VUAG.L": -1.0}))
-    assert out.targets["CNX1.L"] > out.targets["VUAG.L"]
+def _core_targets(out):
+    return {t: w for t, w in out.targets.items() if U.ALL[t].kind == "core_etf"}
+
+
+def test_core_picks_top_funds_one_per_group_weighted_by_rank():
+    out = plan(r=research({"CNX1.L": 1.0, "SMGB.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VWRP.L": -0.5}))
+    core = _core_targets(out)
+    assert set(core) == {"CNX1.L", "EMIM.L", "VUAG.L"}   # SMGB skipped: tech already held via CNX1
+    assert core["CNX1.L"] > core["EMIM.L"] > core["VUAG.L"]
+    assert sum(core.values()) == pytest.approx(1 - settings.satellite_pct)
+
+
+def test_held_core_fund_kept_until_it_falls_below_exit_rank():
+    txns = [Txn(date(2026, 5, 1), "VMID.L", "BUY", 10, 10.0)]
+    held = {"holdings": {"VMID.L": 10}, "txns": txns, "held_since": {"VMID.L": date(2026, 5, 1)}}
+    # ranked 4th of 8: kept, even though it isn't top 3
+    r = research({"CNX1.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VMID.L": 0.6})
+    out = plan(r=r, **held)
+    assert "VMID.L" in _core_targets(out) and not any(o.side == "SELL" for o in out.orders)
+    # ranked last and held > 90 days: rotated out
+    r = research({"CNX1.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VWRP.L": 0.6, "WLDS.L": 0.5,
+                  "IWQU.L": 0.4, "VMID.L": -0.9})
+    out = plan(r=r, **held)
+    assert any(o.side == "SELL" and o.ticker == "VMID.L" for o in out.orders)
+    assert "VMID.L" not in _core_targets(out)
+
+
+def test_new_core_fund_is_not_rotated_out_within_min_hold():
+    txns = [Txn(date(2026, 9, 20), "VMID.L", "BUY", 10, 10.0)]
+    r = research({"CNX1.L": 0.9, "EMIM.L": 0.8, "VUAG.L": 0.7, "VWRP.L": 0.6, "WLDS.L": 0.5,
+                  "IWQU.L": 0.4, "VMID.L": -0.9})
+    out = plan(r=r, holdings={"VMID.L": 10}, txns=txns, held_since={"VMID.L": date(2026, 9, 20)})
+    assert not any(o.side == "SELL" for o in out.orders)
+    assert "VMID.L" in _core_targets(out)
+
+
+def test_untradable_core_fund_is_never_picked():
+    r = research({"SMGB.L": 1.0})
+    r.features = r.features.drop(index="SMGB.L")   # dropped upstream: not GBP / not on the broker
+    assert "SMGB.L" not in plan(r=r).targets
 
 
 @pytest.mark.usefixtures("gia_ibkr")

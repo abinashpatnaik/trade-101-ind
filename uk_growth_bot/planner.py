@@ -199,6 +199,38 @@ class Planner:
             keep.append(t)
         return keep
 
+    def _slot_held_days(self, slot: str) -> int:
+        return max((self._held_days(t) for t in self.holdings if _slot(t) == slot), default=0)
+
+    def _core(self) -> List[str]:
+        """Best-ranked core funds, at most one per group, with hysteresis."""
+        pool = [a for a in U.CORE_POOL if a.ticker in self.r.features.index]
+        ranked = sorted(pool, key=lambda a: self.r.scores.get(a.ticker, -1.0), reverse=True)
+        rank = {a.ticker: i + 1 for i, a in enumerate(ranked)}
+        held = sorted({_slot(t) for t in self.holdings if U.ALL.get(t) and U.ALL[t].kind == "core_etf"},
+                      key=lambda s: rank.get(s, 99))
+        keep: List[str] = []
+        for slot in held:
+            if rank.get(slot, 99) > settings.core_exit_rank and \
+                    self._slot_held_days(slot) >= settings.core_min_hold_days:
+                reason = (f"Rotating core fund out: {slot} now ranked #{rank.get(slot, '?')} "
+                          f"of {len(ranked)} funds")
+                sold_all = all(self._sell(t, self._qty(t), reason)
+                               for t in list(self.holdings) if _slot(t) == slot)
+                if not sold_all:
+                    keep.append(slot)
+            else:
+                keep.append(slot)
+        groups = {U.ALL[s].group for s in keep}
+        for a in ranked:
+            if len(keep) >= settings.core_funds:
+                break
+            if a.ticker in keep or a.group in groups:
+                continue
+            keep.append(a.ticker)
+            groups.add(a.group)
+        return sorted(keep, key=lambda s: rank.get(s, 99))
+
     def targets(self) -> Dict[str, float]:
         sat = self._satellite()
         per_stock = settings.satellite_pct / max(1, settings.max_satellite_stocks)
@@ -213,8 +245,10 @@ class Planner:
             for s in sat:
                 t[s] = per_stock
         core_total = 1.0 - sum(t.values())
-        raw = {a.ticker: a.base_weight * (1 + settings.max_tilt * self.r.scores.get(a.ticker, 0.0))
-               for a in U.CORE}
+        core = self._core()
+        w = settings.core_rank_weights
+        raw = {s: w[min(i, len(w) - 1)] * (1 + settings.max_tilt * self.r.scores.get(s, 0.0))
+               for i, s in enumerate(core)}
         norm = sum(raw.values())
         for k, v in raw.items():
             t[k] = core_total * v / norm
@@ -283,18 +317,34 @@ class Planner:
     def _buys(self, targets: Dict[str, float], budget: float) -> None:
         total = self.total_value()
         vals = self._slot_values()
-        deficits = sorted(((targets[s] * total - vals.get(s, 0.0), s) for s in targets), reverse=True)
+        buyable = {s: self._ticker_for_slot(s) for s in targets}
+        buyable = {s: t for s, t in buyable.items() if t}
+        alloc: Dict[str, float] = {}
+        left = budget
+        deficits = sorted(((targets[s] * total - vals.get(s, 0.0), s) for s in buyable), reverse=True)
         for deficit, slot in deficits:
-            if budget < settings.min_order_value:
+            if left < settings.min_order_value or deficit <= 0:
                 break
-            if deficit <= 0:
-                continue
-            t = self._ticker_for_slot(slot)
-            if not t:
-                continue
-            amount = min(budget, max(deficit, settings.min_order_value))
-            if budget - amount < settings.min_order_value:
-                amount = budget
+            amount = min(left, max(deficit, settings.min_order_value))
+            if left - amount < settings.min_order_value:
+                amount = left
+            alloc[slot] = amount
+            left -= amount
+        # Money left once every holding is at target (e.g. after a core
+        # rotation) is spread by target weight rather than sitting in cash.
+        if left >= settings.min_order_value and buyable:
+            weight = sum(targets[s] for s in buyable)
+            extra = {s: left * targets[s] / weight for s in buyable}
+            top = max(buyable, key=lambda s: targets[s])
+            for s, amount in extra.items():
+                if s != top and amount + alloc.get(s, 0.0) < settings.min_order_value:
+                    extra[top] += amount
+                    extra[s] = 0.0
+            for s, amount in extra.items():
+                if amount > 0:
+                    alloc[s] = alloc.get(s, 0.0) + amount
+        for slot, amount in sorted(alloc.items(), key=lambda kv: -kv[1]):
+            t = buyable[slot]
             price = self.prices[t] * (1 + settings.slippage_pct)
             qty = round_qty((amount - fees(t, "BUY", amount)) / price)
             if qty <= 0:
@@ -304,7 +354,6 @@ class Planner:
             self.orders.append(Order("BUY", t, qty, self.prices[t],
                                      f"Invest into most underweight holding ({slot}: target "
                                      f"{targets[slot]:.0%}, now {vals.get(slot, 0.0) / total:.0%})"))
-            budget -= qty * self.prices[t] + fees(t, "BUY", qty * self.prices[t])
 
     # ------------------------------------------------------------------
     def run(self) -> Plan:
