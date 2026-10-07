@@ -29,6 +29,33 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
 
+def encode_categorical_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Map string trend-signal columns to the numeric encoding XGBoost needs.
+
+    log_daily_features() stores TrendSignal's human-readable strings
+    ('bullish'/'bearish'/'neutral', 'above'/'below') directly into the CSV
+    -- this is exactly what crashed retrain_model_if_needed() every single
+    trading day (XGBoost requires int/float/bool/category dtypes, not str).
+    Idempotent: a column that's already numeric passes through unchanged,
+    so this is safe to apply even once newly-logged rows stop being strings.
+    """
+    df = df.copy()
+    macd_ema_map = {"bullish": 1, "bearish": -1, "neutral": 0}
+    vwap_map = {"above": 1, "below": -1}
+    for col, mapping in (
+        ("macd_signal", macd_ema_map),
+        ("ema_signal", macd_ema_map),
+        ("vwap_signal", vwap_map),
+    ):
+        # Not `dtype == object`: pandas 2.x/3.x's CSV reader defaults string
+        # columns to its own StringDtype, not plain object -- checking for
+        # "not already numeric" instead of one specific non-numeric dtype
+        # is what actually catches both.
+        if col in df.columns and not pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].map(mapping).fillna(0).astype(float)
+    return df
+
+
 class ContinuousLearning:
     def __init__(self):
         self._in_docker = os.environ.get("TRADES_CSV_PATH") is not None or os.path.exists("/.dockerenv")
@@ -146,7 +173,7 @@ class ContinuousLearning:
                 features = ['rsi', 'rsi_slope', 'macd_signal', 'ema_signal', 'vwap_signal', 'sentiment_score', 'adx', 'atr_pct', 'volume_ratio', 'bb_position', 'price_vs_sma50']
                 # Only use features that exist in the logged data (backward compat)
                 available_features = [f for f in features if f in labeled_df.columns]
-                X = labeled_df[available_features]
+                X = encode_categorical_features(labeled_df[available_features])
                 y = labeled_df['target'].astype(int)
                 
                 logger.info("Retraining XGBoost model on aggregated dataset (%d samples, %d features)...", len(X), len(available_features))
