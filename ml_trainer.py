@@ -58,6 +58,22 @@ def label_from_pnl(pnl) -> "int | None":
     return 1 if pnl > 0 else 0
 
 
+def relative_threshold_floor(base_rate: float, relative_lift: float) -> float:
+    """base_rate * (1 + relative_lift) -- see VettingConfig.threshold_relative_lift.
+
+    Not an absolute 0.50: that assumes 50%+ calibrated confidence is
+    achievable regardless of how rare the label's positive class is.
+    Confirmed 2026-10-07 on the real 30-symbol US anchor universe: with a
+    ~26% base rate, every per-symbol threshold collapsed to a flat 0.50
+    under an absolute floor, and raising the selection percentile from 85
+    to 95 didn't help either -- the live raw-score ceiling (~0.78, from
+    1,719 real BUY evaluations, never once reaching 0.80) maps to
+    calibrated confidence well under 50%. Gating on relative lift over the
+    label's own base rate is achievable where an absolute 50% isn't.
+    """
+    return base_rate * (1.0 + relative_lift)
+
+
 def fit_calibrator(oof_probs, oof_labels) -> IsotonicRegression:
     """Map raw predict_proba -> an honest probability, using OUT-OF-FOLD
     predictions only (never the final model's own training data, which
@@ -308,7 +324,7 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     # Proper train/test split using TimeSeriesSplit for honest out-of-sample evaluation
     tscv = TimeSeriesSplit(n_splits=5)
     test_accuracies = []
-    oof_probs_parts, oof_labels_parts = [], []
+    oof_probs_parts, oof_labels_parts, oof_symbols_parts = [], [], []
     for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
@@ -327,6 +343,13 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
         # check above, just kept instead of thrown away.
         oof_probs_parts.append(clf_fold.predict_proba(X_test)[:, 1])
         oof_labels_parts.append(y_test.to_numpy())
+        # full_df is symbol-major concatenated (pd.concat(..., ignore_index=True)),
+        # NOT chronologically interleaved across symbols -- a single fold's test
+        # slice only ever lands inside whichever few symbols' contiguous row
+        # blocks that slice happens to fall in. Tag each OOF row with its
+        # symbol now so per-symbol thresholds below can pool across ALL 5
+        # folds instead of relying on just one fold ever covering a symbol.
+        oof_symbols_parts.append(full_df.iloc[test_idx]['symbol'].to_numpy())
 
     avg_accuracy = np.mean(test_accuracies)
     logger.info(f"[{mode.upper()}] === Average test accuracy across 5 folds: {avg_accuracy:.3f} ===")
@@ -368,32 +391,64 @@ def _train_single_model(mode: str, period: str, interval: str, future_periods: i
     # Calculate dynamic thresholds from test-set predictions only (honest thresholds),
     # in CALIBRATED probability space so "0.55" means the same thing the
     # calibration report above just measured.
-    # Use the last fold's test predictions for threshold calibration
-    last_train_idx, last_test_idx = list(tscv.split(X))[-1]
-    test_probs = calibrator.transform(clf.predict_proba(X.iloc[last_test_idx])[:, 1])
-    test_df = full_df.iloc[last_test_idx].copy()
-    test_df['pred_prob'] = test_probs
+    #
+    # Pool OOF predictions across ALL 5 folds, not just the last one -- the
+    # last-fold-only approach this used to be only ever covered whichever
+    # few symbols' row blocks happened to fall in that one slice. Confirmed
+    # 2026-10-07 on the real 30-symbol US anchor universe: the last fold
+    # alone covered just 5 of 30 symbols; the other 25 silently fell
+    # through to the "insufficient data" fallback below on EVERY single
+    # training run. Pooling all 5 folds covers 25 of 30 -- the remaining 5
+    # (whichever symbols land entirely in TimeSeriesSplit's initial,
+    # never-tested training-only segment) genuinely have no OOF data at
+    # any pool size and correctly still need that fallback.
+    oof_symbols = np.concatenate(oof_symbols_parts)
+    oof_calibrated = calibrator.transform(oof_probs)
+    test_df = pd.DataFrame({'symbol': oof_symbols, 'pred_prob': oof_calibrated})
+
+    # Same percentile agents/vetting.py uses (config.vetting.dynamic_threshold_pctile)
+    # -- this used to be a separate hardcoded 85 here, silently able to drift
+    # from vetting's value even though both compute "the same" per-symbol bar.
+    pctile = config.vetting.dynamic_threshold_pctile
+
+    # RELATIVE floor, not an absolute 0.50 -- see VettingConfig.threshold_relative_lift.
+    # An absolute floor assumes 50%+ calibrated confidence is achievable; with
+    # this label's own ~base_rate win frequency, it structurally often isn't.
+    # Confirmed 2026-10-07: an absolute floor collapsed every one of 30 anchor
+    # symbols' thresholds to a flat 0.50, and raising the percentile to 95
+    # didn't fix it either -- the live raw-score ceiling never reaches the
+    # calibration curve's genuine >50%-win-rate region.
+    base_rate = float(y.mean())
+    floor = relative_threshold_floor(base_rate, config.vetting.threshold_relative_lift)
+    logger.info(
+        f"[{mode.upper()}] Label base rate={base_rate:.4f} -> relative threshold "
+        f"floor={floor:.4f} (vs the old flat 0.50)"
+    )
 
     thresholds = {}
     all_thresholds = []
     for sym in full_df['symbol'].unique():
         sym_test = test_df[test_df['symbol'] == sym]
         if not sym_test.empty and len(sym_test) >= 10:
-            thresh = np.percentile(sym_test['pred_prob'], 85)
+            thresh = np.percentile(sym_test['pred_prob'], pctile)
         else:
             # Fallback: use full dataset if insufficient test data for this symbol
             sym_full = full_df[full_df['symbol'] == sym]
             full_probs = calibrator.transform(clf.predict_proba(X.loc[sym_full.index])[:, 1])
-            thresh = np.percentile(full_probs, 85)
-        # Bound the threshold between 0.50 and 0.95
-        thresh = float(np.clip(thresh, 0.50, 0.95))
+            thresh = np.percentile(full_probs, pctile)
+        thresh = float(np.clip(thresh, floor, 0.95))
         clean_sym = sym.replace('.NS', '') if ACTIVE_MARKET == "IN" else sym
         thresholds[clean_sym] = thresh
         all_thresholds.append(thresh)
-    
+
     # Global threshold: used as fallback for any symbol NOT in training set
     # (e.g., sector scanner picks MRNA, AFRM, etc. which aren't training symbols)
     global_thresh = float(np.percentile(all_thresholds, 75))  # 75th pct of per-symbol thresholds
+    # Persisted so agents/vetting.py's OWN percentile clip (computed from
+    # backtest replay, which has no labeled ground truth to derive a base
+    # rate from directly) applies the exact same floor instead of drifting
+    # back to an independent guess.
+    thresholds["_FLOOR_"] = float(floor)
     thresholds["_GLOBAL_"] = global_thresh
     logger.info(f"[{mode.upper()}] Global fallback threshold: {global_thresh:.4f}")
     logger.info(f"[{mode.upper()}] Per-symbol threshold range: {min(all_thresholds):.4f} - {max(all_thresholds):.4f}")
