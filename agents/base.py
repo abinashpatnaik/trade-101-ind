@@ -142,13 +142,22 @@ class BaseAgent:
 
     def run(self) -> None:
         self.logger.info("%s agent starting (market=%s)…", self.name, self.market)
+        # Heartbeat starts first (deliberately, even before setup()) so a
+        # slow setup() doesn't let the TTL expire and the orchestrator flag
+        # this agent as dead mid-init. The command listener must NOT start
+        # this early though: on_command() touches state setup() creates
+        # (e.g. ScannerAgent._run_scan reads self._scan_lock), and a command
+        # arriving in the gap before setup() finishes crashes with an
+        # AttributeError. Confirmed live 2026-10-07: the orchestrator's
+        # post-restart run_scan command raced scanner setup() on every one
+        # of several deploys that day, each silently eating that scan.
         self._hb_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._hb_thread.start()
-        if self.subscribe_commands:
-            self._cmd_thread = threading.Thread(target=self._command_loop, daemon=True)
-            self._cmd_thread.start()
         try:
             self.setup()
+            if self.subscribe_commands:
+                self._cmd_thread = threading.Thread(target=self._command_loop, daemon=True)
+                self._cmd_thread.start()
             while not self._stop.is_set():
                 try:
                     self.tick()
