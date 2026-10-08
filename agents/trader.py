@@ -696,13 +696,25 @@ class TradingAgent:
                 predicted_prob=decision.ml_confidence_swing,
             )
 
+            # "BUY signal but SYMBOL is already held" is the normal, always-
+            # existed fresh-entry decision — unrelated to pyramiding, which
+            # runs later in this loop on its own path regardless of what
+            # this says. Left alone it reads as a dead end even when an add
+            # is one tick away (or already ruled out for a clear reason), so
+            # append what pyramiding actually sees for this position.
+            display_reason = decision.reason
+            if self.executor is not None and symbol in self.portfolio.open_positions:
+                pstatus = self.executor.pyramid_status(symbol)
+                if pstatus:
+                    display_reason = f"{display_reason} ({pstatus})"
+
             logger.info(
                 "Final Decision — %s: action=%s confidence=%.3f score=%.3f | %s",
                 symbol,
                 decision.action,
                 decision.confidence,
                 decision.combined_score,
-                decision.reason[:120],
+                display_reason[:220],
             )
 
             # Update signal for dashboard with final action
@@ -726,7 +738,7 @@ class TradingAgent:
                 self._current_signals[symbol]["mlConfidence"] = decision.ml_confidence
                 self._current_signals[symbol]["mlConfidenceSwing"] = decision.ml_confidence_swing
                 if decision.action == "HOLD" and decision.combined_score >= self._current_signals[symbol]["buyThreshold"]:
-                    self._current_signals[symbol]["holdReason"] = decision.reason
+                    self._current_signals[symbol]["holdReason"] = display_reason
                 else:
                     self._current_signals[symbol]["holdReason"] = ""
                 if decision.ai_decision:

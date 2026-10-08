@@ -123,6 +123,42 @@ def test_step_cleared_and_armed_fires():
     assert ex.check_pyramid_conditions("TST", 100.0 + step + 0.01) is True
 
 
+# --------------------------------------------------- pyramid_status (logging)
+
+def test_pyramid_status_none_when_disabled(monkeypatch):
+    monkeypatch.setattr(config.risk, "pyramid_enabled", False)
+    ex, order = _executor_with_position()
+    assert ex.pyramid_status("TST") is None
+
+
+def test_pyramid_status_none_without_a_tracked_position():
+    ex, order = _executor_with_position()
+    assert ex.pyramid_status("NOPE") is None
+
+
+def test_pyramid_status_reports_not_armed():
+    ex, order = _executor_with_position(armed=False)
+    status = ex.pyramid_status("TST")
+    assert status is not None
+    assert "not armed" in status
+
+
+def test_pyramid_status_reports_max_adds_reached():
+    ex, order = _executor_with_position(add_count=2)
+    status = ex.pyramid_status("TST")
+    assert status is not None
+    assert "max adds reached (2/2)" in status
+
+
+def test_pyramid_status_reports_next_add_price_when_armed_with_room():
+    ex, order = _executor_with_position(entry=100.0, atr_gap_pct=0.013, add_count=0)
+    step = 100.0 * 0.013 * config.risk.pyramid_step_atr_multiple
+    status = ex.pyramid_status("TST")
+    assert status is not None
+    assert "next add (1/2)" in status
+    assert f"{100.0 + step:.2f}" in status
+
+
 def test_steps_chain_from_the_last_add_not_always_from_entry():
     """After one add, the NEXT step measures from the add's own fill price,
     not from the original entry — otherwise steps would bunch up near entry
