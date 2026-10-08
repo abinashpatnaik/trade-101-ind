@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from sentiment_engine import _score_headline, _yahoo_rss_url
 from ai_validator import AIValidator
+from decision_engine import DecisionEngine
 from config import config
 
 ACTIVE_MARKET = os.getenv("TRADING_MARKET", "IN").upper()
@@ -185,6 +186,7 @@ def run_scanner():
     logger.info("Validating candidates through XGBoost ML Model...")
     
     ai_validator = AIValidator()
+    decision_engine = DecisionEngine()
     if ai_validator.model_day is None and ai_validator.model_swing is None:
         logger.warning("ML model not found or disabled. Falling back to non-ML selection.")
         # Fallback: Just take the top 15 candidate stocks by combined momentum and sentiment
@@ -236,7 +238,18 @@ def run_scanner():
                 signal, stock_metrics[symbol]["sentiment"], mode="swing"
             )
 
-            if prob_success >= 0.55:  # Raised from 0.40 — only stocks with genuine ML signal
+            # Was a hardcoded absolute 0.55 ("raised from 0.40 for genuine
+            # signal only") -- the same class of bug as the old absolute
+            # 0.50 BUY-threshold floor. Once confidence is honestly
+            # calibrated (#63), it rarely clears an absolute bar like this
+            # at all: every candidate came back "ML: 0.0%" and the fallback
+            # (plain momentum+sentiment, no ML filtering) fired on every
+            # run since calibration landed -- confirmed live 2026-10-08.
+            # Use the same base-rate-relative floor decision_engine already
+            # applies to the live BUY gate, so "genuine ML signal" means the
+            # same thing here as it does everywhere else.
+            floor = decision_engine.get_relative_threshold_floor(is_swing=True)
+            if prob_success >= floor:
                 approved_targets.append({
                     "symbol": yf_t,
                     "sector": stock_metrics[symbol]["sector"],
