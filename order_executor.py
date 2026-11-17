@@ -115,7 +115,9 @@ class OrderExecutor:
         self._orphan_syncs: Dict[str, int] = {}
         self._ORPHAN_GRACE: int = 3
         # Throttle for the broker open-orders read in _ensure_backstops().
-        self._last_backstop_check: float = 0.0
+        # None = never checked. Not 0.0: time.monotonic() counts from boot,
+        # so on a host up less than a minute "0.0" would read as "just checked".
+        self._last_backstop_check: Optional[float] = None
         self._BACKSTOP_CHECK_SECS: float = 60.0
         self._load_state()
         logger.debug("OrderExecutor initialised (trailing_stop=%.2f%%).", self._trailing_stop_pct * 100)
@@ -351,7 +353,8 @@ class OrderExecutor:
         if not config.risk.broker_backstop_enabled or not self._open_orders:
             return
         now = time.monotonic()
-        if not force and now - self._last_backstop_check < self._BACKSTOP_CHECK_SECS:
+        if (not force and self._last_backstop_check is not None
+                and now - self._last_backstop_check < self._BACKSTOP_CHECK_SECS):
             return
         self._last_backstop_check = now
         read_ids = getattr(self._ibkr, "open_order_ids", None)

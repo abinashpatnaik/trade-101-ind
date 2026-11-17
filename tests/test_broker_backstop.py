@@ -116,6 +116,7 @@ def test_no_backstop_for_shares_not_yet_held():
     assert b.open == {}
     # Once the fill shows up, the next sync arms it.
     b.held["ABC"] = 10
+    ex._last_backstop_check = None
     ex.sync_positions(b.get_positions(), b)
     assert len(b.open) == 1
 
@@ -149,7 +150,7 @@ def test_expired_backstop_is_rearmed_on_sync():
     ex = OrderExecutor(b)
     _buy(ex)
     b.open.clear()                                  # DAY stop expired overnight
-    ex._last_backstop_check = 0.0
+    ex._last_backstop_check = None
     ex.sync_positions(b.get_positions(), b)
     assert len(b.open) == 1
 
@@ -159,7 +160,7 @@ def test_failed_order_read_never_places_duplicate():
     ex = OrderExecutor(b)
     _buy(ex)
     b.fail_reads = True
-    ex._last_backstop_check = 0.0
+    ex._last_backstop_check = None
     ex.sync_positions(b.get_positions(), b)
     assert len(b.open) == 1
 
