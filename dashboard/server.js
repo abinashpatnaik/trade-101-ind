@@ -19,6 +19,7 @@ const { execSync } = require("child_process");
 const http = require("http");
 const Database = require("better-sqlite3");
 const dgram = require("dgram");
+const crypto = require("crypto");
 
 const app = express();
 
@@ -450,15 +451,36 @@ app.use(express.urlencoded({ extended: false }));
 const DASHBOARD_USERNAME = process.env.DASHBOARD_USERNAME;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
 
+// Fails CLOSED. It used to skip auth entirely when the credentials were
+// unset, leaving positions, P&L and logs open on the public ports 3001/3002
+// of a container that also mounts docker.sock. Set DASHBOARD_ALLOW_NO_AUTH=true
+// only for a local, non-public run.
+const ALLOW_NO_AUTH = String(process.env.DASHBOARD_ALLOW_NO_AUTH || "").toLowerCase() === "true";
+
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
 if (DASHBOARD_USERNAME && DASHBOARD_PASSWORD) {
   app.use((req, res, next) => {
     const b64auth = (req.headers.authorization || '').split(' ')[1] || '';
-    const [login, password] = Buffer.from(b64auth, 'base64').toString().split(':');
-    if (login && password && login === DASHBOARD_USERNAME && password === DASHBOARD_PASSWORD) {
+    const decoded = Buffer.from(b64auth, 'base64').toString();
+    const idx = decoded.indexOf(':');
+    const login = idx >= 0 ? decoded.slice(0, idx) : '';
+    const password = idx >= 0 ? decoded.slice(idx + 1) : '';
+    if (login && password && safeEqual(login, DASHBOARD_USERNAME) && safeEqual(password, DASHBOARD_PASSWORD)) {
       return next();
     }
     res.set('WWW-Authenticate', 'Basic realm="Trading Dashboard"');
     res.status(401).send('Authentication required.');
+  });
+} else if (!ALLOW_NO_AUTH) {
+  console.error("DASHBOARD_USERNAME / DASHBOARD_PASSWORD are not set: refusing all " +
+                "requests. Set them in .env (or DASHBOARD_ALLOW_NO_AUTH=true for a local run).");
+  app.use((_req, res) => {
+    res.status(503).send('Dashboard login is not configured. Set DASHBOARD_USERNAME and DASHBOARD_PASSWORD.');
   });
 }
 

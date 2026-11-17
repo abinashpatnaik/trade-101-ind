@@ -16,6 +16,9 @@ x-agent-base: &agent-base
     - ./logs:/app/logs
     - ./data:/app/data
   restart: unless-stopped
+  # A deploy restart sends SIGTERM and waits this long before SIGKILL, so an
+  # agent can finish an in-flight order and save its state.
+  stop_grace_period: 45s
   depends_on:
     redis:
       condition: service_healthy
@@ -85,7 +88,10 @@ services:
       # more per trade on IN) — that measurement covered the general
       # "swing likes it" case at a 65% bar, not this specific lower,
       # losers-only one. Revisit with real fill data once this has run.
-      - HOLD_LOSING_SWING_THRESHOLD=${IN_HOLD_LOSING_SWING_THRESHOLD:-0.45}
+      # DEFAULT OFF since 2026-11-17 (user decision after the bot review):
+      # the measured finding above is the only evidence there is. Set
+      # IN_HOLD_LOSING_SWING_THRESHOLD=0.45 in .env to turn it back on.
+      - HOLD_LOSING_SWING_THRESHOLD=${IN_HOLD_LOSING_SWING_THRESHOLD:-0.0}
       # Churn cap. Live IN logs: one symbol entered 5x in a single day; a cap
       # of 2 would have blocked 22% of all BUYs. Expectancy is negative, so
       # each blocked re-entry saves its round-trip friction.
@@ -120,8 +126,10 @@ services:
       # 3-5x US's ~0.22%, so the same "extra order = extra friction" and
       # "buys into an already-extended move" mechanisms that lost money on
       # US friction should bite harder here. Enabled anyway on explicit
-      # instruction after this was flagged twice.
-      - PYRAMID_ENABLED=${PYRAMID_ENABLED:-true}
+      # instruction after this was flagged twice. DEFAULT OFF since
+      # 2026-11-17 (user decision after the bot review); PYRAMID_ENABLED=true
+      # in .env turns it back on.
+      - PYRAMID_ENABLED=${PYRAMID_ENABLED:-false}
 
   orchestrator-in:
     <<: *agent-base
@@ -227,7 +235,8 @@ services:
       # exceeded the entire gross loss ($3.79). A cap of 2 blocks 26% of BUYs.
       # US keeps ALLOW_OVERNIGHT_HOLD unset — see the IN block for why.
       # Losers-only carve-out at a lower 45% swing bar — see the IN block.
-      - HOLD_LOSING_SWING_THRESHOLD=${US_HOLD_LOSING_SWING_THRESHOLD:-0.45}
+      # DEFAULT OFF since 2026-11-17 — see the IN block.
+      - HOLD_LOSING_SWING_THRESHOLD=${US_HOLD_LOSING_SWING_THRESHOLD:-0.0}
       - MAX_ENTRIES_PER_SYMBOL_PER_DAY=${US_MAX_ENTRIES_PER_SYMBOL:-2}
       # Risk per trade: 0.75% of NAV at the stop. Weekly kill-switch below
       # pauses NEW entries after a -4% NAV week (net of costs).
@@ -243,8 +252,9 @@ services:
       # NEGATIVE — net/trade -0.200% (off) vs -0.345% (on), paired-diff 95% CI
       # [-543%, -440%] entirely below zero, 372/712 clusters worse vs 12/712
       # better. See trade101-pyramid-adds memory. Enabled anyway on explicit
-      # instruction after this result was surfaced and flagged.
-      - PYRAMID_ENABLED=${PYRAMID_ENABLED:-true}
+      # instruction after this result was surfaced and flagged. DEFAULT OFF
+      # since 2026-11-17 — see the IN block.
+      - PYRAMID_ENABLED=${PYRAMID_ENABLED:-false}
 
   orchestrator-us:
     <<: *agent-base

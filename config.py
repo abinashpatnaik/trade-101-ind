@@ -208,6 +208,21 @@ class RiskConfig:
     pyramid_add_size_decay: float = field(
         default_factory=lambda: float(os.getenv("PYRAMID_ADD_SIZE_DECAY", "0.5"))
     )
+    # Broker-side BACKSTOP stop. Every exit the executor manages is a software
+    # stop, so a crashed container, a dead host or a deploy restart used to
+    # leave open positions with NO protection at all. With this on, each
+    # position also gets a real stop order resting at the broker, placed this
+    # far BELOW the software hard stop so the software logic (trailing,
+    # profit-lock, EOD) still acts first in normal running. The backstop only
+    # fills when the software side is not there to act. It is cancelled
+    # before every software sell and re-armed on the next sync if missing
+    # (e.g. Alpaca DAY stops expire at the close).
+    broker_backstop_enabled: bool = field(
+        default_factory=lambda: str(os.getenv("BROKER_BACKSTOP_ENABLED", "true")).lower() == "true"
+    )
+    broker_backstop_buffer_pct: float = field(
+        default_factory=lambda: float(os.getenv("BROKER_BACKSTOP_BUFFER_PCT", "0.01"))
+    )
 
 
 @dataclass
