@@ -612,10 +612,31 @@ class ZerodhaConnector:
         from config import config
         return "MIS" if float(getattr(config.risk, "leverage", 1.0) or 1.0) > 1.0 else "CNC"
 
+    def _paper_blocks(self, action: str, symbol: str) -> bool:
+        """True when TRADING_MODE=paper must stop this order.
+
+        Zerodha has no paper account: before this guard, TRADING_MODE=paper
+        was read into config.kite.paper_mode and never checked, so the India
+        agent placed REAL orders while "in paper mode". Paper now blocks every
+        BUY. SELLs (and sell stops) still go through, so real positions
+        opened earlier can always be closed and protected.
+        """
+        from config import config
+        if config.kite.paper_mode and action.upper() == "BUY":
+            logger.warning(
+                "TRADING_MODE=paper: BUY %s NOT sent to Zerodha (no paper "
+                "account exists; set TRADING_MODE=live to trade real money).",
+                symbol,
+            )
+            return True
+        return False
+
     def place_market_order(self, symbol: str, action: str, quantity: int, **kwargs) -> Optional[str]:
         """Place a market order on NSE."""
         quantity = int(quantity)
         if not self.kite:
+            return None
+        if self._paper_blocks(action, symbol):
             return None
         
         # Guard: check position for short selling
@@ -743,8 +764,13 @@ class ZerodhaConnector:
         quantity = int(quantity)
         if not self.kite:
             return None
+        if self._paper_blocks(action, symbol):
+            return None
         try:
             tradingsymbol = symbol.split(".")[0]
+            # Was referenced below without ever being set, so every call
+            # raised NameError and returned None: no stop order could be placed.
+            exchange_code = "BSE" if symbol.endswith(".BO") else "NSE"
             # Use SL (Stop Loss Limit) order type because SL-M is often blocked by NSE.
             # We simulate SL-M by adding a 2% buffer to the limit price.
             buffer = 1.02 if action.upper() == "BUY" else 0.98
@@ -778,6 +804,8 @@ class ZerodhaConnector:
         quantity = int(quantity)
         if not self.kite:
             return None
+        if self._paper_blocks(action, symbol):
+            return None
         try:
             tradingsymbol = symbol.split(".")[0]
             exchange_code = "BSE" if symbol.endswith(".BO") else "NSE"
@@ -808,6 +836,23 @@ class ZerodhaConnector:
         except Exception as exc:
             logger.error("Failed to cancel Kite order %s: %s", order_id, exc)
             return False
+
+    def open_order_ids(self) -> Optional[set]:
+        """IDs of every open/pending order, or None if Kite could not be read.
+
+        Unlike get_open_orders(), an error is NOT reported as "no orders":
+        callers deciding whether to place a protective stop must not mistake
+        an API failure for a missing stop and place a duplicate.
+        """
+        if not self.kite:
+            return None
+        try:
+            orders = self.kite.orders()
+        except Exception as exc:
+            logger.error("Failed to read Kite orders: %s", exc)
+            return None
+        live = ("OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED")
+        return {str(o.get("order_id")) for o in orders if o.get("status") in live}
 
     def get_open_orders(self) -> List[Dict]:
         """Fetch open orders from Kite Connect."""

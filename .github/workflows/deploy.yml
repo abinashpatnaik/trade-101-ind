@@ -8,7 +8,38 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The test suite gates every deploy. tests.yml runs on PRs, but a direct
+  # push or a merge with failing checks used to go straight to production.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          TRADING_MARKET: IN
+        run: pytest tests/ -q
+
+      - name: Run UK growth bot tests
+        run: pytest uk_growth_bot/tests -q
+
+      - name: Run India growth bot tests
+        run: pytest in_growth_bot/tests -q
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -77,12 +108,18 @@ jobs:
             done
             echo "Updated $n growth bot setting(s) in .env (values not shown)"'
 
+      # Graceful restart: SIGTERM, then up to stop_grace_period (45s) for each
+      # agent to finish an in-flight order and save state. It used to be
+      # `docker compose kill` (SIGKILL), which could cut an agent off between
+      # an entry fill and recording it. Positions are kept either way
+      # (LIQUIDATE_ON_SHUTDOWN is false) and stay covered by their broker
+      # backstop stops while the agents restart.
       - name: Start Container Stack on Hetzner
         env:
           HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
           HETZNER_USERNAME: ${{ secrets.HETZNER_USERNAME }}
         run: |
-          ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "mkdir -p ~/trading-agent/logs ~/trading-agent/data && cd ~/trading-agent && docker compose kill && docker compose rm -f && docker compose up -d --build"
+          ssh -o StrictHostKeyChecking=no $HETZNER_USERNAME@$HETZNER_HOST "mkdir -p ~/trading-agent/logs ~/trading-agent/data && cd ~/trading-agent && docker compose up -d --build --force-recreate"
 
       # Read-only: authenticates with Trading 212 and lists cash, positions and
       # ticker mapping. Places no orders. Skipped unless the uk profile is on.

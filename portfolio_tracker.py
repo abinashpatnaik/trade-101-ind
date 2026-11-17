@@ -402,13 +402,26 @@ class PortfolioTracker:
                 self._reconcile_daily_pnl(summary.get("DailyPnL"))
 
             # Capture session-start NAV on the first update each trading day.
+            # Persisted: it used to live only in memory, so any restart
+            # (crash, deploy) re-based the daily loss limit on the CURRENT,
+            # already-down NAV and handed back a fresh 2% to lose.
             today = str(date.today())
             if self._session_start_nav is None or today != self._session_date:
-                self._session_start_nav = self.portfolio_value
-                self._session_date = today
-                logger.info(
-                    "Session start NAV recorded: %s%.2f", CUR_SYM, self._session_start_nav
-                )
+                saved = self._load_session_nav(today)
+                if saved is not None:
+                    self._session_start_nav = saved
+                    self._session_date = today
+                    logger.info(
+                        "Session start NAV restored from disk: %s%.2f",
+                        CUR_SYM, self._session_start_nav,
+                    )
+                elif self.portfolio_value and self.portfolio_value > 0:
+                    self._session_start_nav = self.portfolio_value
+                    self._session_date = today
+                    self._save_session_nav(today, self._session_start_nav)
+                    logger.info(
+                        "Session start NAV recorded: %s%.2f", CUR_SYM, self._session_start_nav
+                    )
 
             logger.debug(
                 "Portfolio updated: nav=%s%.2f cash=%s%.2f "
@@ -428,6 +441,36 @@ class PortfolioTracker:
     # ------------------------------------------------------------------
     # Risk checks
     # ------------------------------------------------------------------
+
+    def _session_nav_path(self) -> str:
+        data_dir = os.path.dirname(config.agent.trades_csv) or "."
+        market = os.environ.get("TRADING_MARKET", "IN").upper()
+        return os.path.join(data_dir, f"session_nav_{market}.json")
+
+    def _load_session_nav(self, today: str) -> Optional[float]:
+        """Today's saved session-start NAV, or None if there is none for today."""
+        try:
+            with open(self._session_nav_path()) as f:
+                data = json.load(f)
+            if data.get("date") == today and float(data.get("start_nav", 0)) > 0:
+                return float(data["start_nav"])
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            logger.warning("Could not read saved session NAV: %s", exc)
+        return None
+
+    def _save_session_nav(self, today: str, nav: float) -> None:
+        try:
+            path = self._session_nav_path()
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"date": today, "start_nav": nav}, f)
+            os.replace(tmp, path)
+        except Exception as exc:
+            logger.error("Could not save session NAV (daily loss limit will "
+                         "re-base after a restart): %s", exc)
 
     def check_daily_loss_limit(self) -> bool:
         """

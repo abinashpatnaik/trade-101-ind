@@ -534,6 +534,21 @@ class AlpacaConnector:
             logger.error("Failed to cancel Alpaca order %s: %s", order_id, exc)
             return False
 
+    def open_order_ids(self) -> Optional[set]:
+        """IDs of every open order, or None if Alpaca could not be read.
+
+        Unlike get_open_orders(), an error is NOT reported as "no orders":
+        callers deciding whether to place a protective stop must not mistake
+        an API failure for a missing stop and place a duplicate.
+        """
+        if not self.trading_client:
+            return None
+        try:
+            return {str(o.id) for o in self.trading_client.get_orders()}
+        except Exception as exc:
+            logger.error("Failed to read Alpaca open orders: %s", exc)
+            return None
+
     def get_open_orders(self) -> List[Dict]:
         if not self.trading_client:
             return []

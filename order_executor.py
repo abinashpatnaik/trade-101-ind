@@ -49,8 +49,10 @@ class OpenOrder:
     entry_price: float
     stop_loss_price: float
     take_profit_price: float
-    stop_loss_order_id: Optional[int] = None
-    take_profit_order_id: Optional[int] = None
+    # Broker order ID of the resting backstop stop (see _arm_backstop). A
+    # string: Alpaca IDs are UUIDs, Kite IDs are numeric strings.
+    stop_loss_order_id: Optional[str] = None
+    take_profit_order_id: Optional[str] = None
     is_fractional: bool = False               # True = software trailing stop
     initial_trailing_pct: float = 0.0         # Dynamic ATR-based gap
     entry_time: float = 0.0                   # time.monotonic() at entry for time-based tightening
@@ -61,6 +63,8 @@ class OpenOrder:
     # own fill) so steps chain forward rather than all measuring from entry.
     add_count: int = 0
     last_add_price: float = 0.0
+    # Trigger price of the broker-side backstop stop (0.0 = none placed).
+    backstop_price: float = 0.0
 
 
 class OrderExecutor:
@@ -110,6 +114,9 @@ class OrderExecutor:
         # exist.
         self._orphan_syncs: Dict[str, int] = {}
         self._ORPHAN_GRACE: int = 3
+        # Throttle for the broker open-orders read in _ensure_backstops().
+        self._last_backstop_check: float = 0.0
+        self._BACKSTOP_CHECK_SECS: float = 60.0
         self._load_state()
         logger.debug("OrderExecutor initialised (trailing_stop=%.2f%%).", self._trailing_stop_pct * 100)
 
@@ -221,32 +228,155 @@ class OrderExecutor:
             last_add_price=entry_price,
         )
 
-    def _cancel_bracket(self, symbol: str) -> None:
-        """Cancel any open bracket orders for *symbol* (called before SELL)."""
+    def _cancel_bracket(self, symbol: str) -> bool:
+        """Cancel the broker-side orders for *symbol* (called before a SELL).
+
+        Returns False when a backstop could not be confirmed cancelled. That
+        usually means it already FILLED (the position is gone), so the caller
+        must re-check the position before sending its own sell.
+
+        Waits briefly for the cancel to take effect: Alpaca holds the shares
+        behind a resting sell stop, so a market sell sent before the cancel
+        lands is rejected for insufficient quantity.
+        """
         order = self._open_orders.get(symbol)
         if order is None:
-            return
+            return True
 
+        ok = True
         for oid_attr, label in [
-            ("stop_loss_order_id", "stop-loss"),
+            ("stop_loss_order_id", "backstop stop"),
             ("take_profit_order_id", "take-profit"),
         ]:
             oid = getattr(order, oid_attr, None)
-            if oid is not None:
-                try:
-                    self._ibkr.cancel_order(oid)
-                    logger.info(
-                        "Cancelled %s order %s for %s", label, oid, symbol
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Could not cancel %s order %s for %s: %s",
-                        label, oid, symbol, exc,
-                    )
+            if oid is None:
+                continue
+            try:
+                cancelled = self._ibkr.cancel_order(oid)
+            except Exception as exc:
+                logger.warning("Failed to cancel %s %s for %s: %s", label, oid, symbol, exc)
+                cancelled = False
+            if cancelled is False:
+                ok = False
+            else:
+                logger.info("Cancelled %s order %s for %s", label, oid, symbol)
+                self._wait_order_gone(oid)
+            setattr(order, oid_attr, None)
+        order.backstop_price = 0.0
+        self._dump_state()
+        return ok
+
+    def _wait_order_gone(self, order_id: str, timeout: float = 3.0) -> None:
+        """Poll until *order_id* is no longer open at the broker (best effort)."""
+        read_ids = getattr(self._ibkr, "open_order_ids", None)
+        if not callable(read_ids):
+            return
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            ids = read_ids()
+            if ids is not None and str(order_id) not in ids:
+                return
+            time.sleep(0.25)
+        logger.warning("Order %s still shows open %.1fs after cancel.", order_id, timeout)
 
     # ------------------------------------------------------------------
-    # Public API
+    # Broker-side backstop stop
     # ------------------------------------------------------------------
+
+    def _backstop_price(self, order: OpenOrder) -> float:
+        """Backstop trigger: the software hard stop, widened by the buffer."""
+        base = order.stop_loss_price
+        if not base or base <= 0:
+            base = order.entry_price * (1.0 - config.risk.stop_loss_pct)
+        if base <= 0:
+            return 0.0
+        return round(base * (1.0 - config.risk.broker_backstop_buffer_pct), 2)
+
+    def _arm_backstop(self, symbol: str) -> bool:
+        """Place a resting SELL stop at the broker for the tracked position.
+
+        Insurance for when the software stops are not running (crash, host
+        down, deploy restart). Never raises: a failure is logged and retried
+        on the next sync.
+        """
+        if not config.risk.broker_backstop_enabled:
+            return False
+        order = self._open_orders.get(symbol)
+        if order is None or order.stop_loss_order_id:
+            return False
+        place = getattr(self._ibkr, "place_stop_order", None)
+        if not callable(place):
+            return False
+        # Only ever cover shares the broker says we HOLD. A sell stop larger
+        # than the holding (e.g. armed before an entry has filled) could open
+        # a short on an intraday (MIS) product if it triggered.
+        try:
+            positions = self._ibkr.get_positions() or {}
+        except Exception as exc:
+            logger.warning("Backstop for %s deferred — positions unreadable: %s", symbol, exc)
+            return False
+        held = float(positions.get(symbol, {}).get("quantity", 0) or 0)
+        qty = min(order.quantity, held)
+        if ACTIVE_MARKET == "IN":
+            qty = int(qty)          # NSE trades whole shares only
+        if qty <= 0:
+            logger.debug("Backstop for %s deferred — no shares held yet.", symbol)
+            return False
+        price = self._backstop_price(order)
+        if price <= 0:
+            return False
+        try:
+            oid = place(symbol, "SELL", qty, price)
+        except Exception as exc:
+            logger.error("Backstop stop for %s failed: %s", symbol, exc)
+            return False
+        if not oid:
+            logger.error("Broker refused the backstop stop for %s (qty=%s @ %.2f).",
+                         symbol, qty, price)
+            return False
+        order.stop_loss_order_id = str(oid)
+        order.backstop_price = price
+        self._dump_state()
+        logger.info("Backstop stop armed for %s: SELL %s @ %.2f (order %s).",
+                    symbol, qty, price, oid)
+        return True
+
+    def _ensure_backstops(self, force: bool = False) -> None:
+        """Re-arm any backstop that is missing, expired or was cancelled.
+
+        Reads the broker's open orders at most once a minute. If that read
+        fails nothing is placed: a failed read must never be mistaken for a
+        missing stop, or a duplicate sell stop could be placed.
+        """
+        if not config.risk.broker_backstop_enabled or not self._open_orders:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_backstop_check < self._BACKSTOP_CHECK_SECS:
+            return
+        self._last_backstop_check = now
+        read_ids = getattr(self._ibkr, "open_order_ids", None)
+        if not callable(read_ids):
+            return
+        open_ids = read_ids()
+        if open_ids is None:
+            return
+        for symbol, order in list(self._open_orders.items()):
+            if order.stop_loss_order_id and str(order.stop_loss_order_id) in open_ids:
+                continue
+            if order.stop_loss_order_id:
+                logger.info("Backstop %s for %s is no longer open (expired, filled "
+                            "or cancelled) — re-arming.", order.stop_loss_order_id, symbol)
+                order.stop_loss_order_id = None
+                order.backstop_price = 0.0
+            self._arm_backstop(symbol)
+
+    def _position_gone(self, symbol: str) -> bool:
+        """True when the broker reports no shares of *symbol* (e.g. the backstop filled)."""
+        try:
+            positions = self._ibkr.get_positions() or {}
+        except Exception:
+            return False
+        return float(positions.get(symbol, {}).get("quantity", 0) or 0) <= 0
 
     def _record_order_intent(
         self, symbol: str, action: str, order_id, signal_price: float, quantity: float
@@ -332,6 +462,7 @@ class OrderExecutor:
             self._lock_armed.pop(symbol, None)
             self._lock_levels.pop(symbol, None)
             self._dump_state()
+            self._arm_backstop(symbol)
             self._record_order_intent(
                 symbol, "BUY", entry_order_id, current_price, decision.quantity
             )
@@ -366,7 +497,15 @@ class OrderExecutor:
                 self._dump_state()
                 return False
 
-            self._cancel_bracket(symbol)
+            if not self._cancel_bracket(symbol) and self._position_gone(symbol):
+                logger.warning("SELL skipped for %s — the broker backstop already "
+                               "closed it.", symbol)
+                self._open_orders.pop(symbol, None)
+                self._trailing_high.pop(symbol, None)
+                self._lock_armed.pop(symbol, None)
+                self._lock_levels.pop(symbol, None)
+                self._dump_state()
+                return False
 
             try:
                 sell_order_id = self._ibkr.place_market_order(
@@ -729,6 +868,9 @@ class OrderExecutor:
             return False
         self.record_add(symbol, current_price, quantity)
         self._record_order_intent(symbol, "PYRAMID_ADD", order_id, current_price, quantity)
+        # The backstop covers the OLD quantity: replace it to cover the add.
+        self._cancel_bracket(symbol)
+        self._arm_backstop(symbol)
         return True
 
     def close_position(self, symbol: str, quantity: float, outsideRth: bool = False) -> bool:
@@ -740,7 +882,22 @@ class OrderExecutor:
 
         Returns True if the order was successfully placed.
         """
-        self._cancel_bracket(symbol)
+        if not self._cancel_bracket(symbol) and self._position_gone(symbol):
+            # The broker backstop already sold it: report it closed and take
+            # the real fill so the trade is recorded at the price it got.
+            logger.warning("close_position(): %s was already closed by its broker "
+                           "backstop stop.", symbol)
+            self._open_orders.pop(symbol, None)
+            self._trailing_high.pop(symbol, None)
+            self._lock_armed.pop(symbol, None)
+            self._lock_levels.pop(symbol, None)
+            self._dump_state()
+            get_last = getattr(self._ibkr, "get_last_fill_price", None)
+            if callable(get_last):
+                fill = get_last(symbol, "sell")
+                if fill and fill > 0:
+                    self._last_fill_price[symbol] = fill
+            return True
 
         if not self._ibkr.is_connected():
             logger.error(
@@ -873,6 +1030,9 @@ class OrderExecutor:
             n = self._orphan_syncs.get(sym, 0) + 1
             self._orphan_syncs[sym] = n
             if n >= self._ORPHAN_GRACE:
+                # A backstop left resting for a position that no longer
+                # exists could open a short if it ever triggered.
+                self._cancel_bracket(sym)
                 self._open_orders.pop(sym, None)
                 self._trailing_high.pop(sym, None)
                 self._lock_armed.pop(sym, None)
@@ -885,6 +1045,8 @@ class OrderExecutor:
                 )
         if pruned:
             self._dump_state()
+
+        self._ensure_backstops()
 
     @property
     def open_orders(self) -> Dict[str, OpenOrder]:
